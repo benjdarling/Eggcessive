@@ -1,9 +1,14 @@
 fileFormatVersion: 2
-guid: d8258727a69c23740b519446041c62b6
+guid: 07124ffb80a0ab44fb08241cc6b9e9e1
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_chicken
+    second: {fileID: 2100000, guid: 647e4728663854e4c98a345877c06b7b, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
