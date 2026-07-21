@@ -1,3 +1,4 @@
+using System;
 using DG.Tweening;
 using TMPro;
 using UnityEngine;
@@ -24,7 +25,11 @@ public sealed class EggScoreHud : MonoBehaviour
 
     private int displayedCents;
     private int targetCents;
-    private Sequence countSequence;
+    private Tweener countTween;
+    private Tweener punchTween;
+
+    public static event Action<int> BalanceChanged;
+    public static int CurrentCents => instance != null ? instance.targetCents : 0;
 
     private void Awake()
     {
@@ -39,11 +44,13 @@ public sealed class EggScoreHud : MonoBehaviour
         displayedCents = 0;
         targetCents = 0;
         RefreshScore();
+        CreatePunchTween();
     }
 
     private void OnDestroy()
     {
-        countSequence?.Kill();
+        countTween?.Kill();
+        punchTween?.Kill();
 
         if (instance == this)
         {
@@ -67,53 +74,85 @@ public sealed class EggScoreHud : MonoBehaviour
         }
 
         instance.targetCents += centsToAdd;
+        BalanceChanged?.Invoke(instance.targetCents);
         instance.AnimateToTarget();
+    }
+
+    public static bool TrySpendCents(int amount)
+    {
+        if (instance == null || amount <= 0 || instance.targetCents < amount)
+        {
+            return false;
+        }
+
+        instance.targetCents -= amount;
+        BalanceChanged?.Invoke(instance.targetCents);
+        instance.AnimateToTarget();
+        return true;
     }
 
     private void AnimateToTarget()
     {
-        countSequence?.Kill();
+        countTween?.Kill();
+        countTween = null;
+        punchTween?.Rewind();
         scoreText.rectTransform.localScale = Vector3.one;
 
-        int centsRemaining = targetCents - displayedCents;
+        int centsDifference = targetCents - displayedCents;
+
+        if (centsDifference == 0)
+        {
+            RefreshScore();
+            return;
+        }
+
+        int centsRemaining = Mathf.Abs(centsDifference);
         float totalDuration = Mathf.Clamp(
             centsRemaining * secondsPerCent,
             minimumCountDuration,
             maximumCountDuration);
-        float tickDuration = totalDuration / centsRemaining;
-        float tickPunchDuration = Mathf.Min(punchDuration, tickDuration);
 
-        countSequence = DOTween.Sequence()
-            .SetTarget(this);
-
-        for (int cents = displayedCents + 1; cents <= targetCents; cents++)
-        {
-            int tickValue = cents;
-            countSequence
-                .AppendCallback(() =>
+        countTween = DOTween.To(
+                () => displayedCents,
+                value =>
                 {
-                    displayedCents = tickValue;
+                    if (displayedCents == value)
+                    {
+                        return;
+                    }
+
+                    displayedCents = value;
                     RefreshScore();
-                })
-                .Append(scoreText.rectTransform.DOPunchScale(
-                    Vector3.one * punchStrength,
-                    tickPunchDuration,
-                    punchVibrato,
-                    punchElasticity));
+                    RestartPunchTween();
+                },
+                targetCents,
+                totalDuration)
+            .SetEase(Ease.Linear)
+            .SetTarget(this)
+            .OnComplete(() => countTween = null);
+    }
 
-            float remainingTickTime = tickDuration - tickPunchDuration;
+    private void CreatePunchTween()
+    {
+        punchTween = scoreText.rectTransform.DOPunchScale(
+                Vector3.one * punchStrength,
+                punchDuration,
+                punchVibrato,
+                punchElasticity)
+            .SetAutoKill(false)
+            .SetTarget(this)
+            .Pause();
+    }
 
-            if (remainingTickTime > 0f)
-            {
-                countSequence.AppendInterval(remainingTickTime);
-            }
+    private void RestartPunchTween()
+    {
+        if (punchTween == null || !punchTween.IsActive())
+        {
+            CreatePunchTween();
         }
 
-        countSequence.OnComplete(() =>
-        {
-            scoreText.rectTransform.localScale = Vector3.one;
-            countSequence = null;
-        });
+        scoreText.rectTransform.localScale = Vector3.one;
+        punchTween.Restart();
     }
 
     private void RefreshScore()

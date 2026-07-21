@@ -24,6 +24,12 @@ public sealed class EggCarryController : MonoBehaviour
 
     private void Update()
     {
+        if (FoodShopController.IsPlacementActive)
+        {
+            ReleaseEgg();
+            return;
+        }
+
         Mouse mouse = Mouse.current;
 
         if (mouse == null)
