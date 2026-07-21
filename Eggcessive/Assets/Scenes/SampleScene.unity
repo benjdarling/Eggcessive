@@ -878,7 +878,7 @@ Transform:
   m_GameObject: {fileID: 759980837}
   serializedVersion: 2
   m_LocalRotation: {x: 0.2588191, y: 0, z: 0, w: 0.9659258}
-  m_LocalPosition: {x: 0.5, y: -0.5, z: -0.5}
+  m_LocalPosition: {x: 0.25, y: -0.5, z: -0.5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1782,15 +1782,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1001, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
       propertyPath: m_LocalScale.x
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1001, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
       propertyPath: m_LocalScale.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1001, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
       propertyPath: m_LocalScale.z
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1001, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
       propertyPath: m_LocalRotation.w
@@ -1819,6 +1819,26 @@ PrefabInstance:
     - target: {fileID: 1002, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
       propertyPath: m_AdditionalShaderChannelsFlag
       value: 25
+      objectReference: {fileID: 0}
+    - target: {fileID: 461215582224414962, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: m_TextStyleHashCode
+      value: -1183493901
+      objectReference: {fileID: 0}
+    - target: {fileID: 982895865748179847, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: m_TextStyleHashCode
+      value: -1183493901
+      objectReference: {fileID: 0}
+    - target: {fileID: 2504367158612804702, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: m_TextStyleHashCode
+      value: -1183493901
+      objectReference: {fileID: 0}
+    - target: {fileID: 7549988786150618246, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: m_fontColor32.rgba
+      value: 4287947007
+      objectReference: {fileID: 0}
+    - target: {fileID: 7549988786150618246, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: m_TextStyleHashCode
+      value: -1183493901
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

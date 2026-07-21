@@ -17,6 +17,8 @@ public sealed class ChickenController : MonoBehaviour
 
     private static readonly List<ChickenController> ActiveChickens = new List<ChickenController>();
     private static readonly int IsEatingParameter = Animator.StringToHash("IsEating");
+    private static readonly int BlinkParameter = Animator.StringToHash("Blink");
+    private static readonly int BlinkSpeedParameter = Animator.StringToHash("BlinkSpeed");
     private static bool hasWarnedAboutMissingNavMesh;
 
     [Header("Movement")]
@@ -42,6 +44,9 @@ public sealed class ChickenController : MonoBehaviour
 
     [Header("Animation")]
     [SerializeField] private Animator animator = null;
+    [SerializeField, Min(0.01f)] private float minBlinkInterval = 2f;
+    [SerializeField, Min(0.01f)] private float maxBlinkInterval = 6f;
+    [SerializeField, Range(0f, 0.5f)] private float blinkSpeedVariation = 0.1f;
 
     [Header("Separation")]
     [SerializeField, Min(0f)] private float separationRadius = 0.3f;
@@ -71,11 +76,13 @@ public sealed class ChickenController : MonoBehaviour
     private float nextBiteTime;
     private float eggTimerRemaining;
     private float foodScore;
+    private float nextBlinkTime;
     private bool navigationReady;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
     public float FoodScoreNormalized => maximumFoodScore > 0f ? foodScore / maximumFoodScore : 0f;
+    public static IReadOnlyList<ChickenController> ActiveInstances => ActiveChickens;
 
     private void Awake()
     {
@@ -108,6 +115,7 @@ public sealed class ChickenController : MonoBehaviour
     {
         ActiveChickens.Add(this);
         ScheduleNextEgg();
+        ScheduleNextBlink();
     }
 
     private void Start()
@@ -120,12 +128,17 @@ public sealed class ChickenController : MonoBehaviour
     {
         ActiveChickens.Remove(this);
         SetEatingAnimation(false);
+        if (animator != null)
+        {
+            animator.ResetTrigger(BlinkParameter);
+        }
         targetFood = null;
     }
 
     private void Update()
     {
         UpdateFoodAndEggTimers();
+        UpdateBlink();
 
         if (!navigationReady)
         {
@@ -611,6 +624,30 @@ public sealed class ChickenController : MonoBehaviour
         }
     }
 
+    private void UpdateBlink()
+    {
+        if (Time.time < nextBlinkTime)
+        {
+            return;
+        }
+
+        ScheduleNextBlink();
+        if (animator == null || animator.runtimeAnimatorController == null)
+        {
+            return;
+        }
+
+        float minimumSpeed = Mathf.Max(0.01f, 1f - blinkSpeedVariation);
+        float maximumSpeed = 1f + blinkSpeedVariation;
+        animator.SetFloat(BlinkSpeedParameter, Random.Range(minimumSpeed, maximumSpeed));
+        animator.SetTrigger(BlinkParameter);
+    }
+
+    private void ScheduleNextBlink()
+    {
+        nextBlinkTime = Time.time + Random.Range(minBlinkInterval, maxBlinkInterval);
+    }
+
     private void OnValidate()
     {
         minIdleTime = Mathf.Max(0f, minIdleTime);
@@ -621,6 +658,9 @@ public sealed class ChickenController : MonoBehaviour
         moveSpeed = Mathf.Max(0.01f, moveSpeed);
         acceleration = Mathf.Max(0.01f, acceleration);
         angularSpeed = Mathf.Max(0f, angularSpeed);
+        minBlinkInterval = Mathf.Max(0.01f, minBlinkInterval);
+        maxBlinkInterval = Mathf.Max(minBlinkInterval, maxBlinkInterval);
+        blinkSpeedVariation = Mathf.Clamp(blinkSpeedVariation, 0f, 0.5f);
         maximumFoodScore = Mathf.Max(0.01f, maximumFoodScore);
         startingFoodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
         foodScoreDrainPerSecond = Mathf.Max(0f, foodScoreDrainPerSecond);

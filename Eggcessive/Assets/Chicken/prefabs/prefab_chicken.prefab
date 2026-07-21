@@ -17,6 +17,7 @@ GameObject:
   - component: {fileID: 6481149536847051704}
   - component: {fileID: 6481179536847051707}
   - component: {fileID: 6481189536847051708}
+  - component: {fileID: 6481199536847051709}
   m_Layer: 0
   m_Name: prefab_chicken
   m_TagString: Untagged
@@ -92,6 +93,9 @@ MonoBehaviour:
   foodPerBite: 10
   secondsPerBite: 0.65
   animator: {fileID: 8480854881829514949}
+  minBlinkInterval: 2
+  maxBlinkInterval: 6
+  blinkSpeedVariation: 0.1
   separationRadius: 0.3
   separationStrength: 0.45
   eggPushRadius: 0.25
@@ -1050,6 +1054,41 @@ MonoBehaviour:
   eatingAnimationFollow: 0.05
   eatingGravityMultiplier: 2.5
   eatingBlend: 1
+--- !u!114 &6481199536847051709
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4761822751608631720}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 97f11a5eb26d4bcf814e8d72763287f4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  leftEyeName: c_eye.l
+  rightEyeName: c_eye.r
+  headName: head.x
+  upperSpineName: spine_02.x
+  lowerSpineName: spine_01.x
+  fieldOfView: 170
+  targetScanInterval: 0.12
+  targetSmoothTime: 0.18
+  lookInSmoothTime: 0.16
+  lookOutSmoothTime: 0.28
+  foodRange: 1.5
+  travelLookDistance: 0.65
+  chickenRange: 0.9
+  cursorRange: 0.35
+  eggRange: 0.7
+  eyeWeight: 1
+  headWeight: 0.7
+  upperSpineWeight: 0.4
+  lowerSpineWeight: 0.25
+  eyeAngleLimit: 55
+  headAngleLimit: 40
+  upperSpineAngleLimit: 22.5
+  lowerSpineAngleLimit: 12
 --- !u!1 &7100000000000000001
 GameObject:
   m_ObjectHideFlags: 0
