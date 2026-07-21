@@ -96,6 +96,9 @@ MonoBehaviour:
   minBlinkInterval: 2
   maxBlinkInterval: 6
   blinkSpeedVariation: 0.1
+  fullLeanTurnRate: 120
+  leanSmoothTime: 0.08
+  leanStrength: 1
   separationRadius: 0.3
   separationStrength: 0.45
   eggPushRadius: 0.25

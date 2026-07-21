@@ -19,6 +19,7 @@ public sealed class ChickenController : MonoBehaviour
     private static readonly int IsEatingParameter = Animator.StringToHash("IsEating");
     private static readonly int BlinkParameter = Animator.StringToHash("Blink");
     private static readonly int BlinkSpeedParameter = Animator.StringToHash("BlinkSpeed");
+    private static readonly int TurnLeanParameter = Animator.StringToHash("TurnLean");
     private static bool hasWarnedAboutMissingNavMesh;
 
     [Header("Movement")]
@@ -47,6 +48,9 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float minBlinkInterval = 2f;
     [SerializeField, Min(0.01f)] private float maxBlinkInterval = 6f;
     [SerializeField, Range(0f, 0.5f)] private float blinkSpeedVariation = 0.1f;
+    [SerializeField, Min(1f)] private float fullLeanTurnRate = 120f;
+    [SerializeField, Min(0.01f)] private float leanSmoothTime = 0.08f;
+    [SerializeField, Range(0f, 1f)] private float leanStrength = 1f;
 
     [Header("Separation")]
     [SerializeField, Min(0f)] private float separationRadius = 0.3f;
@@ -77,6 +81,9 @@ public sealed class ChickenController : MonoBehaviour
     private float eggTimerRemaining;
     private float foodScore;
     private float nextBlinkTime;
+    private float turnLean;
+    private float turnLeanVelocity;
+    private Vector3 previousPlanarForward;
     private bool navigationReady;
 
     public float FoodScore => foodScore;
@@ -109,6 +116,7 @@ public sealed class ChickenController : MonoBehaviour
         }
 
         foodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
+        previousPlanarForward = GetPlanarForward();
     }
 
     private void OnEnable()
@@ -116,6 +124,9 @@ public sealed class ChickenController : MonoBehaviour
         ActiveChickens.Add(this);
         ScheduleNextEgg();
         ScheduleNextBlink();
+        previousPlanarForward = GetPlanarForward();
+        turnLean = 0f;
+        turnLeanVelocity = 0f;
     }
 
     private void Start()
@@ -131,12 +142,17 @@ public sealed class ChickenController : MonoBehaviour
         if (animator != null)
         {
             animator.ResetTrigger(BlinkParameter);
+            animator.SetFloat(TurnLeanParameter, 0f);
         }
         targetFood = null;
     }
 
     private void Update()
     {
+        // NavMeshAgent rotation has been applied by this point, while Animator
+        // evaluation has not. Update the parameter now so the visible turn and
+        // its additive lean use the same frame's direction.
+        UpdateTurnLean();
         UpdateFoodAndEggTimers();
         UpdateBlink();
 
@@ -648,6 +664,62 @@ public sealed class ChickenController : MonoBehaviour
         nextBlinkTime = Time.time + Random.Range(minBlinkInterval, maxBlinkInterval);
     }
 
+    private void UpdateTurnLean()
+    {
+        Vector3 currentForward = GetPlanarForward();
+        float targetLean = 0f;
+
+        if (Time.deltaTime > 0f && previousPlanarForward.sqrMagnitude > 0.0001f)
+        {
+            float signedTurnDegrees = Vector3.SignedAngle(previousPlanarForward, currentForward, Vector3.up);
+            float signedTurnRate = signedTurnDegrees / Time.deltaTime;
+            float turnDirection = Mathf.Sign(signedTurnRate);
+
+            if (agent != null && agent.enabled && agent.isOnNavMesh && agent.desiredVelocity.sqrMagnitude > 0.0025f)
+            {
+                Vector3 desiredDirection = Vector3.ProjectOnPlane(agent.desiredVelocity, Vector3.up).normalized;
+                float steeringAngle = Vector3.SignedAngle(currentForward, desiredDirection, Vector3.up);
+                if (Mathf.Abs(steeringAngle) > 0.5f)
+                {
+                    // The steering direction is more stable than a one-frame yaw
+                    // delta when avoidance makes several rapid path corrections.
+                    turnDirection = Mathf.Sign(steeringAngle);
+                }
+            }
+
+            float normalizedTurnRate = Mathf.Clamp01(Mathf.Abs(signedTurnRate) / fullLeanTurnRate);
+            targetLean = normalizedTurnRate * turnDirection * leanStrength;
+        }
+
+        if (Mathf.Abs(targetLean) > 0.001f && turnLean * targetLean < 0f)
+        {
+            // Do not let smoothing momentum display the previous side's lean
+            // after the chicken has already begun turning the other way.
+            turnLean = 0f;
+            turnLeanVelocity = 0f;
+        }
+
+        turnLean = Mathf.SmoothDamp(
+            turnLean,
+            targetLean,
+            ref turnLeanVelocity,
+            leanSmoothTime,
+            Mathf.Infinity,
+            Time.deltaTime);
+        previousPlanarForward = currentForward;
+
+        if (animator != null && animator.runtimeAnimatorController != null)
+        {
+            animator.SetFloat(TurnLeanParameter, turnLean);
+        }
+    }
+
+    private Vector3 GetPlanarForward()
+    {
+        Vector3 planarForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+        return planarForward.sqrMagnitude > 0.0001f ? planarForward.normalized : Vector3.forward;
+    }
+
     private void OnValidate()
     {
         minIdleTime = Mathf.Max(0f, minIdleTime);
@@ -661,6 +733,9 @@ public sealed class ChickenController : MonoBehaviour
         minBlinkInterval = Mathf.Max(0.01f, minBlinkInterval);
         maxBlinkInterval = Mathf.Max(minBlinkInterval, maxBlinkInterval);
         blinkSpeedVariation = Mathf.Clamp(blinkSpeedVariation, 0f, 0.5f);
+        fullLeanTurnRate = Mathf.Max(1f, fullLeanTurnRate);
+        leanSmoothTime = Mathf.Max(0.01f, leanSmoothTime);
+        leanStrength = Mathf.Clamp01(leanStrength);
         maximumFoodScore = Mathf.Max(0.01f, maximumFoodScore);
         startingFoodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
         foodScoreDrainPerSecond = Mathf.Max(0f, foodScoreDrainPerSecond);
