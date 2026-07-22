@@ -20,6 +20,7 @@ public sealed class ChickenController : MonoBehaviour
     private static readonly int BlinkParameter = Animator.StringToHash("Blink");
     private static readonly int BlinkSpeedParameter = Animator.StringToHash("BlinkSpeed");
     private static readonly int TurnLeanParameter = Animator.StringToHash("TurnLean");
+    private const string WingFlutterLayerName = "Wing Flutter Layer";
     private static bool hasWarnedAboutMissingNavMesh;
 
     [Header("Movement")]
@@ -48,15 +49,36 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float minBlinkInterval = 2f;
     [SerializeField, Min(0.01f)] private float maxBlinkInterval = 6f;
     [SerializeField, Range(0f, 0.5f)] private float blinkSpeedVariation = 0.1f;
-    [SerializeField, Min(1f)] private float fullLeanTurnRate = 120f;
+    [SerializeField, Min(1f)] private float fullLeanTurnRate = 180f;
     [SerializeField, Min(0.01f)] private float leanSmoothTime = 0.08f;
     [SerializeField, Range(0f, 1f)] private float leanStrength = 1f;
+
+    [Header("Wing Flutter")]
+    [SerializeField, Min(0.01f)] private float minWingFlutterInterval = 6f;
+    [SerializeField, Min(0.01f)] private float maxWingFlutterInterval = 14f;
+    [SerializeField, Range(0f, 1f)] private float minWingFlutterStrength = 0.125f;
+    [SerializeField, Range(0f, 1f)] private float maxWingFlutterStrength = 0.35f;
+    [Tooltip("How long a larger sequence of irregular micro-flutters lasts.")]
+    [SerializeField, Min(0.01f)] private float minWingFlutterDuration = 0.45f;
+    [SerializeField, Min(0.01f)] private float maxWingFlutterDuration = 0.95f;
+    [Tooltip("Random on/off timing inside each larger flutter sequence.")]
+    [SerializeField, Min(0.01f)] private float minWingFlutterPulseInterval = 0.035f;
+    [SerializeField, Min(0.01f)] private float maxWingFlutterPulseInterval = 0.09f;
+
+    [Header("Wing Micro Twitches")]
+    [SerializeField, Min(0.01f)] private float minWingMicroTwitchInterval = 0.55f;
+    [SerializeField, Min(0.01f)] private float maxWingMicroTwitchInterval = 2f;
+    [SerializeField, Range(0f, 1f)] private float minWingMicroTwitchStrength = 0.025f;
+    [SerializeField, Range(0f, 1f)] private float maxWingMicroTwitchStrength = 0.12f;
+    [SerializeField, Min(0.01f)] private float minWingMicroTwitchDuration = 0.05f;
+    [SerializeField, Min(0.01f)] private float maxWingMicroTwitchDuration = 0.14f;
 
     [Header("Separation")]
     [SerializeField, Min(0f)] private float separationRadius = 0.3f;
     [SerializeField, Min(0f)] private float separationStrength = 0.45f;
-    [SerializeField, Min(0f)] private float eggPushRadius = 0.25f;
-    [SerializeField, Min(0f)] private float eggPushForce = 0.35f;
+    [SerializeField, Min(0f)] private float eggPushRadius = 0.2f;
+    [SerializeField, Min(0f)] private float eggPushForce = 0.8f;
+    [SerializeField, Min(0.01f)] private float maximumEggPushSpeed = 0.35f;
 
     [Header("Egg Laying")]
     [SerializeField] private GameObject eggPrefab = null;
@@ -83,6 +105,20 @@ public sealed class ChickenController : MonoBehaviour
     private float nextBlinkTime;
     private float turnLean;
     private float turnLeanVelocity;
+    private int wingFlutterLayerIndex = -1;
+    private float nextWingFlutterTime;
+    private float wingFlutterStartTime;
+    private float wingFlutterDuration;
+    private float wingFlutterStrength;
+    private float wingFlutterWeight;
+    private float nextWingFlutterPulseTime;
+    private bool wingFlutterPulseOn;
+    private bool wingFlutterActive;
+    private float nextWingMicroTwitchTime;
+    private float wingMicroTwitchStartTime;
+    private float wingMicroTwitchDuration;
+    private float wingMicroTwitchStrength;
+    private bool wingMicroTwitchActive;
     private Vector3 previousPlanarForward;
     private bool navigationReady;
 
@@ -115,6 +151,8 @@ public sealed class ChickenController : MonoBehaviour
             animator = GetComponentInChildren<Animator>(true);
         }
 
+        CacheWingFlutterLayer();
+
         foodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
         previousPlanarForward = GetPlanarForward();
     }
@@ -124,6 +162,11 @@ public sealed class ChickenController : MonoBehaviour
         ActiveChickens.Add(this);
         ScheduleNextEgg();
         ScheduleNextBlink();
+        ScheduleNextWingFlutter();
+        ScheduleNextWingMicroTwitch();
+        SetWingFlutterWeight(0f);
+        wingFlutterActive = false;
+        wingMicroTwitchActive = false;
         previousPlanarForward = GetPlanarForward();
         turnLean = 0f;
         turnLeanVelocity = 0f;
@@ -143,7 +186,10 @@ public sealed class ChickenController : MonoBehaviour
         {
             animator.ResetTrigger(BlinkParameter);
             animator.SetFloat(TurnLeanParameter, 0f);
+            SetWingFlutterWeight(0f);
         }
+        wingFlutterActive = false;
+        wingMicroTwitchActive = false;
         targetFood = null;
     }
 
@@ -155,6 +201,7 @@ public sealed class ChickenController : MonoBehaviour
         UpdateTurnLean();
         UpdateFoodAndEggTimers();
         UpdateBlink();
+        UpdateWingFlutter();
 
         if (!navigationReady)
         {
@@ -604,7 +651,20 @@ public sealed class ChickenController : MonoBehaviour
 
             float distance = Mathf.Sqrt(distanceSquared);
             float proximity = 1f - distance / eggPushRadius;
-            eggBody.AddForce(offset / distance * (eggPushForce * proximity), ForceMode.Acceleration);
+            Vector3 pushDirection = offset / distance;
+            Vector3 planarEggVelocity = eggBody.linearVelocity;
+            planarEggVelocity.y = 0f;
+            float outwardSpeed = Mathf.Max(0f, Vector3.Dot(planarEggVelocity, pushDirection));
+
+            if (outwardSpeed >= maximumEggPushSpeed)
+            {
+                continue;
+            }
+
+            float speedRoom = 1f - outwardSpeed / maximumEggPushSpeed;
+            eggBody.AddForce(
+                pushDirection * (eggPushForce * proximity * speedRoom),
+                ForceMode.Acceleration);
         }
     }
 
@@ -662,6 +722,125 @@ public sealed class ChickenController : MonoBehaviour
     private void ScheduleNextBlink()
     {
         nextBlinkTime = Time.time + Random.Range(minBlinkInterval, maxBlinkInterval);
+    }
+
+    private void UpdateWingFlutter()
+    {
+        if (wingFlutterLayerIndex < 0)
+        {
+            CacheWingFlutterLayer();
+        }
+
+        if (wingFlutterLayerIndex < 0)
+        {
+            return;
+        }
+
+        UpdateWingFlutterSequence();
+        float microTwitchWeight = UpdateWingMicroTwitch();
+        SetWingFlutterWeight(Mathf.Max(wingFlutterWeight, microTwitchWeight));
+    }
+
+    private void UpdateWingFlutterSequence()
+    {
+        if (!wingFlutterActive)
+        {
+            wingFlutterWeight = 0f;
+
+            if (Time.time >= nextWingFlutterTime)
+            {
+                wingFlutterStartTime = Time.time;
+                wingFlutterDuration = Random.Range(minWingFlutterDuration, maxWingFlutterDuration);
+                wingFlutterStrength = Random.Range(minWingFlutterStrength, maxWingFlutterStrength);
+                wingFlutterPulseOn = true;
+                wingFlutterWeight = Random.Range(0.55f, 1f) * wingFlutterStrength;
+                nextWingFlutterPulseTime = Time.time
+                    + Random.Range(minWingFlutterPulseInterval, maxWingFlutterPulseInterval);
+                wingFlutterActive = true;
+            }
+
+            return;
+        }
+
+        if (Time.time - wingFlutterStartTime >= wingFlutterDuration)
+        {
+            wingFlutterWeight = 0f;
+            wingFlutterActive = false;
+            ScheduleNextWingFlutter();
+            return;
+        }
+
+        if (Time.time < nextWingFlutterPulseTime)
+        {
+            return;
+        }
+
+        // Hard, uneven on/off changes make the held additive pose read as a
+        // cluster of nervous feather and wing movements rather than one flap.
+        wingFlutterPulseOn = !wingFlutterPulseOn;
+        wingFlutterWeight = wingFlutterPulseOn
+            ? Random.Range(0.55f, 1f) * wingFlutterStrength
+            : 0f;
+        nextWingFlutterPulseTime = Time.time
+            + Random.Range(minWingFlutterPulseInterval, maxWingFlutterPulseInterval);
+    }
+
+    private float UpdateWingMicroTwitch()
+    {
+        if (wingMicroTwitchActive)
+        {
+            float progress = (Time.time - wingMicroTwitchStartTime) / wingMicroTwitchDuration;
+
+            if (progress < 1f)
+            {
+                return Mathf.Sin(Mathf.Clamp01(progress) * Mathf.PI) * wingMicroTwitchStrength;
+            }
+
+            wingMicroTwitchActive = false;
+            ScheduleNextWingMicroTwitch();
+        }
+
+        if (Time.time < nextWingMicroTwitchTime)
+        {
+            return 0f;
+        }
+
+        wingMicroTwitchStartTime = Time.time;
+        wingMicroTwitchDuration = Random.Range(
+            minWingMicroTwitchDuration,
+            maxWingMicroTwitchDuration);
+        wingMicroTwitchStrength = Random.Range(
+            minWingMicroTwitchStrength,
+            maxWingMicroTwitchStrength);
+        wingMicroTwitchActive = true;
+        return 0f;
+    }
+
+    private void ScheduleNextWingFlutter()
+    {
+        nextWingFlutterTime = Time.time
+            + Random.Range(minWingFlutterInterval, maxWingFlutterInterval);
+    }
+
+    private void ScheduleNextWingMicroTwitch()
+    {
+        nextWingMicroTwitchTime = Time.time
+            + Random.Range(minWingMicroTwitchInterval, maxWingMicroTwitchInterval);
+    }
+
+    private void CacheWingFlutterLayer()
+    {
+        wingFlutterLayerIndex = animator != null && animator.runtimeAnimatorController != null
+            ? animator.GetLayerIndex(WingFlutterLayerName)
+            : -1;
+    }
+
+    private void SetWingFlutterWeight(float weight)
+    {
+        if (animator != null && wingFlutterLayerIndex >= 0)
+        {
+            animator.SetLayerWeight(wingFlutterLayerIndex, weight);
+        }
     }
 
     private void UpdateTurnLean()
@@ -733,6 +912,29 @@ public sealed class ChickenController : MonoBehaviour
         minBlinkInterval = Mathf.Max(0.01f, minBlinkInterval);
         maxBlinkInterval = Mathf.Max(minBlinkInterval, maxBlinkInterval);
         blinkSpeedVariation = Mathf.Clamp(blinkSpeedVariation, 0f, 0.5f);
+        minWingFlutterInterval = Mathf.Max(0.01f, minWingFlutterInterval);
+        maxWingFlutterInterval = Mathf.Max(minWingFlutterInterval, maxWingFlutterInterval);
+        minWingFlutterStrength = Mathf.Clamp01(minWingFlutterStrength);
+        maxWingFlutterStrength = Mathf.Clamp(maxWingFlutterStrength, minWingFlutterStrength, 1f);
+        minWingFlutterDuration = Mathf.Max(0.01f, minWingFlutterDuration);
+        maxWingFlutterDuration = Mathf.Max(minWingFlutterDuration, maxWingFlutterDuration);
+        minWingFlutterPulseInterval = Mathf.Max(0.01f, minWingFlutterPulseInterval);
+        maxWingFlutterPulseInterval = Mathf.Max(
+            minWingFlutterPulseInterval,
+            maxWingFlutterPulseInterval);
+        minWingMicroTwitchInterval = Mathf.Max(0.01f, minWingMicroTwitchInterval);
+        maxWingMicroTwitchInterval = Mathf.Max(
+            minWingMicroTwitchInterval,
+            maxWingMicroTwitchInterval);
+        minWingMicroTwitchStrength = Mathf.Clamp01(minWingMicroTwitchStrength);
+        maxWingMicroTwitchStrength = Mathf.Clamp(
+            maxWingMicroTwitchStrength,
+            minWingMicroTwitchStrength,
+            1f);
+        minWingMicroTwitchDuration = Mathf.Max(0.01f, minWingMicroTwitchDuration);
+        maxWingMicroTwitchDuration = Mathf.Max(
+            minWingMicroTwitchDuration,
+            maxWingMicroTwitchDuration);
         fullLeanTurnRate = Mathf.Max(1f, fullLeanTurnRate);
         leanSmoothTime = Mathf.Max(0.01f, leanSmoothTime);
         leanStrength = Mathf.Clamp01(leanStrength);
@@ -752,6 +954,7 @@ public sealed class ChickenController : MonoBehaviour
         separationStrength = Mathf.Max(0f, separationStrength);
         eggPushRadius = Mathf.Max(0f, eggPushRadius);
         eggPushForce = Mathf.Max(0f, eggPushForce);
+        maximumEggPushSpeed = Mathf.Max(0.01f, maximumEggPushSpeed);
         minEggLayTime = Mathf.Max(0f, minEggLayTime);
         maxEggLayTime = Mathf.Max(minEggLayTime, maxEggLayTime);
         emptyFoodEggIntervalMultiplier = Mathf.Max(0.01f, emptyFoodEggIntervalMultiplier);

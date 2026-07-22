@@ -40,7 +40,7 @@ ModelImporter:
       takeName: chicken|basePose
       internalID: -7405728375257707658
       firstFrame: 0
-      lastFrame: 0
+      lastFrame: 1
       wrapMode: 0
       orientationOffsetY: 0
       level: 0
@@ -69,7 +69,7 @@ ModelImporter:
       takeName: chicken|eat
       internalID: -6040059158515723719
       firstFrame: 0
-      lastFrame: 23
+      lastFrame: 6
       wrapMode: 0
       orientationOffsetY: 0
       level: 0
@@ -184,6 +184,35 @@ ModelImporter:
       name: chicken|leanR
       takeName: chicken|leanR
       internalID: 3904692009019727759
+      firstFrame: 0
+      lastFrame: 1
+      wrapMode: 0
+      orientationOffsetY: 0
+      level: 0
+      cycleOffset: 0
+      loop: 0
+      hasAdditiveReferencePose: 1
+      loopTime: 0
+      loopBlend: 0
+      loopBlendOrientation: 0
+      loopBlendPositionY: 0
+      loopBlendPositionXZ: 0
+      keepOriginalOrientation: 0
+      keepOriginalPositionY: 1
+      keepOriginalPositionXZ: 0
+      heightFromFeet: 0
+      mirror: 0
+      bodyMask: 01000000010000000100000001000000010000000100000001000000010000000100000001000000010000000100000001000000
+      curves: []
+      events: []
+      transformMask: []
+      maskType: 3
+      maskSource: {instanceID: 0}
+      additiveReferencePoseFrame: 0
+    - serializedVersion: 16
+      name: chicken|wingFlutter
+      takeName: chicken|wingFlutter
+      internalID: -7274856386280827976
       firstFrame: 0
       lastFrame: 1
       wrapMode: 0

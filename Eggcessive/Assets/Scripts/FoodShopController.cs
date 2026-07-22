@@ -231,7 +231,10 @@ public sealed class FoodShopController : MonoBehaviour
             return false;
         }
 
+        // The NavMesh sample validates the XZ location, but food belongs on the
+        // known ground plane rather than the rasterized NavMesh polygon height.
         position = hit.position;
+        position.y = requestedPosition.y;
         return true;
     }
 
@@ -243,7 +246,8 @@ public sealed class FoodShopController : MonoBehaviour
             return;
         }
 
-        Instantiate(foodPrefab, placementPosition, Quaternion.identity);
+        Quaternion rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+        Instantiate(foodPrefab, placementPosition, rotation);
         ownedFood--;
         CancelPlacement();
         RefreshUi();

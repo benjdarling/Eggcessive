@@ -149,6 +149,7 @@ public class DebugChickenSpawner : MonoBehaviour
         surface.ignoreNavMeshAgent = true;
         surface.ignoreNavMeshObstacle = true;
         surface.minRegionArea = 0f;
+        surface.buildHeightMesh = true;
         surface.BuildNavMesh();
 
         if (surface.navMeshData == null)
