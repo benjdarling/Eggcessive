@@ -18,6 +18,7 @@ public sealed class FoodShopController : MonoBehaviour
     [SerializeField] private Button buyButton = null;
     [SerializeField] private TMP_Text ownedCountText = null;
     [SerializeField] private TMP_Text placementStatusText = null;
+    [SerializeField] private Image affordabilityProgressFill = null;
     [SerializeField] private GameObject foodPrefab = null;
     [SerializeField, Min(1)] private int foodCostCents = 200;
 
@@ -32,6 +33,7 @@ public sealed class FoodShopController : MonoBehaviour
     private Renderer[] previewRenderers;
     private MaterialPropertyBlock previewProperties;
     private Vector3 placementPosition;
+    private Quaternion placementRotation = Quaternion.identity;
     private int ownedFood;
     private int ignorePlacementUntilFrame;
     private bool hasValidPlacement;
@@ -150,7 +152,11 @@ public sealed class FoodShopController : MonoBehaviour
         isPlacementActive = true;
         IsPlacementActive = true;
         ignorePlacementUntilFrame = Time.frameCount + 1;
-        placementPreview = Instantiate(foodPrefab);
+        placementRotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+        placementPreview = Instantiate(
+            foodPrefab,
+            Vector3.zero,
+            placementRotation);
         placementPreview.name = "Food Placement Preview";
 
         FoodPile previewPile = placementPreview.GetComponent<FoodPile>();
@@ -246,8 +252,7 @@ public sealed class FoodShopController : MonoBehaviour
             return;
         }
 
-        Quaternion rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
-        Instantiate(foodPrefab, placementPosition, rotation);
+        Instantiate(foodPrefab, placementPosition, placementRotation);
         ownedFood--;
         CancelPlacement();
         RefreshUi();
@@ -290,6 +295,12 @@ public sealed class FoodShopController : MonoBehaviour
             // Keep the button clickable when funds are low so BuyFood can show
             // the player how much money is required.
             buyButton.interactable = true;
+        }
+
+        if (affordabilityProgressFill != null)
+        {
+            affordabilityProgressFill.fillAmount = Mathf.Clamp01(
+                EggScoreHud.CurrentCents / (float)foodCostCents);
         }
     }
 

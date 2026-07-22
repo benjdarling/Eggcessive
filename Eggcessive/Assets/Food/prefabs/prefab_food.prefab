@@ -72,6 +72,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1708019096848115197}
   - component: {fileID: 8940984961340995132}
+  - component: {fileID: 8950000000000000001}
   m_Layer: 0
   m_Name: prefab_food
   m_TagString: Untagged
@@ -111,6 +112,23 @@ MonoBehaviour:
   startingFood: 100
   visualRoot: {fileID: 1714329662788269677}
   depletedScale: 0.2
+--- !u!114 &8950000000000000001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8383212348683401130}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42f157d760684afc8b9f6976f84a95f7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  radius: 0.21
+  bendStrength: 1.5
+  flattenStrength: 1
+  velocityDirectionInfluence: 0.15
+  falloffPower: 0.75
 --- !u!1001 &2990670508509243233
 PrefabInstance:
   m_ObjectHideFlags: 0

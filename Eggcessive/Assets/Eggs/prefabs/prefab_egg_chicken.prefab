@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 1669512883988422132}
   - component: {fileID: 5993288536860236966}
   - component: {fileID: 7282176204516149371}
+  - component: {fileID: 7290000000000000001}
   m_Layer: 0
   m_Name: prefab_egg_chicken
   m_TagString: Untagged
@@ -98,6 +99,23 @@ MonoBehaviour:
   m_EditorClassIdentifier: '::'
   minimumScale: 0.95
   maximumScale: 1.05
+--- !u!114 &7290000000000000001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 50798105233725807}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42f157d760684afc8b9f6976f84a95f7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  radius: 0.1
+  bendStrength: 0.65
+  flattenStrength: 0.58
+  velocityDirectionInfluence: 0.55
+  falloffPower: 2
 --- !u!1001 &1593545066444435976
 PrefabInstance:
   m_ObjectHideFlags: 0

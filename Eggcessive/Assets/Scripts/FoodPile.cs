@@ -12,6 +12,7 @@ public sealed class FoodPile : MonoBehaviour
 
     private float remainingFood;
     private Vector3 fullScale;
+    private GrassInteractor grassInteractor;
 
     public static IReadOnlyList<FoodPile> ActivePiles => Piles;
     public float RemainingFood => remainingFood;
@@ -25,6 +26,7 @@ public sealed class FoodPile : MonoBehaviour
         }
 
         fullScale = visualRoot.localScale;
+        grassInteractor = GetComponent<GrassInteractor>();
         remainingFood = startingFood;
         RefreshVisualScale();
     }
@@ -75,6 +77,10 @@ public sealed class FoodPile : MonoBehaviour
         float remainingNormalized = Mathf.Clamp01(remainingFood / startingFood);
         float scale = Mathf.Lerp(depletedScale, 1f, remainingNormalized);
         visualRoot.localScale = Vector3.Scale(fullScale, new Vector3(scale, scale, scale));
+        if (grassInteractor != null)
+        {
+            grassInteractor.SetRadiusScale(scale);
+        }
     }
 
     private void OnValidate()

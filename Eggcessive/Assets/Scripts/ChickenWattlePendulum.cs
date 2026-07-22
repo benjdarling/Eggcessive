@@ -18,7 +18,7 @@ public sealed class ChickenWattlePendulum : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float blend = 0.85f;
 
     [Header("Wind")]
-    [SerializeField, Min(0f)] private float windAccelerationMultiplier = 8f;
+    [SerializeField, Min(0f)] private float windAccelerationMultiplier = 2.67f;
 
     [Header("Eating Override")]
     [SerializeField, Range(0f, 1f)] private float eatingAnimationFollow = 0.05f;

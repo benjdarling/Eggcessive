@@ -83,6 +83,7 @@ GameObject:
   - component: {fileID: 6481209536847051710}
   - component: {fileID: 6481229536847051712}
   - component: {fileID: 6481239536847051713}
+  - component: {fileID: 6481249536847051714}
   m_Layer: 0
   m_Name: prefab_chicken
   m_TagString: Untagged
@@ -1115,7 +1116,7 @@ MonoBehaviour:
   angleLimit: 75
   animationFollow: 0.35
   blend: 0.85
-  windAccelerationMultiplier: 8
+  windAccelerationMultiplier: 2.67
   eatingAnimationFollow: 0.05
   eatingGravityMultiplier: 2.5
   eatingBlend: 1
@@ -1139,7 +1140,7 @@ MonoBehaviour:
   angleLimit: 75
   animationFollow: 0.35
   blend: 0.85
-  windAccelerationMultiplier: 8
+  windAccelerationMultiplier: 2.67
   eatingAnimationFollow: 0.05
   eatingGravityMultiplier: 2.5
   eatingBlend: 1
@@ -1160,7 +1161,7 @@ MonoBehaviour:
   headName: head.x
   upperSpineName: spine_02.x
   lowerSpineName: spine_01.x
-  fieldOfView: 170
+  fieldOfView: 190
   targetScanInterval: 0.12
   targetSmoothTime: 0.18
   lookInSmoothTime: 0.16
@@ -1256,6 +1257,23 @@ MonoBehaviour:
   combMaximumBend: 25
   tailMaximumBend: 20
   perBoneTurbulenceOffset: 0.08
+--- !u!114 &6481249536847051714
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4761822751608631720}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42f157d760684afc8b9f6976f84a95f7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  radius: 0.22
+  bendStrength: 1
+  flattenStrength: 0.92
+  velocityDirectionInfluence: 0.85
+  falloffPower: 2
 --- !u!1 &5403218294115955668
 GameObject:
   m_ObjectHideFlags: 0

@@ -915,6 +915,86 @@ MonoBehaviour:
     strengthVariation: 0.22
     sidewaysTurbulence: 0.3
     verticalTurbulence: 0.15
+--- !u!1 &750000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 750000002}
+  - component: {fileID: 750000003}
+  m_Layer: 0
+  m_Name: Interactive Grass
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &750000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 750000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: -0.5}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &750000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 750000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 64a25a6d07c74ac7aee6ca278091ad1b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  grassClumpPrefab: {fileID: 1000000000000000001, guid: b19ae66961624a7cbba4f91687a5d337, type: 3}
+  grassClumpMesh: {fileID: 0}
+  grassMaterial: {fileID: 2100000, guid: a91a89581dc24711bd2e2e9e72670680, type: 2}
+  groundColourSource: {fileID: 2100000, guid: b66dae7c3aeba824e8c4e1ad75169f4c, type: 2}
+  castShadows: 0
+  areaSize: {x: 4, y: 5}
+  densityPerSquareMetre: 200
+  spacingMultiplier: 0.7
+  randomSeed: 4187
+  groundLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  groundOffset: 0.002
+  patchScale: 1.25
+  patchThreshold: 0.274
+  clumpScale: 2.4
+  clumpVariation: 0.45
+  minimumEdgeHeightScale: 0.66
+  minimumEdgeWidthScale: 0.5
+  edgeTaperPower: 0.85
+  minimumHeight: 0.04
+  maximumHeight: 0.1
+  minimumWidthScale: 1.25
+  maximumWidthScale: 1.5
+  interactionBendDistance: 0.75
+  flattenResponseTime: 0.055
+  flattenRecoveryTime: 1.15
+  bendResponseTime: 0.06
+  bendRecoveryTime: 0.55
+  steadyWindBend: 0.05
+  turbulentWindBend: 0.5
+  turbulenceDeadZone: 0.012
+  maximumWindBend: 0.42
+  minimumWindResponse: 0.7
+  maximumWindResponse: 1
+  windNoiseOffsetDistance: 0.2
 --- !u!1 &759980837
 GameObject:
   m_ObjectHideFlags: 0
@@ -1902,6 +1982,10 @@ PrefabInstance:
       propertyPath: m_TextStyleHashCode
       value: -1183493901
       objectReference: {fileID: 0}
+    - target: {fileID: 9100000000000000014, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: m_FillAmount
+      value: 1
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -1921,3 +2005,4 @@ SceneRoots:
   - {fileID: 1103470920}
   - {fileID: 1967750123}
   - {fileID: 740000002}
+  - {fileID: 750000002}

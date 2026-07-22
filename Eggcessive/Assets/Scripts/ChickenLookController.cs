@@ -35,7 +35,7 @@ public sealed class ChickenLookController : MonoBehaviour
     [SerializeField] private string lowerSpineName = "spine_01.x";
 
     [Header("Vision")]
-    [SerializeField, Range(1f, 359f)] private float fieldOfView = 170f;
+    [SerializeField, Range(1f, 359f)] private float fieldOfView = 190f;
     [SerializeField, Min(0.02f)] private float targetScanInterval = 0.12f;
     [SerializeField, Min(0.01f)] private float targetSmoothTime = 0.18f;
     [SerializeField, Min(0.01f)] private float lookInSmoothTime = 0.16f;
