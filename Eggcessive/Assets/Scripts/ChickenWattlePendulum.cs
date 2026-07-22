@@ -17,6 +17,9 @@ public sealed class ChickenWattlePendulum : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float animationFollow = 0.35f;
     [SerializeField, Range(0f, 1f)] private float blend = 0.85f;
 
+    [Header("Wind")]
+    [SerializeField, Min(0f)] private float windAccelerationMultiplier = 8f;
+
     [Header("Eating Override")]
     [SerializeField, Range(0f, 1f)] private float eatingAnimationFollow = 0.05f;
     [SerializeField, Min(0f)] private float eatingGravityMultiplier = 2.5f;
@@ -127,9 +130,11 @@ public sealed class ChickenWattlePendulum : MonoBehaviour
         Vector3 velocity = (simulatedPosition - previousPosition) * Mathf.Exp(-damping * deltaTime);
         previousPosition = simulatedPosition;
 
+        Vector3 windAcceleration = GlobalWind.SampleWind(pendulumBone.position)
+            * windAccelerationMultiplier;
         Vector3 predictedPosition = simulatedPosition
             + velocity
-            + Physics.gravity * (activeGravityScale * deltaTime * deltaTime);
+            + (Physics.gravity * activeGravityScale + windAcceleration) * (deltaTime * deltaTime);
 
         Vector3 restDirection = restOffset / tetherLength;
         Vector3 simulatedDirection = predictedPosition - anchorPosition;
@@ -179,6 +184,7 @@ public sealed class ChickenWattlePendulum : MonoBehaviour
         returnStrength = Mathf.Max(0f, returnStrength);
         damping = Mathf.Max(0f, damping);
         gravityScale = Mathf.Max(0f, gravityScale);
+        windAccelerationMultiplier = Mathf.Max(0f, windAccelerationMultiplier);
         angleLimit = Mathf.Clamp(angleLimit, 0f, 90f);
         animationFollow = Mathf.Clamp01(animationFollow);
         blend = Mathf.Clamp01(blend);

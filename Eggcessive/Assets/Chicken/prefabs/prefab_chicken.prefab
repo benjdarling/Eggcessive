@@ -82,6 +82,7 @@ GameObject:
   - component: {fileID: 6481199536847051709}
   - component: {fileID: 6481209536847051710}
   - component: {fileID: 6481229536847051712}
+  - component: {fileID: 6481239536847051713}
   m_Layer: 0
   m_Name: prefab_chicken
   m_TagString: Untagged
@@ -1114,6 +1115,7 @@ MonoBehaviour:
   angleLimit: 75
   animationFollow: 0.35
   blend: 0.85
+  windAccelerationMultiplier: 8
   eatingAnimationFollow: 0.05
   eatingGravityMultiplier: 2.5
   eatingBlend: 1
@@ -1137,6 +1139,7 @@ MonoBehaviour:
   angleLimit: 75
   animationFollow: 0.35
   blend: 0.85
+  windAccelerationMultiplier: 8
   eatingAnimationFollow: 0.05
   eatingGravityMultiplier: 2.5
   eatingBlend: 1
@@ -1224,6 +1227,35 @@ MonoBehaviour:
   velocityTrackingSpeed: 18
   accelerationTrackingSpeed: 12
   leanSmoothTime: 0.08
+--- !u!114 &6481239536847051713
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4761822751608631720}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5fa9b6f5c4ce4e0da6526da3d6d1d5f2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: '::'
+  combBones:
+  - {fileID: 1474331251653657813}
+  - {fileID: 6901268479869109256}
+  - {fileID: 4979521433272160372}
+  tailBone: {fileID: 2702350078080526121}
+  fallbackCombBoneNames:
+  - c_comb_01.x
+  - c_comb_02.x
+  - c_comb_03.x
+  fallbackTailBoneName: c_tail_00.x
+  steadyBendDegreesPerStrength: 6
+  turbulenceBendDegreesPerStrength: 45
+  steadyResponseSpeed: 5
+  turbulenceResponseSpeed: 22
+  combMaximumBend: 25
+  tailMaximumBend: 20
+  perBoneTurbulenceOffset: 0.08
 --- !u!1 &5403218294115955668
 GameObject:
   m_ObjectHideFlags: 0

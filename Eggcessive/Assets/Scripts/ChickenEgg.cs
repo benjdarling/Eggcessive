@@ -9,6 +9,11 @@ using UnityEngine;
 public sealed class ChickenEgg : MonoBehaviour
 {
     private static readonly List<ChickenEgg> ActiveEggs = new List<ChickenEgg>();
+
+    [Header("Size Variation")]
+    [SerializeField, Min(0.01f)] private float minimumScale = 0.95f;
+    [SerializeField, Min(0.01f)] private float maximumScale = 1.05f;
+
     private Rigidbody eggBody;
 
     public static IReadOnlyList<ChickenEgg> ActiveInstances => ActiveEggs;
@@ -18,6 +23,8 @@ public sealed class ChickenEgg : MonoBehaviour
     private void Awake()
     {
         eggBody = GetComponent<Rigidbody>();
+        float randomScale = Random.Range(minimumScale, maximumScale);
+        transform.localScale *= randomScale;
     }
 
     private void OnEnable()
@@ -88,5 +95,11 @@ public sealed class ChickenEgg : MonoBehaviour
 
         IsCollected = true;
         return true;
+    }
+
+    private void OnValidate()
+    {
+        minimumScale = Mathf.Max(0.01f, minimumScale);
+        maximumScale = Mathf.Max(minimumScale, maximumScale);
     }
 }
