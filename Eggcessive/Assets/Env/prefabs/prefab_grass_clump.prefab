@@ -53,71 +53,53 @@ MonoBehaviour:
   autoRegenerate: 1
   disableOtherMeshObjectsOnGenerate: 1
   generationRevision: 26
-  generatedSettingsHash: 174833076
-  bladeCount: 5
+  generatedSettingsHash: 1134063534
+  bladeCount: 12
   bladeHeightRange: {x: 0.5, y: 1}
   bladeWidthRange: {x: 0.3, y: 0.6}
-  spreadRadius: 0.5
+  spreadRadius: 1
   randomSeed: 9
-  verticalCuts: 1
+  verticalCuts: 8
   sideSilhouette:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.55
-      inSlope: 2.8125
-      outSlope: 2.8125
-      tangentMode: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 34
       weightedMode: 0
       inWeight: 0
-      outWeight: 0.33333334
-    - serializedVersion: 3
-      time: 0.31368196
-      value: 0.9112366
-      inSlope: 0.07252821
-      outSlope: 0.07252821
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.09853685
-    - serializedVersion: 3
-      time: 0.6124135
-      value: 0.7548787
-      inSlope: -1.3114349
-      outSlope: -1.3114349
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.11498614
+      outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.10213623
-      inSlope: -2.5244243
-      outSlope: -2.5244243
-      tangentMode: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 34
       weightedMode: 0
-      inWeight: 0.088782474
+      inWeight: 0
       outWeight: 0
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  bendDegreesRange: {x: 2, y: 25}
+  bendDegreesRange: {x: 2, y: 30}
   bendProfile:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0
-      inSlope: 0.17777778
-      outSlope: 0.17777778
+      value: 0.1
+      inSlope: -0.5117395
+      outSlope: -0.5117395
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
-      outWeight: 0.33333334
+      outWeight: 0.10816452
     - serializedVersion: 3
-      time: 0.45
-      value: 0.08
+      time: 0.58870435
+      value: 0.18213868
       inSlope: 0.9252525
       outSlope: 0.9252525
       tangentMode: 0
@@ -127,11 +109,11 @@ MonoBehaviour:
     - serializedVersion: 3
       time: 1
       value: 1
-      inSlope: 1.6727272
-      outSlope: 1.6727272
+      inSlope: 3.794927
+      outSlope: 3.794927
       tangentMode: 0
       weightedMode: 0
-      inWeight: 0.33333334
+      inWeight: 0.043151326
       outWeight: 0
     m_PreInfinity: 2
     m_PostInfinity: 2

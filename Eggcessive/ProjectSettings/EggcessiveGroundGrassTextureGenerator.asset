@@ -1,0 +1,44 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &1
+MonoBehaviour:
+  m_ObjectHideFlags: 53
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 0}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp-Editor::ProceduralGroundGrassTextureSettings
+  hasSavedSettings: 1
+  grassClumpPrefab: {fileID: 1000000000000000001, guid: b19ae66961624a7cbba4f91687a5d337, type: 3}
+  bladeMaterial: {fileID: 2100000, guid: a91a89581dc24711bd2e2e9e72670680, type: 2}
+  targetMaterial: {fileID: 2100000, guid: b66dae7c3aeba824e8c4e1ad75169f4c, type: 2}
+  outputPath: Assets/Env/textures/t_ground_grass_generated.png
+  heightOutputPath: Assets/Env/textures/t_ground_grass_generated_height.png
+  resolution: 1024
+  randomSeed: 91827
+  settingsVersion: 3
+  groundColorVariation: 0
+  cloudCells: 2
+  cloudOctaves: 5
+  cloudContrast: 0.72
+  fineVariation: 0.055
+  groundHeightRange: {x: 0.32, y: 0.55}
+  candidateTufts: 1150
+  tuftDiameterAt1024: {x: 60, y: 152}
+  bladeLayFlat: 2
+  clumpBladeCoverage: 0.5
+  looseBladeAttempts: 400
+  looseBladeCoverage: 0.1
+  sparseCoverage: 0.1
+  patchConcentration: 1.45
+  tipColorStrength: 0.1
+  bladeColorVariation: 0.08
+  bladeShadow: {r: 0.045, g: 0.12, b: 0.025, a: 1}
+  shadowOpacity: 0.1
+  shadowOffsetAt1024: {x: 0.8, y: -0.8}
+  shadowBlurAt1024: 4
+  bladeHeightRange: {x: 0.68, y: 1}

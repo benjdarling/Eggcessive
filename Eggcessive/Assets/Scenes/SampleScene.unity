@@ -14,10 +14,10 @@ OcclusionCullingSettings:
 RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 10
-  m_Fog: 0
-  m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  m_Fog: 1
+  m_FogColor: {r: 0.84696525, g: 1, b: 0.5503144, a: 1}
   m_FogMode: 3
-  m_FogDensity: 0.01
+  m_FogDensity: 0.03
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
   m_AmbientSkyColor: {r: 0.46855342, g: 0.74282014, b: 1, a: 1}
@@ -464,6 +464,7 @@ GameObject:
   - component: {fileID: 410087041}
   - component: {fileID: 410087040}
   - component: {fileID: 410087042}
+  - component: {fileID: 410087043}
   m_Layer: 0
   m_Name: Directional Light
   m_TagString: Untagged
@@ -482,7 +483,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 1.5
+  m_Intensity: 2
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -566,7 +567,7 @@ MonoBehaviour:
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
   m_CustomShadowLayers: 0
-  m_LightCookieSize: {x: 1, y: 1}
+  m_LightCookieSize: {x: 10, y: 10}
   m_LightCookieOffset: {x: 0, y: 0}
   m_SoftShadowQuality: 1
   m_RenderingLayersMask:
@@ -580,6 +581,24 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
+--- !u!114 &410087043
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 410087039}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4ec1fd3216c64c39a99ead9af8548780, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  cookieGeneratorMaterial: {fileID: 2100000, guid: c26076db24e843e99b3819964bce660c, type: 2}
+  cookieWorldSize: 10
+  textureResolution: 512
+  updatesPerSecond: 30
+  scrollSpeed: {x: 0.015, y: 0.003}
+  animateInEditMode: 1
 --- !u!43 &725242267
 Mesh:
   m_ObjectHideFlags: 0
@@ -964,34 +983,38 @@ MonoBehaviour:
   grassMaterial: {fileID: 2100000, guid: a91a89581dc24711bd2e2e9e72670680, type: 2}
   groundColourSource: {fileID: 2100000, guid: b66dae7c3aeba824e8c4e1ad75169f4c, type: 2}
   castShadows: 0
+  groundMaskResolution: 512
   areaSize: {x: 4, y: 5}
   densityPerSquareMetre: 200
   spacingMultiplier: 0.7
-  randomSeed: 4187
+  randomSeed: 4427
   groundLayers:
     serializedVersion: 2
     m_Bits: 4294967295
   groundOffset: 0.002
-  patchScale: 1.25
-  patchThreshold: 0.274
+  targetGrassCoverage: 0.88
+  dirtPatchScale: 0.38
+  dirtEdgeWidth: 0.12
+  dirtEdgeBreakup: 0.16
+  domainWarpStrength: 0.42
   clumpScale: 2.4
   clumpVariation: 0.45
-  minimumEdgeHeightScale: 0.66
+  minimumEdgeHeightScale: 0.4
   minimumEdgeWidthScale: 0.5
   edgeTaperPower: 0.85
   minimumHeight: 0.04
-  maximumHeight: 0.1
-  minimumWidthScale: 1.25
-  maximumWidthScale: 1.5
-  interactionBendDistance: 0.75
-  flattenResponseTime: 0.055
-  flattenRecoveryTime: 1.15
+  maximumHeight: 0.06
+  minimumWidthScale: 1.2
+  maximumWidthScale: 1.6
+  interactionBendDistance: 0.8
+  flattenResponseTime: 0.06
+  flattenRecoveryTime: 1.2
   bendResponseTime: 0.06
   bendRecoveryTime: 0.55
-  steadyWindBend: 0.05
-  turbulentWindBend: 0.5
+  steadyWindBend: 0.08
+  turbulentWindBend: 0.8
   turbulenceDeadZone: 0.012
-  maximumWindBend: 0.42
+  maximumWindBend: 0.6
   minimumWindResponse: 0.7
   maximumWindResponse: 1
   windNoiseOffsetDistance: 0.2

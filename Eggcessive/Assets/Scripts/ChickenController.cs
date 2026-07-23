@@ -4,6 +4,7 @@ using UnityEngine.AI;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
+[RequireComponent(typeof(CapsuleCollider))]
 public sealed class ChickenController : MonoBehaviour
 {
     private enum ChickenState
@@ -20,6 +21,10 @@ public sealed class ChickenController : MonoBehaviour
     private static readonly int BlinkParameter = Animator.StringToHash("Blink");
     private static readonly int BlinkSpeedParameter = Animator.StringToHash("BlinkSpeed");
     private static readonly int TurnLeanParameter = Animator.StringToHash("TurnLean");
+    private static readonly int LayEggParameter = Animator.StringToHash("LayEgg");
+    private static readonly int LayEggState = Animator.StringToHash("Base Layer.Lay Egg");
+    private const float EggSpawnFrame = 9f;
+    private const float DefaultLayEggFrameCount = 22f;
     private const string WingFlutterLayerName = "Wing Flutter Layer";
     private static bool hasWarnedAboutMissingNavMesh;
 
@@ -76,9 +81,10 @@ public sealed class ChickenController : MonoBehaviour
     [Header("Separation")]
     [SerializeField, Min(0f)] private float separationRadius = 0.3f;
     [SerializeField, Min(0f)] private float separationStrength = 0.45f;
-    [SerializeField, Min(0f)] private float eggPushRadius = 0.2f;
-    [SerializeField, Min(0f)] private float eggPushForce = 0.8f;
-    [SerializeField, Min(0.01f)] private float maximumEggPushSpeed = 0.35f;
+    [Tooltip("How far beyond the chicken's body collider eggs begin to receive a gentle nudge.")]
+    [SerializeField, Min(0f)] private float eggPushRadius = 0.025f;
+    [SerializeField, Min(0f)] private float eggPushForce = 3.25f;
+    [SerializeField, Min(0.01f)] private float maximumEggPushSpeed = 0.25f;
 
     [Header("Egg Laying")]
     [SerializeField] private GameObject eggPrefab = null;
@@ -87,6 +93,12 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float emptyFoodEggIntervalMultiplier = 2f;
     [SerializeField, Min(0.01f)] private float fullFoodEggIntervalMultiplier = 0.55f;
     [SerializeField, Min(0f)] private float eggLayingDuration = 1f;
+    [Tooltip("Bone used as the physical launch point. A Blender axis suffix such as '.x' is matched automatically.")]
+    [SerializeField] private string eggSpawnBoneName = "spine_01";
+    [SerializeField, Min(0f)] private float eggLaunchSpeed = 3f;
+    [SerializeField, Range(0f, 1f)] private float eggLaunchSpeedVariation = 0.1f;
+    [SerializeField, Min(0f)] private float eggLaunchSpin = 12f;
+    [Header("Egg Laying Fallback Position")]
     [SerializeField, Min(0f)] private float eggSpawnHeight = 0.08f;
     [SerializeField, Min(0f)] private float eggSpawnBehindDistance = 0.06f;
 
@@ -94,6 +106,7 @@ public sealed class ChickenController : MonoBehaviour
     private NavMeshPath path;
 
     private NavMeshAgent agent;
+    private CapsuleCollider bodyCollider;
     private NavMeshQueryFilter navMeshQueryFilter;
     private ChickenState state;
     private FoodPile targetFood;
@@ -121,6 +134,9 @@ public sealed class ChickenController : MonoBehaviour
     private bool wingMicroTwitchActive;
     private Vector3 previousPlanarForward;
     private bool navigationReady;
+    private Transform eggSpawnBone;
+    private bool eggSpawnedDuringLay;
+    private float eggSpawnNormalizedTime = EggSpawnFrame / DefaultLayEggFrameCount;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
@@ -131,6 +147,7 @@ public sealed class ChickenController : MonoBehaviour
     {
         path = new NavMeshPath();
         agent = GetComponent<NavMeshAgent>();
+        bodyCollider = GetComponent<CapsuleCollider>();
         agent.speed = moveSpeed;
         agent.acceleration = acceleration;
         agent.angularSpeed = angularSpeed;
@@ -150,6 +167,9 @@ public sealed class ChickenController : MonoBehaviour
         {
             animator = GetComponentInChildren<Animator>(true);
         }
+
+        CacheLayEggAnimationTiming();
+        eggSpawnBone = FindEggSpawnBone();
 
         CacheWingFlutterLayer();
 
@@ -185,6 +205,7 @@ public sealed class ChickenController : MonoBehaviour
         if (animator != null)
         {
             animator.ResetTrigger(BlinkParameter);
+            animator.ResetTrigger(LayEggParameter);
             animator.SetFloat(TurnLeanParameter, 0f);
             SetWingFlutterWeight(0f);
         }
@@ -242,6 +263,14 @@ public sealed class ChickenController : MonoBehaviour
     private void FixedUpdate()
     {
         PushNearbyEggs();
+    }
+
+    private void LateUpdate()
+    {
+        if (state == ChickenState.EggLaying && !eggSpawnedDuringLay)
+        {
+            TrySpawnEggAtAnimationFrame();
+        }
     }
 
     private void UpdateFoodAndEggTimers()
@@ -360,7 +389,12 @@ public sealed class ChickenController : MonoBehaviour
             return;
         }
 
-        LayEgg();
+        // Preserve egg production if the controller/clip is temporarily
+        // missing or the animation was interrupted before frame 9.
+        if (!eggSpawnedDuringLay)
+        {
+            LayEgg();
+        }
         ScheduleNextEgg();
         BeginIdle();
     }
@@ -466,8 +500,15 @@ public sealed class ChickenController : MonoBehaviour
     {
         state = ChickenState.EggLaying;
         stateEndTime = Time.time + eggLayingDuration;
+        eggSpawnedDuringLay = false;
         targetFood = null;
         SetEatingAnimation(false);
+
+        if (animator != null && animator.runtimeAnimatorController != null)
+        {
+            animator.ResetTrigger(LayEggParameter);
+            animator.SetTrigger(LayEggParameter);
+        }
 
         if (navigationReady && agent.isOnNavMesh)
         {
@@ -611,47 +652,90 @@ public sealed class ChickenController : MonoBehaviour
 
     private void PushNearbyEggs()
     {
-        if (eggPushRadius <= 0f || eggPushForce <= 0f)
+        if (bodyCollider == null || eggPushForce <= 0f)
         {
             return;
         }
 
-        int hitCount = Physics.OverlapSphereNonAlloc(
-            transform.position,
+        Bounds bodyBounds = bodyCollider.bounds;
+        Vector3 searchPadding = new Vector3(
             eggPushRadius,
+            Mathf.Max(0.02f, eggPushRadius),
+            eggPushRadius);
+        int hitCount = Physics.OverlapBoxNonAlloc(
+            bodyBounds.center,
+            bodyBounds.extents + searchPadding,
             eggColliderBuffer,
+            Quaternion.identity,
             Physics.AllLayers,
             QueryTriggerInteraction.Ignore);
 
-        float radiusSquared = eggPushRadius * eggPushRadius;
-
         for (int i = 0; i < hitCount; i++)
         {
-            Rigidbody eggBody = eggColliderBuffer[i].attachedRigidbody;
+            Collider eggCollider = eggColliderBuffer[i];
+            Rigidbody eggBody = eggCollider.attachedRigidbody;
 
-            if (eggBody == null || eggBody.isKinematic || !eggBody.TryGetComponent(out ChickenEgg _))
+            if (eggBody == null
+                || eggBody.isKinematic
+                || !eggBody.TryGetComponent(out ChickenEgg egg)
+                || egg.IsHeld
+                || egg.IsCollected)
             {
                 continue;
             }
 
-            Vector3 offset = eggBody.worldCenterOfMass - transform.position;
-            offset.y = 0f;
-            float distanceSquared = offset.sqrMagnitude;
+            Vector3 pushDirection;
+            float proximity;
+            bool overlapping = Physics.ComputePenetration(
+                eggCollider,
+                eggCollider.transform.position,
+                eggCollider.transform.rotation,
+                bodyCollider,
+                bodyCollider.transform.position,
+                bodyCollider.transform.rotation,
+                out Vector3 separationDirection,
+                out float penetrationDepth);
 
-            if (distanceSquared >= radiusSquared)
+            if (overlapping)
             {
-                continue;
+                pushDirection = separationDirection;
+                pushDirection.y = 0f;
+                proximity = eggPushRadius > 0f
+                    ? 1f + Mathf.Clamp01(penetrationDepth / eggPushRadius)
+                    : 1f;
+            }
+            else
+            {
+                Vector3 pointOnChicken = bodyCollider.ClosestPoint(eggBody.worldCenterOfMass);
+                Vector3 pointOnEgg = eggCollider.ClosestPoint(pointOnChicken);
+                Vector3 surfaceGap = pointOnEgg - pointOnChicken;
+                surfaceGap.y = 0f;
+                float gap = surfaceGap.magnitude;
+
+                if (eggPushRadius <= 0f || gap >= eggPushRadius)
+                {
+                    continue;
+                }
+
+                pushDirection = gap > 0.0001f ? surfaceGap / gap : Vector3.zero;
+                proximity = 1f - gap / eggPushRadius;
             }
 
-            if (distanceSquared < 0.000001f)
+            if (pushDirection.sqrMagnitude < 0.0001f)
             {
-                offset = transform.right;
-                distanceSquared = 0.000001f;
+                pushDirection = eggBody.worldCenterOfMass - bodyBounds.center;
+                pushDirection.y = 0f;
             }
 
-            float distance = Mathf.Sqrt(distanceSquared);
-            float proximity = 1f - distance / eggPushRadius;
-            Vector3 pushDirection = offset / distance;
+            if (pushDirection.sqrMagnitude < 0.0001f)
+            {
+                pushDirection = transform.right;
+            }
+            else
+            {
+                pushDirection.Normalize();
+            }
+
             Vector3 planarEggVelocity = eggBody.linearVelocity;
             planarEggVelocity.y = 0f;
             float outwardSpeed = Mathf.Max(0f, Vector3.Dot(planarEggVelocity, pushDirection));
@@ -661,23 +745,29 @@ public sealed class ChickenController : MonoBehaviour
                 continue;
             }
 
-            float speedRoom = 1f - outwardSpeed / maximumEggPushSpeed;
+            float remainingSpeed = maximumEggPushSpeed - outwardSpeed;
+            float pushAcceleration = Mathf.Min(
+                eggPushForce * proximity,
+                remainingSpeed / Mathf.Max(Time.fixedDeltaTime, 0.0001f));
             eggBody.AddForce(
-                pushDirection * (eggPushForce * proximity * speedRoom),
+                pushDirection * pushAcceleration,
                 ForceMode.Acceleration);
         }
     }
 
     private void LayEgg()
     {
-        if (eggPrefab == null)
+        if (eggPrefab == null || eggSpawnedDuringLay)
         {
             return;
         }
 
-        Vector3 eggPosition = transform.position
-            + Vector3.up * eggSpawnHeight
-            - transform.forward * eggSpawnBehindDistance;
+        eggSpawnedDuringLay = true;
+        Vector3 eggPosition = eggSpawnBone != null
+            ? eggSpawnBone.position
+            : transform.position
+                + Vector3.up * eggSpawnHeight
+                - GetPlanarForward() * eggSpawnBehindDistance;
         Quaternion eggRotation = Quaternion.Euler(0f, Random.Range(-180f, 180f), 0f);
         GameObject egg = Instantiate(eggPrefab, eggPosition, eggRotation);
 
@@ -685,6 +775,91 @@ public sealed class ChickenController : MonoBehaviour
         {
             egg.AddComponent<ChickenEgg>();
         }
+
+        if (egg.TryGetComponent(out Rigidbody eggBody) && !eggBody.isKinematic)
+        {
+            // Equal downward/back components produce a 45-degree launch.
+            Vector3 launchDirection = (Vector3.down - GetPlanarForward()).normalized;
+            float variedLaunchSpeed = eggLaunchSpeed * Random.Range(
+                1f - eggLaunchSpeedVariation,
+                1f + eggLaunchSpeedVariation);
+            eggBody.linearVelocity = launchDirection * variedLaunchSpeed;
+            eggBody.AddTorque(Random.onUnitSphere * eggLaunchSpin, ForceMode.VelocityChange);
+        }
+    }
+
+    private void TrySpawnEggAtAnimationFrame()
+    {
+        if (animator == null || animator.runtimeAnimatorController == null)
+        {
+            return;
+        }
+
+        AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
+        if (stateInfo.fullPathHash == LayEggState
+            && stateInfo.normalizedTime >= eggSpawnNormalizedTime)
+        {
+            LayEgg();
+        }
+    }
+
+    private void CacheLayEggAnimationTiming()
+    {
+        if (animator == null || animator.runtimeAnimatorController == null)
+        {
+            return;
+        }
+
+        AnimationClip[] clips = animator.runtimeAnimatorController.animationClips;
+        for (int i = 0; i < clips.Length; i++)
+        {
+            AnimationClip clip = clips[i];
+            if (clip == null
+                || clip.name.IndexOf("layEgg", System.StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                continue;
+            }
+
+            float frameCount = Mathf.Max(1f, Mathf.Round(clip.length * clip.frameRate));
+            eggSpawnNormalizedTime = Mathf.Clamp01(EggSpawnFrame / frameCount);
+            return;
+        }
+    }
+
+    private Transform FindEggSpawnBone()
+    {
+        if (animator == null || string.IsNullOrWhiteSpace(eggSpawnBoneName))
+        {
+            return null;
+        }
+
+        Transform[] bones = animator.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < bones.Length; i++)
+        {
+            if (string.Equals(
+                    bones[i].name,
+                    eggSpawnBoneName,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return bones[i];
+            }
+        }
+
+        string blenderAxisPrefix = eggSpawnBoneName + ".";
+        for (int i = 0; i < bones.Length; i++)
+        {
+            if (bones[i].name.StartsWith(
+                    blenderAxisPrefix,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return bones[i];
+            }
+        }
+
+        Debug.LogWarning(
+            $"{nameof(ChickenController)} could not find egg spawn bone '{eggSpawnBoneName}' below '{animator.name}'. Using the fallback position.",
+            this);
+        return null;
     }
 
     private void ScheduleNextEgg()
@@ -955,11 +1130,19 @@ public sealed class ChickenController : MonoBehaviour
         eggPushRadius = Mathf.Max(0f, eggPushRadius);
         eggPushForce = Mathf.Max(0f, eggPushForce);
         maximumEggPushSpeed = Mathf.Max(0.01f, maximumEggPushSpeed);
+        CapsuleCollider collider = GetComponent<CapsuleCollider>();
+        if (collider != null)
+        {
+            collider.isTrigger = true;
+        }
         minEggLayTime = Mathf.Max(0f, minEggLayTime);
         maxEggLayTime = Mathf.Max(minEggLayTime, maxEggLayTime);
         emptyFoodEggIntervalMultiplier = Mathf.Max(0.01f, emptyFoodEggIntervalMultiplier);
         fullFoodEggIntervalMultiplier = Mathf.Max(0.01f, fullFoodEggIntervalMultiplier);
         eggLayingDuration = Mathf.Max(0f, eggLayingDuration);
+        eggLaunchSpeed = Mathf.Max(0f, eggLaunchSpeed);
+        eggLaunchSpeedVariation = Mathf.Clamp01(eggLaunchSpeedVariation);
+        eggLaunchSpin = Mathf.Max(0f, eggLaunchSpin);
         eggSpawnHeight = Mathf.Max(0f, eggSpawnHeight);
         eggSpawnBehindDistance = Mathf.Max(0f, eggSpawnBehindDistance);
     }

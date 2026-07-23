@@ -84,6 +84,7 @@ GameObject:
   - component: {fileID: 6481229536847051712}
   - component: {fileID: 6481239536847051713}
   - component: {fileID: 6481249536847051714}
+  - component: {fileID: 6481259536847051715}
   m_Layer: 0
   m_Name: prefab_chicken
   m_TagString: Untagged
@@ -185,15 +186,19 @@ MonoBehaviour:
   maxWingMicroTwitchDuration: 0.14
   separationRadius: 0.3
   separationStrength: 0.45
-  eggPushRadius: 0.2
-  eggPushForce: 0.8
-  maximumEggPushSpeed: 0.35
+  eggPushRadius: 0.025
+  eggPushForce: 3.25
+  maximumEggPushSpeed: 0.25
   eggPrefab: {fileID: 50798105233725807, guid: 12c0181fc0ab3cd43b6fcef8c80bd418, type: 3}
   minEggLayTime: 6
   maxEggLayTime: 12
   emptyFoodEggIntervalMultiplier: 2
   fullFoodEggIntervalMultiplier: 0.55
   eggLayingDuration: 1
+  eggSpawnBoneName: spine_01
+  eggLaunchSpeed: 3
+  eggLaunchSpeedVariation: 0.1
+  eggLaunchSpin: 12
   eggSpawnHeight: 0.08
   eggSpawnBehindDistance: 0.06
 --- !u!114 &6481139536847051703
@@ -1274,6 +1279,29 @@ MonoBehaviour:
   flattenStrength: 0.92
   velocityDirectionInfluence: 0.85
   falloffPower: 2
+--- !u!136 &6481259536847051715
+CapsuleCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4761822751608631720}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Radius: 0.16
+  m_Height: 0.36
+  m_Direction: 1
+  m_Center: {x: 0, y: 0.18, z: 0}
 --- !u!1 &5403218294115955668
 GameObject:
   m_ObjectHideFlags: 0

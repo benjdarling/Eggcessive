@@ -19,7 +19,7 @@ public sealed class ProceduralGrassClumpAuthoring : MonoBehaviour
     [SerializeField, Range(1, 64)] private int bladeCount = 9;
     [SerializeField] private Vector2 bladeHeightRange = new Vector2(0.62f, 1f);
     [SerializeField] private Vector2 bladeWidthRange = new Vector2(0.028f, 0.052f);
-    [SerializeField, Range(0f, 0.5f)] private float spreadRadius = 0.055f;
+    [SerializeField, Min(0f)] private float spreadRadius = 0.055f;
     [SerializeField] private int randomSeed = 7319;
 
     [Header("Blade Silhouette")]

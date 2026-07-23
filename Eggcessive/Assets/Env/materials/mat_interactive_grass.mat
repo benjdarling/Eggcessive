@@ -18,18 +18,23 @@ Material:
   m_DoubleSidedGI: 1
   m_CustomRenderQueue: -1
   stringTagMap:
-    RenderType: Opaque
+    RenderType: TransparentCutout
   disabledShaderPasses: []
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
-    m_TexEnvs: []
+    m_TexEnvs:
+    - _AlphaMap:
+        m_Texture: {fileID: 2800000, guid: bc737d80a00ddf44288f62a8f0696307, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _DryBlend: 0.1
+    - _Cutoff: 0.5
+    - _DryBlend: 0.2
     m_Colors:
-    - _BaseColor: {r: 0.12, g: 0.32, b: 0.06, a: 1}
+    - _BaseColor: {r: 0.23471946, g: 0.44025147, b: 0.07891295, a: 1}
     - _DryColor: {r: 0.58, g: 0.55, b: 0.18, a: 1}
-    - _TipColor: {r: 0.1587805, g: 0.42, b: 0.07682927, a: 1}
+    - _TipColor: {r: 0.2604166, g: 0.5, b: 0.07291666, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

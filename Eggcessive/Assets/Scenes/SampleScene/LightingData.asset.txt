@@ -1,0 +1,151 @@
+External References
+path(1): "" GUID: 99c9720ab356a0642a771bea13969a05 Type: 3
+path(2): "" GUID: cada5986a82eb79439cb0df9d0ce6602 Type: 3
+path(3): "" GUID: 841c81f5b981c214294af91eff7f1470 Type: 3
+
+
+ID: 25800002 (ClassID: 258) LightProbes
+	m_ObjectHideFlags 9 (unsigned int)
+	m_CorrespondingSourceObject  (PPtr<EditorExtension>)
+		m_FileID 0 (int)
+		m_PathID 0 (SInt64)
+	m_PrefabInstance  (PPtr<PrefabInstance>)
+		m_FileID 0 (int)
+		m_PathID 0 (SInt64)
+	m_PrefabAsset  (PPtr<Prefab>)
+		m_FileID 0 (int)
+		m_PathID 0 (SInt64)
+	m_Name "(Clone)" (string)
+	m_Data  (LightProbeData)
+		m_Tetrahedralization  (ProbeSetTetrahedralization)
+			m_Tetrahedra  (vector)
+				size 0 (int)
+
+			m_HullRays  (vector)
+				size 0 (int)
+
+		m_ProbeSets  (vector)
+			size 0 (int)
+
+		m_Positions  (vector)
+			size 0 (int)
+
+		m_NonTetrahedralizedProbeSetIndexMap  (map)
+			size 0 (int)
+
+	m_BakedCoefficients  (vector)
+		size 0 (int)
+
+	m_BakedLightOcclusion  (vector)
+		size 0 (int)
+
+	m_HasBeenEdited 0 (bool)
+
+
+ID: 112000000 (ClassID: 1120) LightingDataAsset
+	m_ObjectHideFlags 0 (unsigned int)
+	m_CorrespondingSourceObject  (PPtr<EditorExtension>)
+		m_FileID 0 (int)
+		m_PathID 0 (SInt64)
+	m_PrefabInstance  (PPtr<PrefabInstance>)
+		m_FileID 0 (int)
+		m_PathID 0 (SInt64)
+	m_PrefabAsset  (PPtr<Prefab>)
+		m_FileID 0 (int)
+		m_PathID 0 (SInt64)
+	m_Name "LightingData" (string)
+	m_Scene  (PPtr<SceneAsset>)
+		m_FileID 1 (int)
+		m_PathID 102900000 (SInt64)
+	m_Lightmaps  (vector)
+		size 0 (int)
+
+	m_AOTextures  (vector)
+		size 0 (int)
+
+	m_LightProbes  (PPtr<LightProbes>)
+		m_FileID 0 (int)
+		m_PathID 25800002 (SInt64)
+	m_LightmapsMode 1 (int)
+	m_BakedAmbientProbeInLinear  (SphericalHarmonicsL2)
+		sh[ 0] 0.0734077 (float)
+		sh[ 1] 0.0402084 (float)
+		sh[ 2] -0.00576811 (float)
+		sh[ 3] 0.00576775 (float)
+		sh[ 4] 0.00448887 (float)
+		sh[ 5] -0.00448904 (float)
+		sh[ 6] 0.00590915 (float)
+		sh[ 7] -0.00493589 (float)
+		sh[ 8] 0.0177274 (float)
+		sh[ 9] 0.177894 (float)
+		sh[10] 0.108384 (float)
+		sh[11] -0.0152154 (float)
+		sh[12] 0.0152141 (float)
+		sh[13] 0.0121517 (float)
+		sh[14] -0.0121522 (float)
+		sh[15] 0.0125269 (float)
+		sh[16] -0.0116347 (float)
+		sh[17] 0.037581 (float)
+		sh[18] 0.32582 (float)
+		sh[19] 0.249497 (float)
+		sh[20] -0.0330132 (float)
+		sh[21] 0.0330072 (float)
+		sh[22] 0.0281845 (float)
+		sh[23] -0.0281871 (float)
+		sh[24] 0.0140104 (float)
+		sh[25] -0.0193534 (float)
+		sh[26] 0.0420312 (float)
+	m_LightmappedRendererData  (vector)
+		size 0 (int)
+
+	m_LightmappedRendererDataIDs  (vector)
+		size 0 (int)
+
+	m_EnlightenSceneMapping  (EnlightenSceneMapping)
+		m_Renderers  (vector)
+			size 0 (int)
+
+		m_Systems  (vector)
+			size 0 (int)
+
+		m_Probesets  (vector)
+			size 0 (int)
+
+		m_SystemAtlases  (vector)
+			size 0 (int)
+
+		m_TerrainChunks  (vector)
+			size 0 (int)
+
+	m_EnlightenSceneMappingRendererIDs  (vector)
+		size 0 (int)
+
+	m_Lights  (vector)
+		size 0 (int)
+
+	m_LightBakingOutputs  (vector)
+		size 0 (int)
+
+	m_BakedReflectionProbeCubemaps  (vector)
+		size 2 (int)
+		data  (PPtr<Texture>)
+			m_FileID 2 (int)
+			m_PathID 8900000 (SInt64)
+		data  (PPtr<Texture>)
+			m_FileID 3 (int)
+			m_PathID 8900000 (SInt64)
+
+	m_BakedReflectionProbes  (vector)
+		size 1 (int)
+		data  (SceneObjectIdentifier)
+			targetObject 1894698963 (SInt64)
+			targetPrefab 0 (SInt64)
+
+	m_EnlightenData  (vector)
+		size 74 (int)
+		data (UInt8) #0: 85 110 105 116 121 70 83 0 0 0 0 8 53 46 120 46 120 0 54 48 48 48 46 51 46
+		data (UInt8) #25: 49 49 102 49 0 0 0 0 0 0 0 0 74 0 0 0 10 0 0 0 24 0 0 0 195
+		data (UInt8) #50: 166 61 213 13 90 62 245 172 227 62 0 0 128 63 30 0 1 0 80 0 0 0 0 0
+	m_EnlightenDataVersion 112 (int)
+
+

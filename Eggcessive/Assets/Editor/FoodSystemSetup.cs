@@ -91,6 +91,7 @@ public static class FoodSystemSetup
         AnimatorController controller =
             AnimatorController.CreateAnimatorControllerAtPath(AnimatorControllerPath);
         controller.AddParameter("IsEating", AnimatorControllerParameterType.Bool);
+        controller.AddParameter("LayEgg", AnimatorControllerParameterType.Trigger);
 
         AnimationClip[] clips = AssetDatabase.LoadAllAssetsAtPath(ChickenModelPath)
             .OfType<AnimationClip>()
@@ -98,12 +99,13 @@ public static class FoodSystemSetup
             .ToArray();
         AnimationClip idleClip = FindClip(clips, "idle");
         AnimationClip eatClip = FindClip(clips, "eat");
+        AnimationClip layEggClip = FindClip(clips, "layEgg");
 
-        if (idleClip == null || eatClip == null)
+        if (idleClip == null || eatClip == null || layEggClip == null)
         {
             string available = string.Join(", ", clips.Select(clip => clip.name));
             throw new InvalidOperationException(
-                $"Chicken idle/eat clips were not both found. Imported clips: {available}");
+                $"Chicken idle/eat/layEgg clips were not all found. Imported clips: {available}");
         }
 
         AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
@@ -111,6 +113,8 @@ public static class FoodSystemSetup
         idleState.motion = idleClip;
         AnimatorState eatState = stateMachine.AddState("Eat");
         eatState.motion = eatClip;
+        AnimatorState layEggState = stateMachine.AddState("Lay Egg");
+        layEggState.motion = layEggClip;
         stateMachine.defaultState = idleState;
 
         AnimatorStateTransition startEating = idleState.AddTransition(eatState);
@@ -122,6 +126,17 @@ public static class FoodSystemSetup
         stopEating.hasExitTime = false;
         stopEating.duration = 0.08f;
         stopEating.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsEating");
+
+        AnimatorStateTransition startLaying = stateMachine.AddAnyStateTransition(layEggState);
+        startLaying.hasExitTime = false;
+        startLaying.duration = 0.04f;
+        startLaying.canTransitionToSelf = false;
+        startLaying.AddCondition(AnimatorConditionMode.If, 0f, "LayEgg");
+
+        AnimatorStateTransition finishLaying = layEggState.AddTransition(idleState);
+        finishLaying.hasExitTime = true;
+        finishLaying.exitTime = 1f;
+        finishLaying.duration = 0.05f;
         EditorUtility.SetDirty(controller);
         return controller;
     }

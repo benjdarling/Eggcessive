@@ -11,7 +11,6 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     private const int MaximumInstancesPerDraw = 1023;
     private static readonly int GrassBendId = Shader.PropertyToID("_GrassBend");
     private static readonly int GrassVariationId = Shader.PropertyToID("_GrassVariation");
-    private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
     private sealed class GrassInstance
     {
@@ -42,6 +41,9 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private Material groundColourSource = null;
     [SerializeField] private bool castShadows = false;
 
+    [Header("Ground Layer Mask")]
+    [SerializeField, Range(64, 2048)] private int groundMaskResolution = 512;
+
     [Header("Placement Area")]
     [SerializeField] private Vector2 areaSize = new Vector2(3.2f, 3.2f);
     [SerializeField, Min(1f)] private float densityPerSquareMetre = 140f;
@@ -50,9 +52,18 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private LayerMask groundLayers = ~0;
     [SerializeField, Min(0f)] private float groundOffset = 0.002f;
 
-    [Header("Patch Variation")]
-    [SerializeField, Min(0.01f)] private float patchScale = 0.55f;
-    [SerializeField, Range(0f, 0.9f)] private float patchThreshold = 0.34f;
+    [Header("Natural Meadow Coverage")]
+    [Tooltip("Approximate proportion of the area occupied by the broad grass bed.")]
+    [SerializeField, Range(0.75f, 0.98f)] private float targetGrassCoverage = 0.88f;
+    [Tooltip("World-space frequency of the large dirt pockets. Lower values make fewer, larger regions.")]
+    [SerializeField, Min(0.01f)] private float dirtPatchScale = 0.38f;
+    [Tooltip("Width of the partially covered rim between solid grass and solid dirt.")]
+    [SerializeField, Range(0.02f, 0.3f)] private float dirtEdgeWidth = 0.12f;
+    [Tooltip("Fine distortion applied only near dirt boundaries.")]
+    [SerializeField, Range(0f, 0.4f)] private float dirtEdgeBreakup = 0.16f;
+    [SerializeField, Min(0f)] private float domainWarpStrength = 0.42f;
+
+    [Header("Clump Density Variation")]
     [SerializeField, Min(0.01f)] private float clumpScale = 2.4f;
     [SerializeField, Range(0f, 1f)] private float clumpVariation = 0.45f;
 
@@ -98,6 +109,9 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     private int clumpPrefabSignature;
 
     public int InstanceCount { get; private set; }
+    public Vector2 AreaSize => areaSize;
+    public int GroundMaskResolution => groundMaskResolution;
+    public Material GroundColourSource => groundColourSource;
 
     private void OnEnable()
     {
@@ -205,18 +219,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
                 Mathf.Lerp(-areaSize.y * 0.5f, areaSize.y * 0.5f, NextFloat(random)));
 
             Vector3 worldCandidate = transform.TransformPoint(new Vector3(point.x, 0f, point.y));
-            float broadNoise = Mathf.PerlinNoise(
-                worldCandidate.x * patchScale + randomSeed * 0.0131f,
-                worldCandidate.z * patchScale - randomSeed * 0.0097f);
-            float patchWeight = Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.InverseLerp(patchThreshold, 1f, broadNoise));
-            float detailNoise = Mathf.PerlinNoise(
-                worldCandidate.x * clumpScale - randomSeed * 0.021f,
-                worldCandidate.z * clumpScale + randomSeed * 0.017f);
-            float clumpWeight = Mathf.Lerp(1f, detailNoise, clumpVariation);
-            float acceptance = patchWeight * clumpWeight;
+            EvaluateGrassDistribution(
+                worldCandidate,
+                out float patchWeight,
+                out float clumpWeight,
+                out float acceptance);
             if (NextFloat(random) > acceptance || HasCloseNeighbour(point, grid, cellSize, minimumSpacing))
             {
                 continue;
@@ -274,6 +281,138 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         }
 
         return instances;
+    }
+
+    public float EvaluateGrassDistribution(Vector3 worldPosition)
+    {
+        EvaluateGrassDistribution(
+            worldPosition,
+            out _,
+            out _,
+            out float distribution);
+        return distribution;
+    }
+
+    public float EvaluateGroundGrassCoverage(Vector3 worldPosition)
+    {
+        EvaluateGrassDistribution(
+            worldPosition,
+            out float coverage,
+            out _,
+            out _);
+        return coverage;
+    }
+
+    public float EvaluateGrassTransitionNoise(Vector3 worldPosition)
+    {
+        float clumpNoise = Mathf.PerlinNoise(
+            worldPosition.x * clumpScale - randomSeed * 0.021f,
+            worldPosition.z * clumpScale + randomSeed * 0.017f);
+        float scatterNoise = Mathf.PerlinNoise(
+            worldPosition.x * clumpScale * 2.37f + randomSeed * 0.031f,
+            worldPosition.z * clumpScale * 2.37f - randomSeed * 0.027f);
+        return Mathf.Clamp01(clumpNoise * 0.62f + scatterNoise * 0.38f);
+    }
+
+    public void GetGroundCoverageDiscs(List<Vector4> coverageDiscs)
+    {
+        if (coverageDiscs == null)
+        {
+            throw new ArgumentNullException(nameof(coverageDiscs));
+        }
+
+        coverageDiscs.Clear();
+        for (int batchIndex = 0; batchIndex < batches.Length; batchIndex++)
+        {
+            GrassInstance[] instances = batches[batchIndex].instances;
+            for (int i = 0; i < instances.Length; i++)
+            {
+                AddGroundCoverageDisc(instances[i], coverageDiscs);
+            }
+        }
+
+        // Automatic editor setup can run before ExecuteAlways has retained its
+        // draw batches. Recreate the same deterministic placement rather than
+        // silently writing an empty placed-coverage channel.
+        if (coverageDiscs.Count == 0 && isActiveAndEnabled)
+        {
+            List<GrassInstance> deterministicPlacement = GeneratePlacement();
+            for (int i = 0; i < deterministicPlacement.Count; i++)
+            {
+                AddGroundCoverageDisc(deterministicPlacement[i], coverageDiscs);
+            }
+        }
+    }
+
+    private static void AddGroundCoverageDisc(
+        GrassInstance instance,
+        List<Vector4> coverageDiscs)
+    {
+        Vector4 scaleX = instance.matrix.GetColumn(0);
+        Vector4 scaleZ = instance.matrix.GetColumn(2);
+        float footprintRadius = Mathf.Max(
+            new Vector3(scaleX.x, scaleX.y, scaleX.z).magnitude,
+            new Vector3(scaleZ.x, scaleZ.y, scaleZ.z).magnitude);
+        coverageDiscs.Add(new Vector4(
+            instance.position.x,
+            instance.position.z,
+            Mathf.Max(0.01f, footprintRadius),
+            1f));
+    }
+
+    private void EvaluateGrassDistribution(
+        Vector3 worldPosition,
+        out float patchWeight,
+        out float clumpWeight,
+        out float distribution)
+    {
+        float warpFrequency = dirtPatchScale * 0.55f;
+        float warpX = Mathf.PerlinNoise(
+            worldPosition.x * warpFrequency + randomSeed * 0.041f,
+            worldPosition.z * warpFrequency - randomSeed * 0.033f) - 0.5f;
+        float warpZ = Mathf.PerlinNoise(
+            worldPosition.x * warpFrequency - randomSeed * 0.037f,
+            worldPosition.z * warpFrequency + randomSeed * 0.047f) - 0.5f;
+        float warpedX = worldPosition.x + warpX * domainWarpStrength;
+        float warpedZ = worldPosition.z + warpZ * domainWarpStrength;
+
+        // A dominant low octave produces a small number of broad dirt pockets;
+        // the secondary octave prevents perfectly round Perlin islands without
+        // splitting them into many similarly sized spots.
+        float broadDirtNoise = Mathf.PerlinNoise(
+            warpedX * dirtPatchScale + randomSeed * 0.0131f,
+            warpedZ * dirtPatchScale - randomSeed * 0.0097f);
+        float shapeNoise = Mathf.PerlinNoise(
+            warpedX * dirtPatchScale * 1.83f - randomSeed * 0.015f,
+            warpedZ * dirtPatchScale * 1.83f + randomSeed * 0.019f);
+        float dirtSignal = broadDirtNoise * 0.82f + shapeNoise * 0.18f;
+
+        float coverageRange = Mathf.InverseLerp(0.75f, 0.98f, targetGrassCoverage);
+        float dirtThreshold = Mathf.Lerp(0.52f, 0.70f, coverageRange);
+        float distanceFromBoundary = Mathf.Abs(dirtSignal - dirtThreshold);
+        float boundaryInfluence = 1f - Mathf.SmoothStep(
+            dirtEdgeWidth,
+            dirtEdgeWidth * 2.5f,
+            distanceFromBoundary);
+        float edgeNoise = Mathf.PerlinNoise(
+            warpedX * clumpScale * 1.91f + randomSeed * 0.083f,
+            warpedZ * clumpScale * 1.91f - randomSeed * 0.079f) - 0.5f;
+        dirtSignal += edgeNoise * dirtEdgeBreakup * boundaryInfluence;
+
+        float dirtWeight = Mathf.SmoothStep(
+            0f,
+            1f,
+            Mathf.InverseLerp(
+                dirtThreshold - dirtEdgeWidth * 0.5f,
+                dirtThreshold + dirtEdgeWidth * 0.5f,
+                dirtSignal));
+        patchWeight = 1f - dirtWeight;
+
+        float detailNoise = Mathf.PerlinNoise(
+            warpedX * clumpScale - randomSeed * 0.021f,
+            warpedZ * clumpScale + randomSeed * 0.017f);
+        clumpWeight = Mathf.Lerp(1f, Mathf.Lerp(0.72f, 1f, detailNoise), clumpVariation);
+        distribution = Mathf.Clamp01(patchWeight * clumpWeight);
     }
 
     private void UpdateInteractionState()
@@ -410,13 +549,6 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         for (int i = 0; i < batches.Length; i++)
         {
             DrawBatch batch = batches[i];
-            if (groundColourSource != null && groundColourSource.HasProperty(BaseColorId))
-            {
-                batch.properties.SetColor(
-                    BaseColorId,
-                    groundColourSource.GetColor(BaseColorId));
-            }
-
             batch.properties.SetVectorArray(GrassBendId, batch.bends);
             Graphics.DrawMeshInstanced(
                 activeMesh,
@@ -728,6 +860,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         minimumEdgeHeightScale = Mathf.Clamp(minimumEdgeHeightScale, 0.05f, 1f);
         minimumEdgeWidthScale = Mathf.Clamp(minimumEdgeWidthScale, 0.05f, 1f);
         edgeTaperPower = Mathf.Max(0.05f, edgeTaperPower);
+        targetGrassCoverage = Mathf.Clamp(targetGrassCoverage, 0.75f, 0.98f);
+        dirtPatchScale = Mathf.Max(0.01f, dirtPatchScale);
+        dirtEdgeWidth = Mathf.Clamp(dirtEdgeWidth, 0.02f, 0.3f);
+        dirtEdgeBreakup = Mathf.Clamp(dirtEdgeBreakup, 0f, 0.4f);
+        domainWarpStrength = Mathf.Max(0f, domainWarpStrength);
         interactionBendDistance = Mathf.Max(0f, interactionBendDistance);
         flattenResponseTime = Mathf.Max(0.01f, flattenResponseTime);
         flattenRecoveryTime = Mathf.Max(0.01f, flattenRecoveryTime);
@@ -740,6 +877,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         minimumWindResponse = Mathf.Clamp01(minimumWindResponse);
         maximumWindResponse = Mathf.Clamp(maximumWindResponse, minimumWindResponse, 2f);
         windNoiseOffsetDistance = Mathf.Max(0f, windNoiseOffsetDistance);
+        groundMaskResolution = Mathf.Clamp(groundMaskResolution, 64, 2048);
 
         if (isActiveAndEnabled)
         {
