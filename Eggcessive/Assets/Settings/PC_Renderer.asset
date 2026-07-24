@@ -1,5 +1,34 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-7161082364921220862
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 473c21262d394a70a404d670809644df, type: 3}
+  m_Name: Grounding Shadows
+  m_EditorClassIdentifier: Assembly-CSharp::GroundingShadowRendererFeature
+  m_Active: 0
+  settings:
+    casterMaterial: {fileID: 2100000, guid: 67c93cddefdfa2f47a8867578505b3ef, type: 2}
+    compositeMaterial: {fileID: 2100000, guid: 798595d9182ba8b49ac09f26a14935d7, type: 2}
+    casterRenderingLayerMask: 256
+    coverageCenter: {x: 0, y: -0.5}
+    coverageSize: {x: 4.5, y: 5.5}
+    minimumHeight: -0.25
+    maximumHeight: 3
+    resolution: 512
+    shadowColor: {r: 0.08, g: 0.46, b: 0.69, a: 1}
+    opacity: 0.82
+    heightBias: 0.025
+    projectionRange: 1.25
+    softness: 9
+    distanceFalloff: 1.15
+    minimumUpwardFacing: 0.12
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -26,7 +55,8 @@ MonoBehaviour:
     probeVolumeBlendStatesCS: {fileID: 7200000, guid: b9a23f869c4fd45f19c5ada54dd82176, type: 3}
   m_RendererFeatures:
   - {fileID: 7833122117494664109}
-  m_RendererFeatureMap: ad6b866f10d7b46c
+  - {fileID: -7161082364921220862}
+  m_RendererFeatureMap: ad6b866f10d7b46c02718eb787b99e9c
   m_UseNativeRenderPass: 1
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}

@@ -79,7 +79,7 @@ public sealed class ChickenFootPlacement : MonoBehaviour
 
     private void Update()
     {
-        if (!initialized && !Initialize())
+        if (!EnsureInitialized())
         {
             return;
         }
@@ -92,6 +92,20 @@ public sealed class ChickenFootPlacement : MonoBehaviour
         {
             TryStartAutomaticStep();
         }
+    }
+
+    private bool EnsureInitialized()
+    {
+        if (initialized
+            && characterRoot != null
+            && IsFootConfigured(leftFoot)
+            && IsFootConfigured(rightFoot))
+        {
+            return true;
+        }
+
+        initialized = false;
+        return Initialize();
     }
 
     private bool Initialize()
@@ -317,6 +331,12 @@ public sealed class ChickenFootPlacement : MonoBehaviour
 
     private void BeginStep(FootState foot, Vector3 destination, Quaternion rotation)
     {
+        if (!IsFootConfigured(foot))
+        {
+            initialized = false;
+            return;
+        }
+
         foot.StepStartPosition = foot.Target.position;
         foot.StepStartRotation = foot.Target.rotation;
         foot.StepEndPosition = destination;
@@ -420,7 +440,7 @@ public sealed class ChickenFootPlacement : MonoBehaviour
 
     public void AnimationUseProceduralFootsteps()
     {
-        if (!initialized && !Initialize())
+        if (!EnsureInitialized())
         {
             return;
         }
@@ -433,7 +453,7 @@ public sealed class ChickenFootPlacement : MonoBehaviour
 
     public void AnimationUseFootContacts()
     {
-        if (!initialized && !Initialize())
+        if (!EnsureInitialized())
         {
             return;
         }
@@ -465,7 +485,7 @@ public sealed class ChickenFootPlacement : MonoBehaviour
 
     private void PlantFromAnimation(FootState foot)
     {
-        if (!initialized && !Initialize())
+        if (!EnsureInitialized())
         {
             return;
         }
@@ -476,7 +496,7 @@ public sealed class ChickenFootPlacement : MonoBehaviour
 
     private void ReleaseFromAnimation(FootState foot)
     {
-        if (!initialized && !Initialize())
+        if (!EnsureInitialized())
         {
             return;
         }

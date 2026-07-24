@@ -10,7 +10,10 @@ Shader "Eggcessive/Ground Layers"
         _DirtMap("Dirt Albedo", 2D) = "white" {}
         _DirtTint("Dirt Tint", Color) = (1, 1, 1, 1)
         [NoScaleOffset] _LayerMask("Layer Mask (R Dirt, G Grass, B Breakup, A Placed)", 2D) = "red" {}
+        [NoScaleOffset] _OuterLayerMask("Outer Layer Mask", 2D) = "red" {}
         _GrassMaskStrength("Grass Mask Strength", Range(0, 4)) = 2
+        _OuterDarkening("Outer Area Darkening", Range(0, 0.8)) = 0.42
+        _OuterDarkeningDistance("Outer Darkening Fade Distance", Range(0.01, 20)) = 5
         [Toggle] _MaskPreview("Preview Layer Mask", Float) = 0
         [ToggleOff] _ReceiveShadows("Receive Shadows", Float) = 1
         _Smoothness("Smoothness", Range(0, 1)) = 0
@@ -18,7 +21,9 @@ Shader "Eggcessive/Ground Layers"
         // Kept for InteractiveGrassSystem's blade-base colour sync.
         [HideInInspector] _BaseColor("Grass Blade Base Color", Color) = (0.12156863, 0.32156864, 0.05882353, 1)
         [HideInInspector] _MaskWorldRect("Mask World Rect", Vector) = (-2, -2.5, 4, 5)
+        [HideInInspector] _OuterMaskWorldRect("Outer Mask World Rect", Vector) = (-6, -3, 12, 10)
         [HideInInspector] _PlacedCoverageAvailable("Placed Coverage Available", Float) = 0
+        [HideInInspector] _OuterPlacedCoverageAvailable("Outer Placed Coverage Available", Float) = 0
     }
 
     SubShader
@@ -73,6 +78,8 @@ Shader "Eggcessive/Ground Layers"
             SAMPLER(sampler_DirtMap);
             TEXTURE2D(_LayerMask);
             SAMPLER(sampler_LayerMask);
+            TEXTURE2D(_OuterLayerMask);
+            SAMPLER(sampler_OuterLayerMask);
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _GrassMap_ST;
@@ -81,10 +88,14 @@ Shader "Eggcessive/Ground Layers"
                 half4 _DirtTint;
                 half4 _BaseColor;
                 float4 _MaskWorldRect;
+                float4 _OuterMaskWorldRect;
                 half _GrassMaskStrength;
                 half _GrassHeightBlendDepth;
                 half _GrassTransitionNoiseStrength;
                 half _PlacedCoverageAvailable;
+                half _OuterPlacedCoverageAvailable;
+                half _OuterDarkening;
+                half _OuterDarkeningDistance;
                 half _MaskPreview;
                 half _Smoothness;
             CBUFFER_END
@@ -133,10 +144,42 @@ Shader "Eggcessive/Ground Layers"
 
                 float2 maskUV = (input.positionWS.xz - _MaskWorldRect.xy)
                     / max(_MaskWorldRect.zw, float2(0.0001, 0.0001));
-                half4 layerMask = SAMPLE_TEXTURE2D(
+                float2 outerMaskUV = (input.positionWS.xz - _OuterMaskWorldRect.xy)
+                    / max(_OuterMaskWorldRect.zw, float2(0.0001, 0.0001));
+                half insideInner = step(0.0, maskUV.x)
+                    * step(maskUV.x, 1.0)
+                    * step(0.0, maskUV.y)
+                    * step(maskUV.y, 1.0);
+                half insideOuter = step(0.0, outerMaskUV.x)
+                    * step(outerMaskUV.x, 1.0)
+                    * step(0.0, outerMaskUV.y)
+                    * step(outerMaskUV.y, 1.0);
+                half4 innerLayerMask = SAMPLE_TEXTURE2D(
                     _LayerMask,
                     sampler_LayerMask,
                     saturate(maskUV));
+                half4 extendedInnerLayerMask = SAMPLE_TEXTURE2D(
+                    _LayerMask,
+                    sampler_LayerMask,
+                    frac(maskUV));
+                extendedInnerLayerMask.a = 0.0h;
+                half4 generatedOuterLayerMask = SAMPLE_TEXTURE2D(
+                    _OuterLayerMask,
+                    sampler_OuterLayerMask,
+                    saturate(outerMaskUV));
+                half4 outerLayerMask = lerp(
+                    extendedInnerLayerMask,
+                    generatedOuterLayerMask,
+                    step(0.5h, _OuterPlacedCoverageAvailable));
+                half4 layerMask = lerp(
+                    half4(1.0h, 0.0h, 0.5h, 0.0h),
+                    outerLayerMask,
+                    insideOuter);
+                layerMask = lerp(layerMask, innerLayerMask, insideInner);
+                half placedCoverageAvailable = lerp(
+                    _OuterPlacedCoverageAvailable,
+                    _PlacedCoverageAvailable,
+                    insideInner);
 
                 half3 dirt = SAMPLE_TEXTURE2D(_DirtMap, sampler_DirtMap, input.dirtUV).rgb
                     * _DirtTint.rgb;
@@ -179,9 +222,20 @@ Shader "Eggcessive/Ground Layers"
                 // sit over dirt simply because transition noise removed its bed.
                 grassWeight = max(
                     grassWeight,
-                    layerMask.a * _PlacedCoverageAvailable);
+                    layerMask.a * placedCoverageAvailable);
                 half3 albedo = dirt * layerMask.r;
                 albedo = lerp(albedo, grass, grassWeight);
+
+                float2 distanceFromInner = max(
+                    max(
+                        _MaskWorldRect.xy - input.positionWS.xz,
+                        input.positionWS.xz - (_MaskWorldRect.xy + _MaskWorldRect.zw)),
+                    0.0);
+                half outerFocus = smoothstep(
+                    0.0h,
+                    max(_OuterDarkeningDistance, 0.001h),
+                    length(distanceFromInner));
+                albedo *= 1.0h - _OuterDarkening * outerFocus;
 
                 if (_MaskPreview > 0.5h)
                 {
@@ -255,6 +309,8 @@ Shader "Eggcessive/Ground Layers"
             SAMPLER(sampler_DirtMap);
             TEXTURE2D(_LayerMask);
             SAMPLER(sampler_LayerMask);
+            TEXTURE2D(_OuterLayerMask);
+            SAMPLER(sampler_OuterLayerMask);
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _GrassMap_ST;
@@ -263,10 +319,14 @@ Shader "Eggcessive/Ground Layers"
                 half4 _DirtTint;
                 half4 _BaseColor;
                 float4 _MaskWorldRect;
+                float4 _OuterMaskWorldRect;
                 half _GrassMaskStrength;
                 half _GrassHeightBlendDepth;
                 half _GrassTransitionNoiseStrength;
                 half _PlacedCoverageAvailable;
+                half _OuterPlacedCoverageAvailable;
+                half _OuterDarkening;
+                half _OuterDarkeningDistance;
                 half _MaskPreview;
                 half _Smoothness;
             CBUFFER_END
@@ -312,10 +372,42 @@ Shader "Eggcessive/Ground Layers"
                 half3 normalWS = normalize(input.normalWS);
                 float2 maskUV = (input.positionWS.xz - _MaskWorldRect.xy)
                     / max(_MaskWorldRect.zw, float2(0.0001, 0.0001));
-                half4 layerMask = SAMPLE_TEXTURE2D(
+                float2 outerMaskUV = (input.positionWS.xz - _OuterMaskWorldRect.xy)
+                    / max(_OuterMaskWorldRect.zw, float2(0.0001, 0.0001));
+                half insideInner = step(0.0, maskUV.x)
+                    * step(maskUV.x, 1.0)
+                    * step(0.0, maskUV.y)
+                    * step(maskUV.y, 1.0);
+                half insideOuter = step(0.0, outerMaskUV.x)
+                    * step(outerMaskUV.x, 1.0)
+                    * step(0.0, outerMaskUV.y)
+                    * step(outerMaskUV.y, 1.0);
+                half4 innerLayerMask = SAMPLE_TEXTURE2D(
                     _LayerMask,
                     sampler_LayerMask,
                     saturate(maskUV));
+                half4 extendedInnerLayerMask = SAMPLE_TEXTURE2D(
+                    _LayerMask,
+                    sampler_LayerMask,
+                    frac(maskUV));
+                extendedInnerLayerMask.a = 0.0h;
+                half4 generatedOuterLayerMask = SAMPLE_TEXTURE2D(
+                    _OuterLayerMask,
+                    sampler_OuterLayerMask,
+                    saturate(outerMaskUV));
+                half4 outerLayerMask = lerp(
+                    extendedInnerLayerMask,
+                    generatedOuterLayerMask,
+                    step(0.5h, _OuterPlacedCoverageAvailable));
+                half4 layerMask = lerp(
+                    half4(1.0h, 0.0h, 0.5h, 0.0h),
+                    outerLayerMask,
+                    insideOuter);
+                layerMask = lerp(layerMask, innerLayerMask, insideInner);
+                half placedCoverageAvailable = lerp(
+                    _OuterPlacedCoverageAvailable,
+                    _PlacedCoverageAvailable,
+                    insideInner);
 
                 half3 dirt = SAMPLE_TEXTURE2D(_DirtMap, sampler_DirtMap, input.dirtUV).rgb
                     * _DirtTint.rgb;
@@ -350,8 +442,18 @@ Shader "Eggcessive/Ground Layers"
                 grassWeight *= step(0.0001h, grassControl);
                 grassWeight = max(
                     grassWeight,
-                    layerMask.a * _PlacedCoverageAvailable);
+                    layerMask.a * placedCoverageAvailable);
                 half3 albedo = lerp(dirt * layerMask.r, grass, grassWeight);
+                float2 distanceFromInner = max(
+                    max(
+                        _MaskWorldRect.xy - input.positionWS.xz,
+                        input.positionWS.xz - (_MaskWorldRect.xy + _MaskWorldRect.zw)),
+                    0.0);
+                half outerFocus = smoothstep(
+                    0.0h,
+                    max(_OuterDarkeningDistance, 0.001h),
+                    length(distanceFromInner));
+                albedo *= 1.0h - _OuterDarkening * outerFocus;
 
                 InputData inputData = (InputData)0;
                 inputData.positionWS = input.positionWS;

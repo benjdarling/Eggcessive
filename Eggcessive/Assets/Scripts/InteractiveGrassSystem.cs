@@ -23,6 +23,8 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         public float flattenVelocity;
         public Vector4 variation;
         public Vector3 windSampleOffset;
+        public float interactionWeight = 1f;
+        public bool isOuter;
     }
 
     private sealed class DrawBatch
@@ -43,6 +45,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     [Header("Ground Layer Mask")]
     [SerializeField, Range(64, 2048)] private int groundMaskResolution = 512;
+    [SerializeField, Range(64, 2048)] private int outerGroundMaskResolution = 1024;
 
     [Header("Placement Area")]
     [SerializeField] private Vector2 areaSize = new Vector2(3.2f, 3.2f);
@@ -51,6 +54,20 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private int randomSeed = 4187;
     [SerializeField] private LayerMask groundLayers = ~0;
     [SerializeField, Min(0f)] private float groundOffset = 0.002f;
+
+    [Header("Outer Extension")]
+    [Tooltip("Adds grass outside the protected inner placement area without changing its placement.")]
+    [SerializeField] private bool extendIntoOuterArea = true;
+    [Tooltip("Local-space centre of the complete outer ground rectangle.")]
+    [SerializeField] private Vector2 outerAreaCenter = new Vector2(0f, 2.5f);
+    [Tooltip("Local-space size of the complete outer ground rectangle.")]
+    [SerializeField] private Vector2 outerAreaSize = new Vector2(12f, 10f);
+    [Tooltip("Placement density outside the pen as a proportion of the existing inner density.")]
+    [SerializeField, Range(0.01f, 1f)] private float outerDensityMultiplier = 0.35f;
+    [Tooltip("Distance outside the pen over which character interaction fades.")]
+    [SerializeField, Min(0.01f)] private float outerInteractionFadeDistance = 5f;
+    [Tooltip("Interaction retained at and beyond the outer fade distance. Wind is unaffected.")]
+    [SerializeField, Range(0f, 1f)] private float minimumOuterInteraction = 0.15f;
 
     [Header("Natural Meadow Coverage")]
     [Tooltip("Approximate proportion of the area occupied by the broad grass bed.")]
@@ -111,7 +128,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     public int InstanceCount { get; private set; }
     public Vector2 AreaSize => areaSize;
     public int GroundMaskResolution => groundMaskResolution;
+    public int OuterGroundMaskResolution => outerGroundMaskResolution;
     public Material GroundColourSource => groundColourSource;
+    public Vector2 OuterAreaCenter => outerAreaCenter;
+    public Vector2 OuterAreaSize => outerAreaSize;
+    public bool ExtendsIntoOuterArea => extendIntoOuterArea;
 
     private void OnEnable()
     {
@@ -280,7 +301,126 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             });
         }
 
+        AddOuterPlacement(instances);
         return instances;
+    }
+
+    private void AddOuterPlacement(List<GrassInstance> instances)
+    {
+        if (!extendIntoOuterArea)
+        {
+            return;
+        }
+
+        float outerArea = outerAreaSize.x * outerAreaSize.y;
+        float innerArea = areaSize.x * areaSize.y;
+        float extensionArea = Mathf.Max(0f, outerArea - innerArea);
+        float outerDensity = densityPerSquareMetre * outerDensityMultiplier;
+        int targetCount = Mathf.Max(0, Mathf.RoundToInt(extensionArea * outerDensity));
+        if (targetCount == 0)
+        {
+            return;
+        }
+
+        float minimumSpacing = Mathf.Sqrt(1f / outerDensity) * spacingMultiplier;
+        float cellSize = Mathf.Max(minimumSpacing, 0.001f);
+        int maximumAttempts = targetCount * 80;
+        var random = new System.Random(randomSeed ^ 0x5f3759df);
+        var accepted = new List<Vector2>(targetCount);
+        var grid = new Dictionary<Vector2Int, List<Vector2>>();
+
+        for (int attempt = 0; attempt < maximumAttempts && accepted.Count < targetCount; attempt++)
+        {
+            Vector2 point = new Vector2(
+                outerAreaCenter.x
+                    + Mathf.Lerp(-outerAreaSize.x * 0.5f, outerAreaSize.x * 0.5f, NextFloat(random)),
+                outerAreaCenter.y
+                    + Mathf.Lerp(-outerAreaSize.y * 0.5f, outerAreaSize.y * 0.5f, NextFloat(random)));
+            float distanceOutsidePen = GetDistanceOutsideInnerArea(point);
+            if (distanceOutsidePen <= 0f)
+            {
+                continue;
+            }
+
+            Vector3 worldCandidate = transform.TransformPoint(new Vector3(point.x, 0f, point.y));
+            EvaluateGrassDistribution(
+                worldCandidate,
+                out float patchWeight,
+                out float clumpWeight,
+                out float acceptance);
+            if (NextFloat(random) > acceptance
+                || HasCloseNeighbour(point, grid, cellSize, minimumSpacing))
+            {
+                continue;
+            }
+
+            Vector3 position = worldCandidate;
+            Vector3 normal = Vector3.up;
+            if (!TryPlaceOuterOnGround(ref position, ref normal))
+            {
+                continue;
+            }
+
+            Vector2Int cell = GetCell(point, cellSize);
+            if (!grid.TryGetValue(cell, out List<Vector2> cellPoints))
+            {
+                cellPoints = new List<Vector2>();
+                grid.Add(cell, cellPoints);
+            }
+
+            cellPoints.Add(point);
+            accepted.Add(point);
+            position += normal * groundOffset;
+
+            float yaw = NextFloat(random) * 360f;
+            Quaternion rotation = Quaternion.FromToRotation(Vector3.up, normal)
+                * Quaternion.AngleAxis(yaw, Vector3.up);
+            float edgeWeight = Mathf.Pow(
+                Mathf.Clamp01(patchWeight * Mathf.Lerp(0.5f, 1f, clumpWeight)),
+                edgeTaperPower);
+            float scaleTaper = Mathf.Lerp(minimumEdgeHeightScale, 1f, edgeWeight);
+            float widthTaper = Mathf.Lerp(minimumEdgeWidthScale, 1f, edgeWeight);
+            float uniformScale = Mathf.Lerp(minimumHeight, maximumHeight, NextFloat(random))
+                * scaleTaper;
+            float width = Mathf.Lerp(minimumWidthScale, maximumWidthScale, NextFloat(random))
+                * widthTaper;
+            float colorVariation = NextFloat(random);
+            float windVariation = NextFloat(random);
+            float windOffsetAngle = NextFloat(random) * Mathf.PI * 2f;
+            float windOffsetRadius = Mathf.Sqrt(NextFloat(random)) * windNoiseOffsetDistance;
+            float attenuation = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.Clamp01(distanceOutsidePen / outerInteractionFadeDistance));
+
+            instances.Add(new GrassInstance
+            {
+                position = position,
+                rotation = rotation,
+                matrix = Matrix4x4.TRS(
+                    position,
+                    rotation,
+                    new Vector3(
+                        uniformScale * width,
+                        uniformScale,
+                        uniformScale * width)),
+                variation = new Vector4(colorVariation, windVariation, uniformScale, 1f),
+                windSampleOffset = new Vector3(
+                    Mathf.Cos(windOffsetAngle) * windOffsetRadius,
+                    0f,
+                    Mathf.Sin(windOffsetAngle) * windOffsetRadius),
+                interactionWeight = Mathf.Lerp(1f, minimumOuterInteraction, attenuation),
+                isOuter = true
+            });
+        }
+    }
+
+    private float GetDistanceOutsideInnerArea(Vector2 localPoint)
+    {
+        Vector2 outside = new Vector2(
+            Mathf.Max(0f, Mathf.Abs(localPoint.x) - areaSize.x * 0.5f),
+            Mathf.Max(0f, Mathf.Abs(localPoint.y) - areaSize.y * 0.5f));
+        return outside.magnitude;
     }
 
     public float EvaluateGrassDistribution(Vector3 worldPosition)
@@ -316,6 +456,16 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     public void GetGroundCoverageDiscs(List<Vector4> coverageDiscs)
     {
+        GetGroundCoverageDiscs(coverageDiscs, false);
+    }
+
+    public void GetOuterGroundCoverageDiscs(List<Vector4> coverageDiscs)
+    {
+        GetGroundCoverageDiscs(coverageDiscs, true);
+    }
+
+    private void GetGroundCoverageDiscs(List<Vector4> coverageDiscs, bool collectOuter)
+    {
         if (coverageDiscs == null)
         {
             throw new ArgumentNullException(nameof(coverageDiscs));
@@ -327,7 +477,10 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             GrassInstance[] instances = batches[batchIndex].instances;
             for (int i = 0; i < instances.Length; i++)
             {
-                AddGroundCoverageDisc(instances[i], coverageDiscs);
+                if (instances[i].isOuter == collectOuter)
+                {
+                    AddGroundCoverageDisc(instances[i], coverageDiscs);
+                }
             }
         }
 
@@ -339,7 +492,10 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             List<GrassInstance> deterministicPlacement = GeneratePlacement();
             for (int i = 0; i < deterministicPlacement.Count; i++)
             {
-                AddGroundCoverageDisc(deterministicPlacement[i], coverageDiscs);
+                if (deterministicPlacement[i].isOuter == collectOuter)
+                {
+                    AddGroundCoverageDisc(deterministicPlacement[i], coverageDiscs);
+                }
             }
         }
     }
@@ -460,10 +616,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
                         velocity.sqrMagnitude > 0.0001f ? velocity.normalized : radialDirection,
                         velocityWeight).normalized;
 
-                    targetBend += pushDirection * (interactor.BendStrength * falloff);
+                    targetBend += pushDirection
+                        * (interactor.BendStrength * falloff * instance.interactionWeight);
                     targetFlatten = Mathf.Max(
                         targetFlatten,
-                        interactor.FlattenStrength * falloff);
+                        interactor.FlattenStrength * falloff * instance.interactionWeight);
                 }
 
                 targetBend = Vector2.ClampMagnitude(targetBend, 1f);
@@ -665,6 +822,41 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         }
     }
 
+    private bool TryPlaceOuterOnGround(ref Vector3 position, ref Vector3 normal)
+    {
+        Vector3 origin = position + Vector3.up * 0.75f;
+        int hitCount = Physics.RaycastNonAlloc(
+            origin,
+            Vector3.down,
+            groundHits,
+            1.5f,
+            groundLayers,
+            QueryTriggerInteraction.Ignore);
+        float closestDistance = float.PositiveInfinity;
+        bool foundGround = false;
+        for (int i = 0; i < hitCount; i++)
+        {
+            RaycastHit hit = groundHits[i];
+            Transform hitTransform = hit.collider.transform;
+            if (hitTransform.GetComponentInParent<ChickenController>() != null
+                || hitTransform.GetComponentInParent<ChickenEgg>() != null
+                || hitTransform.GetComponentInParent<FoodPile>() != null)
+            {
+                continue;
+            }
+
+            if (hit.distance < closestDistance)
+            {
+                closestDistance = hit.distance;
+                position = hit.point;
+                normal = hit.normal;
+                foundGround = true;
+            }
+        }
+
+        return foundGround;
+    }
+
     private static Mesh CreatePlaceholderClump()
     {
         var vertices = new List<Vector3>(21);
@@ -852,6 +1044,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     {
         areaSize.x = Mathf.Max(0.01f, areaSize.x);
         areaSize.y = Mathf.Max(0.01f, areaSize.y);
+        outerAreaSize.x = Mathf.Max(areaSize.x, outerAreaSize.x);
+        outerAreaSize.y = Mathf.Max(areaSize.y, outerAreaSize.y);
+        outerDensityMultiplier = Mathf.Clamp(outerDensityMultiplier, 0.01f, 1f);
+        outerInteractionFadeDistance = Mathf.Max(0.01f, outerInteractionFadeDistance);
+        minimumOuterInteraction = Mathf.Clamp01(minimumOuterInteraction);
         densityPerSquareMetre = Mathf.Max(1f, densityPerSquareMetre);
         minimumHeight = Mathf.Max(0.01f, minimumHeight);
         maximumHeight = Mathf.Max(minimumHeight, maximumHeight);
@@ -878,6 +1075,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         maximumWindResponse = Mathf.Clamp(maximumWindResponse, minimumWindResponse, 2f);
         windNoiseOffsetDistance = Mathf.Max(0f, windNoiseOffsetDistance);
         groundMaskResolution = Mathf.Clamp(groundMaskResolution, 64, 2048);
+        outerGroundMaskResolution = Mathf.Clamp(outerGroundMaskResolution, 64, 2048);
 
         if (isActiveAndEnabled)
         {
@@ -891,6 +1089,13 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         Matrix4x4 oldMatrix = Gizmos.matrix;
         Gizmos.matrix = transform.localToWorldMatrix;
         Gizmos.DrawWireCube(Vector3.zero, new Vector3(areaSize.x, 0.02f, areaSize.y));
+        if (extendIntoOuterArea)
+        {
+            Gizmos.color = new Color(0.18f, 0.55f, 0.85f, 0.65f);
+            Gizmos.DrawWireCube(
+                new Vector3(outerAreaCenter.x, 0f, outerAreaCenter.y),
+                new Vector3(outerAreaSize.x, 0.015f, outerAreaSize.y));
+        }
         Gizmos.matrix = oldMatrix;
     }
 }

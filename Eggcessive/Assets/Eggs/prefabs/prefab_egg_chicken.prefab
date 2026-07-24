@@ -95,7 +95,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e8429cf8b3174a0cb2915d366f9e7a24, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: '::'
   minimumScale: 0.95
   maximumScale: 1.05
@@ -167,6 +167,10 @@ PrefabInstance:
     - target: {fileID: 919132149155446097, guid: b967b5c79c9fa71419f0f86f15459787, type: 3}
       propertyPath: m_Name
       value: egg_chicken
+      objectReference: {fileID: 0}
+    - target: {fileID: 1203114010306790533, guid: b967b5c79c9fa71419f0f86f15459787, type: 3}
+      propertyPath: m_RenderingLayerMask
+      value: 257
       objectReference: {fileID: 0}
     - target: {fileID: 1203114010306790533, guid: b967b5c79c9fa71419f0f86f15459787, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'

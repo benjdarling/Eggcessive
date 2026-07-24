@@ -58,7 +58,7 @@ public sealed class ChickenLookController : MonoBehaviour
     [SerializeField, Range(0f, 90f)] private float upperSpineAngleLimit = 22.5f;
     [SerializeField, Range(0f, 90f)] private float lowerSpineAngleLimit = 12f;
 
-    private readonly LookBone[] lookBones = new LookBone[5];
+    private LookBone[] lookBones = new LookBone[5];
     private NavMeshAgent agent;
     private Camera viewCamera;
     private Transform currentTargetTransform;
@@ -72,12 +72,41 @@ public sealed class ChickenLookController : MonoBehaviour
     private bool hasTarget;
     private bool targetPositionInitialized;
     private LookTargetType currentTargetType;
+    private bool hasWarnedAboutMissingLookBones;
 
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
         viewCamera = Camera.main;
 
+        if (!EnsureLookBonesInitialized())
+        {
+            enabled = false;
+        }
+    }
+
+    private bool EnsureLookBonesInitialized()
+    {
+        if (lookBones != null && lookBones.Length == 5)
+        {
+            bool allBonesValid = true;
+
+            for (int i = 0; i < lookBones.Length; i++)
+            {
+                if (lookBones[i] == null || lookBones[i].Transform == null)
+                {
+                    allBonesValid = false;
+                    break;
+                }
+            }
+
+            if (allBonesValid)
+            {
+                return true;
+            }
+        }
+
+        lookBones = new LookBone[5];
         Transform[] transforms = GetComponentsInChildren<Transform>(true);
         lookBones[0] = CreateLookBone(transforms, lowerSpineName, lowerSpineWeight, lowerSpineAngleLimit);
         lookBones[1] = CreateLookBone(transforms, upperSpineName, upperSpineWeight, upperSpineAngleLimit);
@@ -92,10 +121,19 @@ public sealed class ChickenLookController : MonoBehaviour
                 continue;
             }
 
-            Debug.LogWarning($"{nameof(ChickenLookController)} is missing one or more configured look bones below '{name}'.", this);
-            enabled = false;
-            return;
+            if (!hasWarnedAboutMissingLookBones)
+            {
+                Debug.LogWarning(
+                    $"{nameof(ChickenLookController)} is missing one or more configured look bones below '{name}'.",
+                    this);
+                hasWarnedAboutMissingLookBones = true;
+            }
+
+            return false;
         }
+
+        hasWarnedAboutMissingLookBones = false;
+        return true;
     }
 
     private LookBone CreateLookBone(Transform[] transforms, string boneName, float weight, float maxAngle)
@@ -128,11 +166,21 @@ public sealed class ChickenLookController : MonoBehaviour
 
     private void Update()
     {
+        if (!EnsureLookBonesInitialized())
+        {
+            return;
+        }
+
         RestoreAnimatedPose();
     }
 
     private void LateUpdate()
     {
+        if (!EnsureLookBonesInitialized())
+        {
+            return;
+        }
+
         CaptureAnimatedPose();
         RefreshLookTarget();
 
@@ -204,6 +252,11 @@ public sealed class ChickenLookController : MonoBehaviour
 
     private void ApplyLookRotation(LookBone bone)
     {
+        if (bone == null || bone.Transform == null)
+        {
+            return;
+        }
+
         Vector3 targetDirection = smoothedTargetPosition - bone.Transform.position;
         if (targetDirection.sqrMagnitude < 0.000001f)
         {
@@ -442,6 +495,11 @@ public sealed class ChickenLookController : MonoBehaviour
 
     private Vector3 GetViewOrigin()
     {
+        if (!EnsureLookBonesInitialized())
+        {
+            return transform.position + Vector3.up * 0.2f;
+        }
+
         return (lookBones[3].Transform.position + lookBones[4].Transform.position) * 0.5f;
     }
 

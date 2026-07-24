@@ -11,6 +11,7 @@ public sealed class ChickenController : MonoBehaviour
     {
         Idle,
         Moving,
+        LeavingIncubator,
         SeekingFood,
         Eating,
         EggLaying
@@ -137,6 +138,9 @@ public sealed class ChickenController : MonoBehaviour
     private Transform eggSpawnBone;
     private bool eggSpawnedDuringLay;
     private float eggSpawnNormalizedTime = EggSpawnFrame / DefaultLayEggFrameCount;
+    private bool hasIncubatorExitDestination;
+    private bool isTraversingIncubatorExit;
+    private Vector3 incubatorExitDestination;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
@@ -194,6 +198,12 @@ public sealed class ChickenController : MonoBehaviour
 
     private void Start()
     {
+        if (hasIncubatorExitDestination)
+        {
+            TryBeginIncubatorExit();
+            return;
+        }
+
         TryInitializeNavigation();
         BeginIdle();
     }
@@ -224,6 +234,12 @@ public sealed class ChickenController : MonoBehaviour
         UpdateBlink();
         UpdateWingFlutter();
 
+        if (isTraversingIncubatorExit)
+        {
+            UpdateIncubatorExit();
+            return;
+        }
+
         if (!navigationReady)
         {
             TryInitializeNavigation();
@@ -234,7 +250,8 @@ public sealed class ChickenController : MonoBehaviour
 
         if (eggTimerRemaining <= 0f
             && state != ChickenState.Eating
-            && state != ChickenState.EggLaying)
+            && state != ChickenState.EggLaying
+            && state != ChickenState.LeavingIncubator)
         {
             BeginEggLaying();
             return;
@@ -247,6 +264,9 @@ public sealed class ChickenController : MonoBehaviour
                 break;
             case ChickenState.Moving:
                 UpdateMoving();
+                break;
+            case ChickenState.LeavingIncubator:
+                UpdateIncubatorExit();
                 break;
             case ChickenState.SeekingFood:
                 UpdateSeekingFood();
@@ -308,6 +328,91 @@ public sealed class ChickenController : MonoBehaviour
         {
             BeginIdle();
         }
+    }
+
+    private void UpdateIncubatorExit()
+    {
+        Vector3 offset = incubatorExitDestination - transform.position;
+        Vector3 planarDirection = offset;
+        planarDirection.y = 0f;
+
+        if (planarDirection.sqrMagnitude > 0.0001f)
+        {
+            Quaternion targetRotation = Quaternion.LookRotation(planarDirection);
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation,
+                targetRotation,
+                angularSpeed * Time.deltaTime);
+        }
+
+        transform.position = Vector3.MoveTowards(
+            transform.position,
+            incubatorExitDestination,
+            moveSpeed * Time.deltaTime);
+
+        if ((transform.position - incubatorExitDestination).sqrMagnitude <= 0.0001f
+            || Time.time >= stateEndTime)
+        {
+            FinishIncubatorExit();
+        }
+    }
+
+    public void BeginIncubatorExit(Vector3 destination)
+    {
+        incubatorExitDestination = destination;
+        hasIncubatorExitDestination = true;
+
+        if (navigationReady)
+        {
+            TryBeginIncubatorExit();
+        }
+    }
+
+    private bool TryBeginIncubatorExit()
+    {
+        if (!hasIncubatorExitDestination)
+        {
+            return false;
+        }
+
+        if (isTraversingIncubatorExit)
+        {
+            return true;
+        }
+
+        if (agent.enabled)
+        {
+            if (agent.isOnNavMesh)
+            {
+                agent.ResetPath();
+            }
+
+            agent.enabled = false;
+        }
+
+        navigationReady = false;
+        isTraversingIncubatorExit = true;
+        state = ChickenState.LeavingIncubator;
+        stateEndTime = Time.time
+            + Mathf.Max(
+                2f,
+                Vector3.Distance(transform.position, incubatorExitDestination) / moveSpeed + 2f);
+        return true;
+    }
+
+    private void FinishIncubatorExit()
+    {
+        transform.position = incubatorExitDestination;
+        hasIncubatorExitDestination = false;
+        isTraversingIncubatorExit = false;
+
+        if (!agent.enabled)
+        {
+            agent.enabled = true;
+        }
+
+        TryInitializeNavigation();
+        BeginIdle();
     }
 
     private void UpdateSeekingFood()
