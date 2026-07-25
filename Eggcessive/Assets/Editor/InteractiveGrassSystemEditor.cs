@@ -14,7 +14,7 @@ public sealed class InteractiveGrassSystemEditor : Editor
     private const string LayerMaskPath = "Assets/Env/textures/t_ground_layer_mask.png";
     private const string OuterLayerMaskPath = "Assets/Env/textures/t_ground_layer_mask_outer.png";
     private const string MaskGeneratorVersion = "EggcessiveGroundMask:v13";
-    private const string OuterMaskGeneratorVersion = "EggcessiveOuterGroundMask:v1";
+    private const string OuterMaskGeneratorVersion = "EggcessiveOuterGroundMask:v2";
     private const double SetupPollingDuration = 15.0;
 
     private static double setupPollingDeadline;

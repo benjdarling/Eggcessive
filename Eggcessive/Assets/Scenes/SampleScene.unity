@@ -2178,7 +2178,10 @@ MonoBehaviour:
   extendIntoOuterArea: 1
   outerAreaCenter: {x: 0, y: 2.5}
   outerAreaSize: {x: 12, y: 10}
-  outerDensityMultiplier: 0.3
+  outerDensityMultiplier: 0.5
+  outerDensityFalloffDistance: 2
+  minimumOuterDensityRetention: 0.08
+  outerDensityFalloffPower: 1.5
   outerInteractionFadeDistance: 1
   minimumOuterInteraction: 0.15
   targetGrassCoverage: 0.88
@@ -2200,6 +2203,7 @@ MonoBehaviour:
   flattenRecoveryTime: 1.2
   bendResponseTime: 0.06
   bendRecoveryTime: 0.55
+  interactionGridCellSize: 0.5
   steadyWindBend: 0.08
   turbulentWindBend: 0.8
   turbulenceDeadZone: 0.012
@@ -2207,6 +2211,7 @@ MonoBehaviour:
   minimumWindResponse: 0.7
   maximumWindResponse: 1
   windNoiseOffsetDistance: 0.2
+  windSampleCellSize: 0.3
 --- !u!1 &759980837
 GameObject:
   m_ObjectHideFlags: 0

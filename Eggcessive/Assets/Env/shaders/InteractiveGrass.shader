@@ -82,14 +82,12 @@ Shader "Eggcessive/Interactive Grass"
                 float2 uv : TEXCOORD4;
                 half3 vertexSH : TEXCOORD5;
                 float4 shadowCoord : TEXCOORD6;
-                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             Varyings GrassVertex(Attributes input)
             {
                 UNITY_SETUP_INSTANCE_ID(input);
                 Varyings output;
-                UNITY_TRANSFER_INSTANCE_ID(input, output);
 
                 float4 bend = UNITY_ACCESS_INSTANCED_PROP(GrassProperties, _GrassBend);
                 float4 variation = UNITY_ACCESS_INSTANCED_PROP(GrassProperties, _GrassVariation);
@@ -115,7 +113,6 @@ Shader "Eggcessive/Interactive Grass"
 
             half4 GrassFragment(Varyings input) : SV_Target
             {
-                UNITY_SETUP_INSTANCE_ID(input);
                 half alpha = SAMPLE_TEXTURE2D(_AlphaMap, sampler_AlphaMap, input.uv).a;
                 clip(alpha - _Cutoff);
 
@@ -128,40 +125,6 @@ Shader "Eggcessive/Interactive Grass"
                     * smoothstep(0.28h, 1.0h, input.data.x);
                 color = lerp(color, _DryColor.rgb, dryMask);
 
-                InputData inputData = (InputData)0;
-                inputData.positionWS = input.positionWS;
-                inputData.positionCS = input.positionCS;
-                inputData.normalWS = normalWS;
-                inputData.viewDirectionWS = GetWorldSpaceNormalizeViewDir(input.positionWS);
-                inputData.fogCoord = input.fogFactor;
-                inputData.vertexLighting = half3(0.0h, 0.0h, 0.0h);
-                inputData.bakedGI = SampleSHPixel(input.vertexSH, normalWS);
-                inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
-                inputData.shadowMask = half4(1.0h, 1.0h, 1.0h, 1.0h);
-
-                SurfaceData surfaceData = (SurfaceData)0;
-                surfaceData.albedo = color;
-                surfaceData.specular = half3(0.0h, 0.0h, 0.0h);
-                surfaceData.metallic = 0.0h;
-                surfaceData.smoothness = 0.0h;
-                surfaceData.normalTS = half3(0.0h, 0.0h, 1.0h);
-                surfaceData.emission = half3(0.0h, 0.0h, 0.0h);
-                surfaceData.occlusion = 1.0h;
-                surfaceData.alpha = 1.0h;
-                surfaceData.clearCoatMask = 0.0h;
-                surfaceData.clearCoatSmoothness = 0.0h;
-
-                BRDFData brdfData;
-                InitializeBRDFData(surfaceData, brdfData);
-
-                half3 lighting = GlobalIllumination(
-                    brdfData,
-                    inputData.bakedGI,
-                    surfaceData.occlusion,
-                    inputData.positionWS,
-                    inputData.normalWS,
-                    inputData.viewDirectionWS);
-
                 // Graphics.DrawMeshInstanced does not provide the same
                 // per-Renderer unity_LightData value as the ground renderer.
                 // For a directional light its distance attenuation is always
@@ -172,17 +135,23 @@ Shader "Eggcessive/Interactive Grass"
                 Light mainLight = GetMainLight(
                     input.shadowCoord,
                     input.positionWS,
-                    inputData.shadowMask);
+                    half4(1.0h, 1.0h, 1.0h, 1.0h));
                 mainLight.distanceAttenuation = 1.0h;
-                lighting += LightingPhysicallyBased(
-                    brdfData,
-                    mainLight,
-                    inputData.normalWS,
-                    inputData.viewDirectionWS,
-                    true);
+                half directAttenuation = mainLight.distanceAttenuation
+                    * mainLight.shadowAttenuation
+                    * saturate(dot(normalWS, mainLight.direction));
 
-                half4 litColor = half4(lighting + surfaceData.emission, surfaceData.alpha);
-                litColor.rgb = MixFog(litColor.rgb, inputData.fogCoord);
+                // This material disables specular highlights and environment
+                // reflections. Its PBR path therefore reduces exactly to a
+                // dielectric diffuse term, so avoid constructing SurfaceData,
+                // InputData and BRDFData for every alpha-tested grass pixel.
+                half3 diffuseColor = color * kDielectricSpec.a;
+                half3 bakedLighting = SampleSHPixel(input.vertexSH, normalWS);
+                half3 lighting = diffuseColor
+                    * (bakedLighting + mainLight.color * directAttenuation);
+
+                half4 litColor = half4(lighting, 1.0h);
+                litColor.rgb = MixFog(litColor.rgb, input.fogFactor);
                 return litColor;
             }
             ENDHLSL

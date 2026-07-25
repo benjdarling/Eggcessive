@@ -19,12 +19,23 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         public Matrix4x4 matrix;
         public Vector2 interactionBend;
         public Vector2 interactionBendVelocity;
+        public Vector2 targetInteractionBend;
         public float flatten;
         public float flattenVelocity;
+        public float targetFlatten;
         public Vector4 variation;
         public Vector3 windSampleOffset;
+        public Vector4 worldToLocalBend;
         public float interactionWeight = 1f;
+        public int windCellIndex;
+        public bool interactionActive;
         public bool isOuter;
+    }
+
+    private sealed class WindCell
+    {
+        public Vector3 samplePosition;
+        public Vector2 bend;
     }
 
     private sealed class DrawBatch
@@ -64,6 +75,12 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private Vector2 outerAreaSize = new Vector2(12f, 10f);
     [Tooltip("Placement density outside the pen as a proportion of the existing inner density.")]
     [SerializeField, Range(0.01f, 1f)] private float outerDensityMultiplier = 0.35f;
+    [Tooltip("Distance outside the pen over which outer grass density falls from its boundary density to the minimum retention.")]
+    [SerializeField, Min(0.01f)] private float outerDensityFalloffDistance = 4f;
+    [Tooltip("Proportion of the boundary density retained at and beyond the density falloff distance.")]
+    [SerializeField, Range(0f, 1f)] private float minimumOuterDensityRetention = 0.08f;
+    [Tooltip("Shape of the density falloff. Values above one keep grass denser near the pen before falling away more sharply.")]
+    [SerializeField, Min(0.1f)] private float outerDensityFalloffPower = 1.5f;
     [Tooltip("Distance outside the pen over which character interaction fades.")]
     [SerializeField, Min(0.01f)] private float outerInteractionFadeDistance = 5f;
     [Tooltip("Interaction retained at and beyond the outer fade distance. Wind is unaffected.")]
@@ -106,6 +123,8 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField, Min(0.01f)] private float flattenRecoveryTime = 1.15f;
     [SerializeField, Min(0.01f)] private float bendResponseTime = 0.06f;
     [SerializeField, Min(0.01f)] private float bendRecoveryTime = 0.55f;
+    [Tooltip("World-space size of the lookup cells used to find grass near an interactor.")]
+    [SerializeField, Min(0.1f)] private float interactionGridCellSize = 0.5f;
 
     [Header("Wind Response")]
     [SerializeField, Min(0f)] private float steadyWindBend = 0.05f;
@@ -115,14 +134,22 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float minimumWindResponse = 0.7f;
     [SerializeField, Range(0f, 2f)] private float maximumWindResponse = 1f;
     [SerializeField, Min(0f)] private float windNoiseOffsetDistance = 0.2f;
+    [Tooltip("Nearby clumps share a wind-noise sample. This keeps the same wind pattern while avoiding thousands of repeated Perlin evaluations.")]
+    [SerializeField, Min(0.05f)] private float windSampleCellSize = 0.3f;
 
     private readonly RaycastHit[] groundHits = new RaycastHit[16];
+    private readonly Dictionary<Vector2Int, List<GrassInstance>> interactionGrid =
+        new Dictionary<Vector2Int, List<GrassInstance>>();
+    private readonly List<GrassInstance> activeInteractionInstances =
+        new List<GrassInstance>();
+    private WindCell[] windCells = Array.Empty<WindCell>();
     private DrawBatch[] batches = Array.Empty<DrawBatch>();
     private Mesh generatedPlaceholderMesh;
     private Material generatedFallbackMaterial;
     private Mesh activeMesh;
     private Material activeMaterial;
     private bool regenerationRequested;
+    private bool interactionStateReset = true;
     private int clumpPrefabSignature;
 
     public int InstanceCount { get; private set; }
@@ -174,6 +201,10 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     public void GenerateGrass()
     {
         ReleaseGeneratedAssets();
+        interactionGrid.Clear();
+        activeInteractionInstances.Clear();
+        windCells = Array.Empty<WindCell>();
+        interactionStateReset = true;
         activeMesh = null;
         activeMaterial = grassMaterial;
 
@@ -218,6 +249,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         List<GrassInstance> instances = GeneratePlacement();
         InstanceCount = instances.Count;
         BuildBatches(instances);
+        BuildRuntimeSpatialData(instances);
         clumpPrefabSignature = GetClumpPrefabSignature();
     }
 
@@ -370,6 +402,18 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
             cellPoints.Add(point);
             accepted.Add(point);
+
+            // Build the same even, blue-noise distribution used previously,
+            // then thin that completed distribution by distance. Rejecting
+            // before counting an accepted candidate would only make the loop
+            // refill toward targetCount and would not reliably reduce density.
+            float densityRetention = EvaluateOuterDensityRetention(
+                distanceOutsidePen);
+            if (NextFloat(random) > densityRetention)
+            {
+                continue;
+            }
+
             position += normal * groundOffset;
 
             float yaw = NextFloat(random) * 360f;
@@ -421,6 +465,16 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             Mathf.Max(0f, Mathf.Abs(localPoint.x) - areaSize.x * 0.5f),
             Mathf.Max(0f, Mathf.Abs(localPoint.y) - areaSize.y * 0.5f));
         return outside.magnitude;
+    }
+
+    private float EvaluateOuterDensityRetention(float distanceOutsidePen)
+    {
+        float normalizedDistance = Mathf.Clamp01(
+            distanceOutsidePen / outerDensityFalloffDistance);
+        float shapedDistance = Mathf.Pow(
+            normalizedDistance,
+            outerDensityFalloffPower);
+        return Mathf.Lerp(1f, minimumOuterDensityRetention, shapedDistance);
     }
 
     public float EvaluateGrassDistribution(Vector3 worldPosition)
@@ -573,112 +627,153 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     private void UpdateInteractionState()
     {
+        interactionStateReset = false;
         float deltaTime = Mathf.Min(Time.deltaTime, 1f / 20f);
         IReadOnlyList<GrassInteractor> interactors = GrassInteractor.ActiveInstances;
 
-        for (int batchIndex = 0; batchIndex < batches.Length; batchIndex++)
+        for (int i = 0; i < activeInteractionInstances.Count; i++)
         {
-            DrawBatch batch = batches[batchIndex];
-            for (int i = 0; i < batch.instances.Length; i++)
+            GrassInstance instance = activeInteractionInstances[i];
+            instance.targetInteractionBend = Vector2.zero;
+            instance.targetFlatten = 0f;
+        }
+
+        for (int interactorIndex = 0; interactorIndex < interactors.Count; interactorIndex++)
+        {
+            GrassInteractor interactor = interactors[interactorIndex];
+            if (interactor == null || !interactor.isActiveAndEnabled)
             {
-                GrassInstance instance = batch.instances[i];
-                Vector2 targetBend = Vector2.zero;
-                float targetFlatten = 0f;
-                Vector2 grassPosition = new Vector2(instance.position.x, instance.position.z);
+                continue;
+            }
 
-                for (int interactorIndex = 0; interactorIndex < interactors.Count; interactorIndex++)
+            Vector3 interactorPosition3D = interactor.Position;
+            Vector2 interactorPosition = new Vector2(
+                interactorPosition3D.x,
+                interactorPosition3D.z);
+            float radius = interactor.WorldRadius;
+            float radiusSquared = radius * radius;
+            Vector3 velocity3D = interactor.PlanarVelocity;
+            Vector2 velocity = new Vector2(velocity3D.x, velocity3D.z);
+            float velocityMagnitude = velocity.magnitude;
+            float velocityWeight = Mathf.Clamp01(velocityMagnitude / 0.35f)
+                * interactor.VelocityDirectionInfluence;
+            Vector2 velocityDirection = velocityMagnitude > 0.0001f
+                ? velocity / velocityMagnitude
+                : Vector2.zero;
+            Vector2 radiusVector = new Vector2(radius, radius);
+            Vector2Int minimumCell = GetCell(
+                interactorPosition - radiusVector,
+                interactionGridCellSize);
+            Vector2Int maximumCell = GetCell(
+                interactorPosition + radiusVector,
+                interactionGridCellSize);
+
+            for (int cellY = minimumCell.y; cellY <= maximumCell.y; cellY++)
+            {
+                for (int cellX = minimumCell.x; cellX <= maximumCell.x; cellX++)
                 {
-                    GrassInteractor interactor = interactors[interactorIndex];
-                    if (interactor == null || !interactor.isActiveAndEnabled)
+                    if (!interactionGrid.TryGetValue(
+                            new Vector2Int(cellX, cellY),
+                            out List<GrassInstance> cellInstances))
                     {
                         continue;
                     }
 
-                    Vector3 interactorPosition3D = interactor.Position;
-                    Vector2 interactorPosition = new Vector2(interactorPosition3D.x, interactorPosition3D.z);
-                    Vector2 away = grassPosition - interactorPosition;
-                    float radius = interactor.WorldRadius;
-                    float distance = away.magnitude;
-                    if (distance >= radius)
+                    for (int i = 0; i < cellInstances.Count; i++)
                     {
-                        continue;
+                        GrassInstance instance = cellInstances[i];
+                        Vector2 away = new Vector2(
+                            instance.position.x - interactorPosition.x,
+                            instance.position.z - interactorPosition.y);
+                        float distanceSquared = away.sqrMagnitude;
+                        if (distanceSquared >= radiusSquared)
+                        {
+                            continue;
+                        }
+
+                        float distance = Mathf.Sqrt(distanceSquared);
+                        float falloff = 1f - distance / Mathf.Max(radius, 0.0001f);
+                        falloff = Mathf.Pow(falloff, interactor.FalloffPower);
+                        Vector2 radialDirection = distance > 0.0001f
+                            ? away / distance
+                            : Vector2.up;
+                        Vector2 pushDirection = velocityMagnitude > 0.0001f
+                            ? Vector2.Lerp(
+                                radialDirection,
+                                velocityDirection,
+                                velocityWeight).normalized
+                            : radialDirection;
+
+                        instance.targetInteractionBend += pushDirection
+                            * (interactor.BendStrength
+                                * falloff
+                                * instance.interactionWeight);
+                        instance.targetFlatten = Mathf.Max(
+                            instance.targetFlatten,
+                            interactor.FlattenStrength
+                                * falloff
+                                * instance.interactionWeight);
+                        ActivateInteraction(instance);
                     }
-
-                    float falloff = 1f - distance / Mathf.Max(radius, 0.0001f);
-                    falloff = Mathf.Pow(falloff, interactor.FalloffPower);
-                    Vector2 radialDirection = distance > 0.0001f ? away / distance : Vector2.up;
-                    Vector3 velocity3D = interactor.PlanarVelocity;
-                    Vector2 velocity = new Vector2(velocity3D.x, velocity3D.z);
-                    float velocityWeight = Mathf.Clamp01(velocity.magnitude / 0.35f)
-                        * interactor.VelocityDirectionInfluence;
-                    Vector2 pushDirection = Vector2.Lerp(
-                        radialDirection,
-                        velocity.sqrMagnitude > 0.0001f ? velocity.normalized : radialDirection,
-                        velocityWeight).normalized;
-
-                    targetBend += pushDirection
-                        * (interactor.BendStrength * falloff * instance.interactionWeight);
-                    targetFlatten = Mathf.Max(
-                        targetFlatten,
-                        interactor.FlattenStrength * falloff * instance.interactionWeight);
                 }
-
-                targetBend = Vector2.ClampMagnitude(targetBend, 1f);
-                float activeBendTime = targetBend.sqrMagnitude > instance.interactionBend.sqrMagnitude
-                    ? bendResponseTime
-                    : bendRecoveryTime;
-                instance.interactionBend = Vector2.SmoothDamp(
-                    instance.interactionBend,
-                    targetBend,
-                    ref instance.interactionBendVelocity,
-                    activeBendTime,
-                    Mathf.Infinity,
-                    deltaTime);
-                float activeFlattenTime = targetFlatten > instance.flatten
-                    ? flattenResponseTime
-                    : flattenRecoveryTime;
-                instance.flatten = Mathf.SmoothDamp(
-                    instance.flatten,
-                    targetFlatten,
-                    ref instance.flattenVelocity,
-                    activeFlattenTime,
-                    Mathf.Infinity,
-                    deltaTime);
-
-                GlobalWind.WindSample wind = GlobalWind.SampleWindDetailed(
-                    instance.position + instance.windSampleOffset);
-                Vector3 dynamicWind = wind.gust + wind.turbulence;
-                Vector2 dynamicPlanarWind = new Vector2(dynamicWind.x, dynamicWind.z);
-                float dynamicMagnitude = dynamicPlanarWind.magnitude;
-                if (dynamicMagnitude <= turbulenceDeadZone)
-                {
-                    dynamicPlanarWind = Vector2.zero;
-                }
-                else
-                {
-                    dynamicPlanarWind *= (dynamicMagnitude - turbulenceDeadZone) / dynamicMagnitude;
-                }
-
-                float windResponse = Mathf.Lerp(
-                    minimumWindResponse,
-                    maximumWindResponse,
-                    instance.variation.y);
-                Vector2 windBend = new Vector2(wind.steady.x, wind.steady.z) * steadyWindBend
-                    + dynamicPlanarWind * turbulentWindBend;
-                windBend *= windResponse;
-                windBend = Vector2.ClampMagnitude(windBend, maximumWindBend);
-                Vector2 worldBend = instance.interactionBend * interactionBendDistance + windBend;
-                worldBend = Vector2.ClampMagnitude(worldBend, 0.95f);
-
-                Vector3 localBend = Quaternion.Inverse(instance.rotation)
-                    * new Vector3(worldBend.x, 0f, worldBend.y);
-                batch.bends[i] = new Vector4(localBend.x, localBend.z, instance.flatten, 0f);
             }
         }
+
+        for (int i = activeInteractionInstances.Count - 1; i >= 0; i--)
+        {
+            GrassInstance instance = activeInteractionInstances[i];
+            Vector2 targetBend = Vector2.ClampMagnitude(
+                instance.targetInteractionBend,
+                1f);
+            float activeBendTime =
+                targetBend.sqrMagnitude > instance.interactionBend.sqrMagnitude
+                    ? bendResponseTime
+                    : bendRecoveryTime;
+            instance.interactionBend = Vector2.SmoothDamp(
+                instance.interactionBend,
+                targetBend,
+                ref instance.interactionBendVelocity,
+                activeBendTime,
+                Mathf.Infinity,
+                deltaTime);
+            float activeFlattenTime = instance.targetFlatten > instance.flatten
+                ? flattenResponseTime
+                : flattenRecoveryTime;
+            instance.flatten = Mathf.SmoothDamp(
+                instance.flatten,
+                instance.targetFlatten,
+                ref instance.flattenVelocity,
+                activeFlattenTime,
+                Mathf.Infinity,
+                deltaTime);
+
+            if (targetBend.sqrMagnitude <= 0.000001f
+                && instance.targetFlatten <= 0.001f
+                && instance.interactionBend.sqrMagnitude <= 0.000001f
+                && instance.interactionBendVelocity.sqrMagnitude <= 0.000001f
+                && instance.flatten <= 0.001f
+                && Mathf.Abs(instance.flattenVelocity) <= 0.001f)
+            {
+                instance.interactionBend = Vector2.zero;
+                instance.interactionBendVelocity = Vector2.zero;
+                instance.flatten = 0f;
+                instance.flattenVelocity = 0f;
+                instance.interactionActive = false;
+                activeInteractionInstances.RemoveAt(i);
+            }
+        }
+
+        UpdateWindCells();
+        WriteBendData();
     }
 
     private void ResetInteractionState()
     {
+        if (interactionStateReset)
+        {
+            return;
+        }
+
         for (int batchIndex = 0; batchIndex < batches.Length; batchIndex++)
         {
             DrawBatch batch = batches[batchIndex];
@@ -686,9 +781,84 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             {
                 batch.instances[i].interactionBend = Vector2.zero;
                 batch.instances[i].interactionBendVelocity = Vector2.zero;
+                batch.instances[i].targetInteractionBend = Vector2.zero;
                 batch.instances[i].flatten = 0f;
                 batch.instances[i].flattenVelocity = 0f;
+                batch.instances[i].targetFlatten = 0f;
+                batch.instances[i].interactionActive = false;
                 batch.bends[i] = Vector4.zero;
+            }
+        }
+
+        activeInteractionInstances.Clear();
+        interactionStateReset = true;
+    }
+
+    private void ActivateInteraction(GrassInstance instance)
+    {
+        if (instance.interactionActive)
+        {
+            return;
+        }
+
+        instance.interactionActive = true;
+        activeInteractionInstances.Add(instance);
+    }
+
+    private void UpdateWindCells()
+    {
+        for (int i = 0; i < windCells.Length; i++)
+        {
+            WindCell cell = windCells[i];
+            GlobalWind.WindSample wind = GlobalWind.SampleWindDetailed(cell.samplePosition);
+            Vector3 dynamicWind = wind.gust + wind.turbulence;
+            Vector2 dynamicPlanarWind = new Vector2(dynamicWind.x, dynamicWind.z);
+            float dynamicMagnitude = dynamicPlanarWind.magnitude;
+            if (dynamicMagnitude <= turbulenceDeadZone)
+            {
+                dynamicPlanarWind = Vector2.zero;
+            }
+            else
+            {
+                dynamicPlanarWind *=
+                    (dynamicMagnitude - turbulenceDeadZone) / dynamicMagnitude;
+            }
+
+            cell.bend = new Vector2(wind.steady.x, wind.steady.z) * steadyWindBend
+                + dynamicPlanarWind * turbulentWindBend;
+        }
+    }
+
+    private void WriteBendData()
+    {
+        for (int batchIndex = 0; batchIndex < batches.Length; batchIndex++)
+        {
+            DrawBatch batch = batches[batchIndex];
+            for (int i = 0; i < batch.instances.Length; i++)
+            {
+                GrassInstance instance = batch.instances[i];
+                float windResponse = Mathf.Lerp(
+                    minimumWindResponse,
+                    maximumWindResponse,
+                    instance.variation.y);
+                Vector2 windBend = windCells.Length > 0
+                    ? windCells[instance.windCellIndex].bend * windResponse
+                    : Vector2.zero;
+                windBend = Vector2.ClampMagnitude(windBend, maximumWindBend);
+                Vector2 worldBend =
+                    instance.interactionBend * interactionBendDistance + windBend;
+                worldBend = Vector2.ClampMagnitude(worldBend, 0.95f);
+
+                Vector4 conversion = instance.worldToLocalBend;
+                float localBendX =
+                    conversion.x * worldBend.x + conversion.y * worldBend.y;
+                float localBendZ =
+                    conversion.z * worldBend.x + conversion.w * worldBend.y;
+                batch.bends[i] = new Vector4(
+                    localBendX,
+                    localBendZ,
+                    instance.flatten,
+                    0f);
             }
         }
     }
@@ -725,6 +895,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     private void BuildBatches(List<GrassInstance> instances)
     {
+        // DrawMeshInstanced culls an entire submitted array as one group.
+        // Spatial ordering keeps each group compact, allowing off-screen groups
+        // to be rejected without changing instance placement or appearance.
+        instances.Sort(CompareInstancesSpatially);
+
         int batchCount = Mathf.CeilToInt(instances.Count / (float)MaximumInstancesPerDraw);
         batches = new DrawBatch[batchCount];
 
@@ -752,6 +927,85 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             batch.properties.SetVectorArray(GrassVariationId, batch.variations);
             batches[batchIndex] = batch;
         }
+    }
+
+    private void BuildRuntimeSpatialData(List<GrassInstance> instances)
+    {
+        interactionGrid.Clear();
+        activeInteractionInstances.Clear();
+        var windCellIndices = new Dictionary<Vector2Int, int>();
+        var builtWindCells = new List<WindCell>();
+
+        for (int i = 0; i < instances.Count; i++)
+        {
+            GrassInstance instance = instances[i];
+            Vector2 position = new Vector2(instance.position.x, instance.position.z);
+            Vector2Int interactionCell = GetCell(position, interactionGridCellSize);
+            if (!interactionGrid.TryGetValue(
+                    interactionCell,
+                    out List<GrassInstance> cellInstances))
+            {
+                cellInstances = new List<GrassInstance>();
+                interactionGrid.Add(interactionCell, cellInstances);
+            }
+
+            cellInstances.Add(instance);
+
+            Vector3 windPosition = instance.position + instance.windSampleOffset;
+            Vector2Int windCell = GetCell(
+                new Vector2(windPosition.x, windPosition.z),
+                windSampleCellSize);
+            if (!windCellIndices.TryGetValue(windCell, out int windCellIndex))
+            {
+                windCellIndex = builtWindCells.Count;
+                windCellIndices.Add(windCell, windCellIndex);
+                builtWindCells.Add(new WindCell
+                {
+                    samplePosition = new Vector3(
+                        (windCell.x + 0.5f) * windSampleCellSize,
+                        windPosition.y,
+                        (windCell.y + 0.5f) * windSampleCellSize)
+                });
+            }
+
+            instance.windCellIndex = windCellIndex;
+            Vector3 worldRight = instance.rotation * Vector3.right;
+            Vector3 worldForward = instance.rotation * Vector3.forward;
+            instance.worldToLocalBend = new Vector4(
+                worldRight.x,
+                worldRight.z,
+                worldForward.x,
+                worldForward.z);
+        }
+
+        windCells = builtWindCells.ToArray();
+    }
+
+    private static int CompareInstancesSpatially(
+        GrassInstance left,
+        GrassInstance right)
+    {
+        const float sortingCellSize = 1.5f;
+        int leftX = Mathf.FloorToInt(left.position.x / sortingCellSize);
+        int rightX = Mathf.FloorToInt(right.position.x / sortingCellSize);
+        int xComparison = leftX.CompareTo(rightX);
+        if (xComparison != 0)
+        {
+            return xComparison;
+        }
+
+        int leftZ = Mathf.FloorToInt(left.position.z / sortingCellSize);
+        int rightZ = Mathf.FloorToInt(right.position.z / sortingCellSize);
+        int zComparison = leftZ.CompareTo(rightZ);
+        if (zComparison != 0)
+        {
+            return zComparison;
+        }
+
+        int exactXComparison = left.position.x.CompareTo(right.position.x);
+        return exactXComparison != 0
+            ? exactXComparison
+            : left.position.z.CompareTo(right.position.z);
     }
 
     private bool HasCloseNeighbour(
@@ -1010,6 +1264,10 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         activeMesh = null;
         activeMaterial = null;
         batches = Array.Empty<DrawBatch>();
+        interactionGrid.Clear();
+        activeInteractionInstances.Clear();
+        windCells = Array.Empty<WindCell>();
+        interactionStateReset = true;
         InstanceCount = 0;
     }
 
@@ -1047,6 +1305,9 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         outerAreaSize.x = Mathf.Max(areaSize.x, outerAreaSize.x);
         outerAreaSize.y = Mathf.Max(areaSize.y, outerAreaSize.y);
         outerDensityMultiplier = Mathf.Clamp(outerDensityMultiplier, 0.01f, 1f);
+        outerDensityFalloffDistance = Mathf.Max(0.01f, outerDensityFalloffDistance);
+        minimumOuterDensityRetention = Mathf.Clamp01(minimumOuterDensityRetention);
+        outerDensityFalloffPower = Mathf.Max(0.1f, outerDensityFalloffPower);
         outerInteractionFadeDistance = Mathf.Max(0.01f, outerInteractionFadeDistance);
         minimumOuterInteraction = Mathf.Clamp01(minimumOuterInteraction);
         densityPerSquareMetre = Mathf.Max(1f, densityPerSquareMetre);
@@ -1067,6 +1328,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         flattenRecoveryTime = Mathf.Max(0.01f, flattenRecoveryTime);
         bendResponseTime = Mathf.Max(0.01f, bendResponseTime);
         bendRecoveryTime = Mathf.Max(0.01f, bendRecoveryTime);
+        interactionGridCellSize = Mathf.Max(0.1f, interactionGridCellSize);
         steadyWindBend = Mathf.Max(0f, steadyWindBend);
         turbulentWindBend = Mathf.Max(0f, turbulentWindBend);
         turbulenceDeadZone = Mathf.Max(0f, turbulenceDeadZone);
@@ -1074,6 +1336,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         minimumWindResponse = Mathf.Clamp01(minimumWindResponse);
         maximumWindResponse = Mathf.Clamp(maximumWindResponse, minimumWindResponse, 2f);
         windNoiseOffsetDistance = Mathf.Max(0f, windNoiseOffsetDistance);
+        windSampleCellSize = Mathf.Max(0.05f, windSampleCellSize);
         groundMaskResolution = Mathf.Clamp(groundMaskResolution, 64, 2048);
         outerGroundMaskResolution = Mathf.Clamp(outerGroundMaskResolution, 64, 2048);
 
