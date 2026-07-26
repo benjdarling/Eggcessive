@@ -7,6 +7,7 @@ public sealed class FoodPile : MonoBehaviour
     private static readonly List<FoodPile> Piles = new List<FoodPile>();
 
     [SerializeField, Min(0.01f)] private float startingFood = 100f;
+    [SerializeField, Min(1f)] private float eggProductionSpeedMultiplier = 1f;
     [SerializeField] private Transform visualRoot = null;
     [SerializeField, Range(0.05f, 1f)] private float depletedScale = 0.2f;
 
@@ -17,6 +18,7 @@ public sealed class FoodPile : MonoBehaviour
     public static IReadOnlyList<FoodPile> ActivePiles => Piles;
     public float RemainingFood => remainingFood;
     public bool IsAvailable => isActiveAndEnabled && remainingFood > 0f;
+    public float EggProductionSpeedMultiplier => eggProductionSpeedMultiplier;
 
     private void Awake()
     {
@@ -67,6 +69,14 @@ public sealed class FoodPile : MonoBehaviour
         return amountConsumed;
     }
 
+    public void ConfigureFeed(float foodAmount, float productionSpeedMultiplier)
+    {
+        startingFood = Mathf.Max(0.01f, foodAmount);
+        remainingFood = startingFood;
+        eggProductionSpeedMultiplier = Mathf.Max(1f, productionSpeedMultiplier);
+        RefreshVisualScale();
+    }
+
     private void RefreshVisualScale()
     {
         if (visualRoot == null || startingFood <= 0f)
@@ -86,6 +96,7 @@ public sealed class FoodPile : MonoBehaviour
     private void OnValidate()
     {
         startingFood = Mathf.Max(0.01f, startingFood);
+        eggProductionSpeedMultiplier = Mathf.Max(1f, eggProductionSpeedMultiplier);
         depletedScale = Mathf.Clamp(depletedScale, 0.05f, 1f);
     }
 }

@@ -97,6 +97,49 @@ public sealed class ChickenEgg : MonoBehaviour
         return true;
     }
 
+    public bool TryCollectFromTool()
+    {
+        if (IsCollected)
+        {
+            return false;
+        }
+
+        IsHeld = false;
+        IsCollected = true;
+
+        if (eggBody != null)
+        {
+            if (!eggBody.isKinematic)
+            {
+                eggBody.linearVelocity = Vector3.zero;
+                eggBody.angularVelocity = Vector3.zero;
+            }
+
+            eggBody.isKinematic = true;
+            eggBody.useGravity = false;
+        }
+
+        return true;
+    }
+
+    public static void ClearAllActive()
+    {
+        for (int index = ActiveEggs.Count - 1; index >= 0; index--)
+        {
+            ChickenEgg egg = ActiveEggs[index];
+
+            if (egg == null)
+            {
+                continue;
+            }
+
+            egg.gameObject.SetActive(false);
+            Destroy(egg.gameObject);
+        }
+
+        ActiveEggs.Clear();
+    }
+
     private void OnValidate()
     {
         minimumScale = Mathf.Max(0.01f, minimumScale);

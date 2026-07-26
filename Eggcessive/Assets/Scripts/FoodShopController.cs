@@ -1,15 +1,49 @@
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(GraphicRaycaster))]
 public sealed class FoodShopController : MonoBehaviour
 {
+    private static readonly string[] FeedTierNames =
+    {
+        "Basic Mash",
+        "Corn Mix",
+        "Layer Pellets",
+        "Protein Blend",
+        "Omega Feed",
+        "Farmer's Choice",
+        "Turbo Grain",
+        "Golden Crumble",
+        "Champion Mix",
+        "Eggcelerator"
+    };
+
+    private static readonly float[] FeedSpeedMultipliers =
+    {
+        1.25f, 1.45f, 1.7f, 2f, 2.35f, 2.75f, 3.2f, 3.7f, 4.3f, 5f
+    };
+
+    private static readonly float[] FeedAmounts =
+    {
+        100f, 110f, 120f, 130f, 145f, 160f, 180f, 200f, 225f, 250f
+    };
+
+    private static readonly int[] FeedBagCosts =
+    {
+        150, 250, 400, 600, 900, 1300, 1900, 2700, 3800, 5200
+    };
+
+    private static readonly int[] FeedUnlockCosts =
+    {
+        0, 600, 1400, 2800, 5000, 8500, 14000, 22000, 34000, 50000
+    };
+
     private static readonly int BaseColorProperty = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorProperty = Shader.PropertyToID("_Color");
 
@@ -30,25 +64,38 @@ public sealed class FoodShopController : MonoBehaviour
     [SerializeField] private Color invalidPreviewColor = new Color(1f, 0.3f, 0.25f, 1f);
 
     private GameObject placementPreview;
+    private readonly Queue<int> ownedFoodTiers = new Queue<int>();
     private Renderer[] previewRenderers;
     private MaterialPropertyBlock previewProperties;
     private Vector3 placementPosition;
     private Quaternion placementRotation = Quaternion.identity;
     private int ownedFood;
+    private int unlockedFeedTier = 1;
     private int ignorePlacementUntilFrame;
     private bool hasValidPlacement;
     private bool isPlacementActive;
 
+    public const int MaximumFeedTier = 10;
+    public static FoodShopController Instance { get; private set; }
     public static bool IsPlacementActive { get; private set; }
+    public int OwnedFoodCount => ownedFood;
+    public int UnlockedFeedTier => unlockedFeedTier;
+    public string CurrentFeedName => FeedTierNames[unlockedFeedTier - 1];
+    public float CurrentFeedSpeedMultiplier => FeedSpeedMultipliers[unlockedFeedTier - 1];
+    public int CurrentFeedBagCost => FeedBagCosts[unlockedFeedTier - 1];
+    public bool HasFeedTierUpgrade => unlockedFeedTier < MaximumFeedTier;
+    public int NextFeedTierUnlockCost =>
+        HasFeedTierUpgrade ? FeedUnlockCosts[unlockedFeedTier] : 0;
+    public string NextFeedName =>
+        HasFeedTierUpgrade ? FeedTierNames[unlockedFeedTier] : CurrentFeedName;
+    public float NextFeedSpeedMultiplier =>
+        HasFeedTierUpgrade
+            ? FeedSpeedMultipliers[unlockedFeedTier]
+            : CurrentFeedSpeedMultiplier;
 
     private void Awake()
     {
-        if (!TryGetComponent(out GraphicRaycaster _))
-        {
-            gameObject.AddComponent<GraphicRaycaster>();
-        }
-
-        EnsureEventSystem();
+        Instance = this;
 
         if (placementCamera == null)
         {
@@ -75,6 +122,7 @@ public sealed class FoodShopController : MonoBehaviour
 
     private void Start()
     {
+        ConfigureCompactHud();
         RefreshUi();
     }
 
@@ -94,14 +142,28 @@ public sealed class FoodShopController : MonoBehaviour
         CancelPlacement();
     }
 
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+    }
+
     private void Update()
     {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
+        {
+            CancelPlacement();
+            return;
+        }
+
         if (!isPlacementActive)
         {
             return;
         }
 
-        Mouse mouse = Mouse.current;
+        Mouse mouse = GameplayTestBot.PointerMouse;
 
         if (mouse == null)
         {
@@ -129,19 +191,74 @@ public sealed class FoodShopController : MonoBehaviour
 
     private void BuyFood()
     {
-        if (!EggScoreHud.TrySpendCents(foodCostCents))
+        if (!TryBuyCurrentFeed(out string message))
         {
-            SetStatus($"Need ${foodCostCents / 100}.{foodCostCents % 100:D2}");
+            SetStatus(message);
             return;
         }
 
+        SetStatus("Click the food to place");
+    }
+
+    public bool TryBuyCurrentFeed(out string message)
+    {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsSuppliesShopOpen)
+        {
+            message = "Feed is sold between rounds";
+            return false;
+        }
+
+        int cost = CurrentFeedBagCost;
+
+        if (!EggScoreHud.TrySpendCents(cost))
+        {
+            message = $"Need {FormatMoney(cost)}";
+            return false;
+        }
+
+        ownedFoodTiers.Enqueue(unlockedFeedTier);
         ownedFood++;
         RefreshUi();
-        SetStatus("Click the food to place");
+        message = $"{CurrentFeedName} added";
+        return true;
+    }
+
+    public bool TryUnlockNextFeedTier(out string message)
+    {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsSuppliesShopOpen)
+        {
+            message = "Feed upgrades are sold between rounds";
+            return false;
+        }
+
+        if (!HasFeedTierUpgrade)
+        {
+            message = "Maximum feed tier";
+            return false;
+        }
+
+        int cost = NextFeedTierUnlockCost;
+
+        if (!EggScoreHud.TrySpendCents(cost))
+        {
+            message = $"Need {FormatMoney(cost)}";
+            return false;
+        }
+
+        unlockedFeedTier++;
+        RefreshUi();
+        message = $"{CurrentFeedName} unlocked";
+        return true;
     }
 
     private void BeginPlacement()
     {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
+        {
+            SetStatus("Place feed during a round");
+            return;
+        }
+
         if (ownedFood <= 0 || foodPrefab == null)
         {
             SetStatus(ownedFood <= 0 ? "Buy food first" : "Food prefab missing");
@@ -252,7 +369,19 @@ public sealed class FoodShopController : MonoBehaviour
             return;
         }
 
-        Instantiate(foodPrefab, placementPosition, placementRotation);
+        GameObject placedFood = Instantiate(foodPrefab, placementPosition, placementRotation);
+        int placedTier = ownedFoodTiers.Count > 0
+            ? ownedFoodTiers.Dequeue()
+            : unlockedFeedTier;
+        FoodPile placedPile = placedFood.GetComponent<FoodPile>();
+
+        if (placedPile != null)
+        {
+            placedPile.ConfigureFeed(
+                FeedAmounts[placedTier - 1],
+                FeedSpeedMultipliers[placedTier - 1]);
+        }
+
         ownedFood--;
         CancelPlacement();
         RefreshUi();
@@ -280,14 +409,20 @@ public sealed class FoodShopController : MonoBehaviour
 
     private void RefreshUi()
     {
+        bool inventoryEmpty = ownedFood <= 0;
+
         if (ownedCountText != null)
         {
             ownedCountText.text = $"x {ownedFood}";
+            ownedCountText.color = new Color(1f, 0.9f, 0.42f);
         }
 
         if (foodIconButton != null)
         {
-            foodIconButton.interactable = ownedFood > 0;
+            ColorBlock colors = foodIconButton.colors;
+            colors.disabledColor = new Color(0.55f, 0.55f, 0.55f, 1f);
+            foodIconButton.colors = colors;
+            foodIconButton.interactable = !inventoryEmpty;
         }
 
         if (buyButton != null)
@@ -300,8 +435,71 @@ public sealed class FoodShopController : MonoBehaviour
         if (affordabilityProgressFill != null)
         {
             affordabilityProgressFill.fillAmount = Mathf.Clamp01(
-                EggScoreHud.CurrentCents / (float)foodCostCents);
+                EggScoreHud.CurrentCents / (float)CurrentFeedBagCost);
         }
+    }
+
+    private void ConfigureCompactHud()
+    {
+        if (foodIconButton == null)
+        {
+            return;
+        }
+
+        Transform oldFoodPanel = foodIconButton.transform.parent;
+        Transform rightHudPanel = oldFoodPanel != null ? oldFoodPanel.parent : null;
+
+        if (rightHudPanel == null)
+        {
+            return;
+        }
+
+        foodIconButton.transform.SetParent(rightHudPanel, false);
+        RectTransform iconRect = foodIconButton.GetComponent<RectTransform>();
+        iconRect.anchorMin = new Vector2(0.5f, 1f);
+        iconRect.anchorMax = new Vector2(0.5f, 1f);
+        iconRect.pivot = new Vector2(0.5f, 1f);
+        iconRect.anchoredPosition = new Vector2(0f, -190f);
+        iconRect.sizeDelta = new Vector2(54f, 54f);
+
+        if (ownedCountText != null)
+        {
+            ownedCountText.transform.SetParent(foodIconButton.transform, false);
+            RectTransform countRect = ownedCountText.rectTransform;
+            countRect.anchorMin = new Vector2(1f, 0f);
+            countRect.anchorMax = new Vector2(1f, 0f);
+            countRect.pivot = new Vector2(0.5f, 0.5f);
+            countRect.anchoredPosition = new Vector2(4f, -2f);
+            countRect.sizeDelta = new Vector2(76f, 34f);
+            ownedCountText.fontSize = 18f;
+        }
+
+        oldFoodPanel.gameObject.SetActive(false);
+        Image rightHudBackground = rightHudPanel.GetComponent<Image>();
+
+        if (rightHudBackground != null)
+        {
+            rightHudBackground.enabled = false;
+        }
+
+        Transform oldScore = rightHudPanel.Find("Score");
+
+        if (oldScore != null)
+        {
+            oldScore.gameObject.SetActive(false);
+        }
+
+        Transform oldIncubatorPanel = rightHudPanel.Find("Incubator Shop");
+
+        if (oldIncubatorPanel != null)
+        {
+            oldIncubatorPanel.gameObject.SetActive(false);
+        }
+    }
+
+    private static string FormatMoney(int cents)
+    {
+        return $"${cents / 100}.{cents % 100:D2}";
     }
 
     private void SetStatus(string message)
@@ -310,20 +508,6 @@ public sealed class FoodShopController : MonoBehaviour
         {
             placementStatusText.text = message;
         }
-    }
-
-    private static void EnsureEventSystem()
-    {
-        if (EventSystem.current != null)
-        {
-            return;
-        }
-
-        GameObject eventSystemObject = new GameObject(
-            "EventSystem",
-            typeof(EventSystem),
-            typeof(InputSystemUIInputModule));
-        eventSystemObject.GetComponent<InputSystemUIInputModule>().AssignDefaultActions();
     }
 
     private void OnValidate()

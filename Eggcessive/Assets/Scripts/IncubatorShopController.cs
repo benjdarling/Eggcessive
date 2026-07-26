@@ -5,6 +5,11 @@ using UnityEngine.UI;
 [DisallowMultipleComponent]
 public sealed class IncubatorShopController : MonoBehaviour
 {
+    private static readonly int[] LevelCosts =
+    {
+        400, 1000, 2200, 4500, 8000, 13000, 20000, 30000, 44000, 62000
+    };
+
     [Header("Scene Incubator")]
     [SerializeField] private IncubatorController incubator = null;
 
@@ -24,6 +29,21 @@ public sealed class IncubatorShopController : MonoBehaviour
         incubator != null && incubator.gameObject.activeSelf
             ? incubator.CurrentLevel
             : 0;
+
+    public static IncubatorShopController Instance { get; private set; }
+    public int CurrentLevel => PurchasedLevel;
+    public bool HasUpgrade => PurchasedLevel < IncubatorController.MaximumLevel;
+    public int NextLevel => Mathf.Min(
+        PurchasedLevel + 1,
+        IncubatorController.MaximumLevel);
+    public int NextUpgradeCost => HasUpgrade ? GetCost(NextLevel) : 0;
+    public int NextCapacity => IncubatorController.GetCapacity(NextLevel);
+    public float NextProductionTime => IncubatorController.GetProductionTime(NextLevel);
+
+    private void Awake()
+    {
+        Instance = this;
+    }
 
     private void OnEnable()
     {
@@ -50,33 +70,54 @@ public sealed class IncubatorShopController : MonoBehaviour
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
     }
 
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+    }
+
     private void PurchaseNextLevel()
     {
+        TryPurchaseNextLevel(out string message);
+        SetStatus(message);
+    }
+
+    public bool TryPurchaseNextLevel(out string message)
+    {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsSuppliesShopOpen)
+        {
+            message = "Incubator upgrades are sold between rounds";
+            return false;
+        }
+
         if (incubator == null)
         {
-            SetStatus("Incubator is not connected");
-            return;
+            message = "Incubator is not connected";
+            return false;
         }
 
         int nextLevel = PurchasedLevel + 1;
 
-        if (nextLevel > 2)
+        if (nextLevel > IncubatorController.MaximumLevel)
         {
-            SetStatus("Maximum level");
-            return;
+            message = "Maximum incubator level";
+            return false;
         }
 
         int cost = GetCost(nextLevel);
 
         if (!EggScoreHud.TrySpendCents(cost))
         {
-            SetStatus($"Need {FormatMoney(cost)}");
-            return;
+            message = $"Need {FormatMoney(cost)}";
+            return false;
         }
 
         incubator.InstallOrUpgrade(nextLevel);
-        SetStatus(nextLevel == 1 ? "Incubator installed" : "Incubator upgraded");
+        message = nextLevel == 1 ? "Incubator installed" : $"Incubator level {nextLevel}";
         RefreshUi();
+        return true;
     }
 
     private void HandleBalanceChanged(int _)
@@ -95,15 +136,14 @@ public sealed class IncubatorShopController : MonoBehaviour
 
         if (detailsText != null)
         {
-            detailsText.text = level switch
-            {
-                0 => "Level 1  |  1 egg  |  30 sec",
-                1 => "Next: 3 eggs  |  20 sec each",
-                _ => "3 eggs  |  20 sec each"
-            };
+            int shownLevel = level < IncubatorController.MaximumLevel ? level + 1 : level;
+            detailsText.text =
+                $"{(level < IncubatorController.MaximumLevel ? "Next: " : string.Empty)}" +
+                $"{IncubatorController.GetCapacity(shownLevel)} eggs  |  " +
+                $"{IncubatorController.GetProductionTime(shownLevel):0.##} sec";
         }
 
-        bool hasUpgrade = level < 2;
+        bool hasUpgrade = level < IncubatorController.MaximumLevel;
         int cost = hasUpgrade ? GetCost(level + 1) : 0;
 
         if (purchaseButton != null)
@@ -128,7 +168,7 @@ public sealed class IncubatorShopController : MonoBehaviour
 
     private int GetCost(int level)
     {
-        return level >= 2 ? levelTwoCostCents : levelOneCostCents;
+        return LevelCosts[Mathf.Clamp(level, 1, IncubatorController.MaximumLevel) - 1];
     }
 
     private static string FormatMoney(int cents)

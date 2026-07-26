@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using TMPro;
 using UnityEngine;
@@ -5,25 +6,18 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class IncubatorController : MonoBehaviour
 {
-    [System.Serializable]
-    private struct LevelSettings
+    private static readonly int[] LevelCapacities =
     {
-        [Min(1)] public int capacity;
-        [Min(0.1f)] public float secondsPerEgg;
-    }
+        1, 3, 5, 8, 12, 17, 23, 30, 38, 48
+    };
+
+    private static readonly float[] LevelProductionTimes =
+    {
+        10f, 8f, 6.5f, 5.25f, 4.25f, 3.5f, 2.9f, 2.4f, 2f, 1.6f
+    };
 
     [Header("Levels")]
-    [SerializeField] private LevelSettings levelOne = new LevelSettings
-    {
-        capacity = 1,
-        secondsPerEgg = 30f
-    };
-    [SerializeField] private LevelSettings levelTwo = new LevelSettings
-    {
-        capacity = 3,
-        secondsPerEgg = 20f
-    };
-    [SerializeField, Range(1, 2)] private int currentLevel = 1;
+    [SerializeField, Range(1, 10)] private int currentLevel = 1;
 
     [Header("Incubator Sockets")]
     [SerializeField] private Transform eggStart = null;
@@ -42,10 +36,15 @@ public sealed class IncubatorController : MonoBehaviour
     private int storedEggs;
     private float processingTimeRemaining;
 
+    public const int MaximumLevel = 10;
+    public static event Action ChickenHatched;
     public int CurrentLevel => currentLevel;
     public int StoredEggs => storedEggs;
-    public int Capacity => GetSettings(currentLevel).capacity;
-    public float SecondsPerEgg => GetSettings(currentLevel).secondsPerEgg;
+    public int Capacity => GetCapacity(currentLevel);
+    public int AvailableCapacity => Mathf.Max(0, Capacity - storedEggs);
+    public float SecondsPerEgg => GetProductionTime(currentLevel);
+    public Vector3 DepositPosition =>
+        eggStart != null ? eggStart.position : transform.position;
 
     private void Awake()
     {
@@ -54,6 +53,11 @@ public sealed class IncubatorController : MonoBehaviour
 
     private void Update()
     {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
+        {
+            return;
+        }
+
         if (storedEggs <= 0)
         {
             return;
@@ -71,7 +75,7 @@ public sealed class IncubatorController : MonoBehaviour
 
     public void InstallOrUpgrade(int level)
     {
-        int nextLevel = Mathf.Clamp(level, 1, 2);
+        int nextLevel = Mathf.Clamp(level, 1, MaximumLevel);
         float previousDuration = SecondsPerEgg;
         float progress = storedEggs > 0
             ? 1f - Mathf.Clamp01(processingTimeRemaining / previousDuration)
@@ -111,6 +115,25 @@ public sealed class IncubatorController : MonoBehaviour
         PrepareAcceptedEgg(egg);
         StartCoroutine(MoveEggIntoIncubator(egg.gameObject));
         RefreshDisplays();
+    }
+
+    public int TryAcceptStoredEggs(int eggCount)
+    {
+        if (!isActiveAndEnabled || eggCount <= 0 || AvailableCapacity <= 0)
+        {
+            return 0;
+        }
+
+        int accepted = Mathf.Min(eggCount, AvailableCapacity);
+
+        if (storedEggs == 0)
+        {
+            processingTimeRemaining = SecondsPerEgg;
+        }
+
+        storedEggs += accepted;
+        RefreshDisplays();
+        return accepted;
     }
 
     private void PrepareAcceptedEgg(ChickenEgg egg)
@@ -173,6 +196,7 @@ public sealed class IncubatorController : MonoBehaviour
             chickenPrefab,
             chickenStart.position,
             chickenStart.rotation);
+        ChickenHatched?.Invoke();
 
         if (chickenEnd != null
             && chickenObject.TryGetComponent(out ChickenController chicken))
@@ -206,18 +230,19 @@ public sealed class IncubatorController : MonoBehaviour
         }
     }
 
-    private LevelSettings GetSettings(int level)
+    public static int GetCapacity(int level)
     {
-        return level >= 2 ? levelTwo : levelOne;
+        return LevelCapacities[Mathf.Clamp(level, 1, MaximumLevel) - 1];
+    }
+
+    public static float GetProductionTime(int level)
+    {
+        return LevelProductionTimes[Mathf.Clamp(level, 1, MaximumLevel) - 1];
     }
 
     private void OnValidate()
     {
-        levelOne.capacity = Mathf.Max(1, levelOne.capacity);
-        levelOne.secondsPerEgg = Mathf.Max(0.1f, levelOne.secondsPerEgg);
-        levelTwo.capacity = Mathf.Max(1, levelTwo.capacity);
-        levelTwo.secondsPerEgg = Mathf.Max(0.1f, levelTwo.secondsPerEgg);
-        currentLevel = Mathf.Clamp(currentLevel, 1, 2);
+        currentLevel = Mathf.Clamp(currentLevel, 1, MaximumLevel);
         eggTravelDuration = Mathf.Max(0.01f, eggTravelDuration);
 
         if (!Application.isPlaying)

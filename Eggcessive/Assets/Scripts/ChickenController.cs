@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Action = System.Action;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -7,6 +8,8 @@ using UnityEngine.AI;
 [RequireComponent(typeof(CapsuleCollider))]
 public sealed class ChickenController : MonoBehaviour
 {
+    public static event Action EggLaid;
+
     private enum ChickenState
     {
         Idle,
@@ -89,6 +92,8 @@ public sealed class ChickenController : MonoBehaviour
 
     [Header("Egg Laying")]
     [SerializeField] private GameObject eggPrefab = null;
+    [SerializeField, Min(0f)] private float minInitialEggLayTime = 1.5f;
+    [SerializeField, Min(0f)] private float maxInitialEggLayTime = 3.5f;
     [SerializeField, Min(0f)] private float minEggLayTime = 6f;
     [SerializeField, Min(0f)] private float maxEggLayTime = 12f;
     [SerializeField, Min(0.01f)] private float emptyFoodEggIntervalMultiplier = 2f;
@@ -116,6 +121,7 @@ public sealed class ChickenController : MonoBehaviour
     private float nextBiteTime;
     private float eggTimerRemaining;
     private float foodScore;
+    private float activeFoodProductionSpeed = 1f;
     private float nextBlinkTime;
     private float turnLean;
     private float turnLeanVelocity;
@@ -184,7 +190,7 @@ public sealed class ChickenController : MonoBehaviour
     private void OnEnable()
     {
         ActiveChickens.Add(this);
-        ScheduleNextEgg();
+        ScheduleInitialEgg();
         ScheduleNextBlink();
         ScheduleNextWingFlutter();
         ScheduleNextWingMicroTwitch();
@@ -295,13 +301,25 @@ public sealed class ChickenController : MonoBehaviour
 
     private void UpdateFoodAndEggTimers()
     {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
+        {
+            return;
+        }
+
         foodScore = Mathf.Max(0f, foodScore - foodScoreDrainPerSecond * Time.deltaTime);
+
+        if (foodScore <= 0f)
+        {
+            activeFoodProductionSpeed = 1f;
+        }
 
         float eggIntervalMultiplier = Mathf.Lerp(
             emptyFoodEggIntervalMultiplier,
             fullFoodEggIntervalMultiplier,
             FoodScoreNormalized);
-        eggTimerRemaining -= Time.deltaTime / Mathf.Max(0.01f, eggIntervalMultiplier);
+        eggTimerRemaining -= Time.deltaTime
+            * activeFoodProductionSpeed
+            / Mathf.Max(0.01f, eggIntervalMultiplier);
     }
 
     private void UpdateIdle()
@@ -474,6 +492,9 @@ public sealed class ChickenController : MonoBehaviour
         }
 
         foodScore = Mathf.Min(maximumFoodScore, foodScore + amountConsumed);
+        activeFoodProductionSpeed = Mathf.Max(
+            activeFoodProductionSpeed,
+            targetFood != null ? targetFood.EggProductionSpeedMultiplier : 1f);
 
         // Leave the eating state on the same frame that this bite satisfies the
         // chicken. Otherwise the hunger drain on the next frame drops the score
@@ -862,6 +883,11 @@ public sealed class ChickenController : MonoBehaviour
 
     private void LayEgg()
     {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
+        {
+            return;
+        }
+
         if (eggPrefab == null || eggSpawnedDuringLay)
         {
             return;
@@ -875,6 +901,7 @@ public sealed class ChickenController : MonoBehaviour
                 - GetPlanarForward() * eggSpawnBehindDistance;
         Quaternion eggRotation = Quaternion.Euler(0f, Random.Range(-180f, 180f), 0f);
         GameObject egg = Instantiate(eggPrefab, eggPosition, eggRotation);
+        EggLaid?.Invoke();
 
         if (!egg.TryGetComponent(out ChickenEgg _))
         {
@@ -970,6 +997,11 @@ public sealed class ChickenController : MonoBehaviour
     private void ScheduleNextEgg()
     {
         eggTimerRemaining = Random.Range(minEggLayTime, maxEggLayTime);
+    }
+
+    private void ScheduleInitialEgg()
+    {
+        eggTimerRemaining = Random.Range(minInitialEggLayTime, maxInitialEggLayTime);
     }
 
     private void SetEatingAnimation(bool isEating)
@@ -1242,6 +1274,8 @@ public sealed class ChickenController : MonoBehaviour
         }
         minEggLayTime = Mathf.Max(0f, minEggLayTime);
         maxEggLayTime = Mathf.Max(minEggLayTime, maxEggLayTime);
+        minInitialEggLayTime = Mathf.Max(0f, minInitialEggLayTime);
+        maxInitialEggLayTime = Mathf.Max(minInitialEggLayTime, maxInitialEggLayTime);
         emptyFoodEggIntervalMultiplier = Mathf.Max(0.01f, emptyFoodEggIntervalMultiplier);
         fullFoodEggIntervalMultiplier = Mathf.Max(0.01f, fullFoodEggIntervalMultiplier);
         eggLayingDuration = Mathf.Max(0f, eggLayingDuration);

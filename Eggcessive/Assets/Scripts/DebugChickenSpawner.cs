@@ -9,8 +9,8 @@ public class DebugChickenSpawner : MonoBehaviour
 {
     [Header("Spawn Settings")]
     [SerializeField] private GameObject chickenPrefab = null;
-    [SerializeField, Min(0)] private int targetCount = 10;
-    [SerializeField, Min(0f)] private float spawnDuration = 5f;
+    [SerializeField, Min(0)] private int targetCount = 3;
+    [SerializeField, Min(0f)] private float spawnDuration = 0f;
     [SerializeField, Min(0f)] private float minimumSpacing = 0.5f;
 
     [Header("Placement")]

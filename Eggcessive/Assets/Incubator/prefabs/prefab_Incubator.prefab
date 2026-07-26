@@ -10,6 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8572141445146064128}
   - component: {fileID: 3229268548466173837}
+  - component: {fileID: 3017398200160471412}
   m_Layer: 0
   m_Name: prefab_Incubator
   m_TagString: Untagged
@@ -45,12 +46,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 58ed9d337652083458703f487867b3d5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::IncubatorController
-  levelOne:
-    capacity: 1
-    secondsPerEgg: 30
-  levelTwo:
-    capacity: 3
-    secondsPerEgg: 20
   currentLevel: 1
   eggStart: {fileID: 3608343639968831540}
   eggEnd: {fileID: 9045702166512888643}
@@ -60,6 +55,27 @@ MonoBehaviour:
   timerText: {fileID: 5995300471214098659}
   chickenPrefab: {fileID: 4761822751608631720, guid: 0d60fca0103985a4884284e644365276, type: 3}
   eggTravelDuration: 0.65
+--- !u!65 &3017398200160471412
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 946146648212084610}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.38099998, y: 0.48000002, z: 0.68}
+  m_Center: {x: -0.00050000846, y: 0.2, z: -0.050000012}
 --- !u!1 &1681342120772645510
 GameObject:
   m_ObjectHideFlags: 0
@@ -568,11 +584,6 @@ Transform:
 --- !u!4 &5362142822957958535 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -6256249653146783098, guid: a7177af2bf371d74cbfdbf01423f35e1, type: 3}
-  m_PrefabInstance: {fileID: 7153825529841825537}
-  m_PrefabAsset: {fileID: 0}
---- !u!4 &7013902883703698671 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: -9074438890774297618, guid: a7177af2bf371d74cbfdbf01423f35e1, type: 3}
   m_PrefabInstance: {fileID: 7153825529841825537}
   m_PrefabAsset: {fileID: 0}
 --- !u!4 &7263680679071371498 stripped

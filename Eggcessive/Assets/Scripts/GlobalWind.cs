@@ -1,10 +1,21 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 [DefaultExecutionOrder(-500)]
 [DisallowMultipleComponent]
 public sealed class GlobalWind : MonoBehaviour
 {
+    private sealed class LocalInfluence
+    {
+        public int sourceId;
+        public Vector3 position;
+        public Vector3 direction;
+        public float radius;
+        public float strength;
+        public float expiresAt;
+    }
+
     public struct WindSample
     {
         public Vector3 steady;
@@ -42,6 +53,8 @@ public sealed class GlobalWind : MonoBehaviour
 
     private Vector4[] shaderLayerSpatial;
     private Vector4[] shaderLayerAmplitude;
+    private readonly List<LocalInfluence> localInfluences =
+        new List<LocalInfluence>();
 
     public static bool IsAvailable => instance != null && instance.isActiveAndEnabled;
 
@@ -63,6 +76,29 @@ public sealed class GlobalWind : MonoBehaviour
     public static WindSample SampleWindDetailed(Vector3 worldPosition, float time)
     {
         return IsAvailable ? instance.Sample(worldPosition, time) : default;
+    }
+
+    public static void SetTransientInfluence(
+        int sourceId,
+        Vector3 position,
+        Vector3 direction,
+        float radius,
+        float strength)
+    {
+        if (!IsAvailable
+            || direction.sqrMagnitude < 0.000001f
+            || radius <= 0f
+            || strength <= 0f)
+        {
+            return;
+        }
+
+        instance.SetInfluence(
+            sourceId,
+            position,
+            direction.normalized,
+            radius,
+            strength);
     }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -109,6 +145,7 @@ public sealed class GlobalWind : MonoBehaviour
 
     private void Update()
     {
+        RemoveExpiredInfluences();
         PublishShaderGlobals();
     }
 
@@ -153,13 +190,83 @@ public sealed class GlobalWind : MonoBehaviour
         }
 
         gustAmount = Mathf.Max(-0.95f, gustAmount);
-        return new WindSample
+        WindSample sample = new WindSample
         {
             steady = windDirection * baseStrength,
             gust = windDirection * (baseStrength * gustAmount),
             turbulence = sidewaysDirection * (baseStrength * sidewaysAmount)
                 + Vector3.up * (baseStrength * verticalAmount)
         };
+        sample.turbulence += SampleLocalInfluences(worldPosition, time);
+        return sample;
+    }
+
+    private void SetInfluence(
+        int sourceId,
+        Vector3 position,
+        Vector3 direction,
+        float radius,
+        float strength)
+    {
+        LocalInfluence influence = localInfluences.Find(
+            candidate => candidate.sourceId == sourceId);
+
+        if (influence == null)
+        {
+            influence = new LocalInfluence { sourceId = sourceId };
+            localInfluences.Add(influence);
+        }
+
+        influence.position = position;
+        influence.direction = direction;
+        influence.radius = radius;
+        influence.strength = strength;
+        influence.expiresAt = Time.time + 0.12f;
+    }
+
+    private Vector3 SampleLocalInfluences(Vector3 worldPosition, float time)
+    {
+        Vector3 total = Vector3.zero;
+
+        for (int index = 0; index < localInfluences.Count; index++)
+        {
+            LocalInfluence influence = localInfluences[index];
+
+            if (time > influence.expiresAt)
+            {
+                continue;
+            }
+
+            float distance = Vector3.Distance(
+                worldPosition,
+                influence.position);
+
+            if (distance >= influence.radius)
+            {
+                continue;
+            }
+
+            float falloff = 1f - Mathf.SmoothStep(
+                0f,
+                influence.radius,
+                distance);
+            total += influence.direction * (influence.strength * falloff);
+        }
+
+        return total;
+    }
+
+    private void RemoveExpiredInfluences()
+    {
+        float now = Time.time;
+
+        for (int index = localInfluences.Count - 1; index >= 0; index--)
+        {
+            if (now > localInfluences[index].expiresAt)
+            {
+                localInfluences.RemoveAt(index);
+            }
+        }
     }
 
     private void PublishShaderGlobals()

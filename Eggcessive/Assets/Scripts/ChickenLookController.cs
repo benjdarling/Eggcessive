@@ -438,7 +438,7 @@ public sealed class ChickenLookController : MonoBehaviour
     private bool TryGetCursorPosition(out Vector3 position)
     {
         position = Vector3.zero;
-        Mouse mouse = Mouse.current;
+        Mouse mouse = GameplayTestBot.PointerMouse;
         if (mouse == null || (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()))
         {
             return false;

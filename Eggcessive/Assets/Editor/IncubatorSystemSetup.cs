@@ -28,6 +28,34 @@ public static class IncubatorSystemSetup
         Debug.Log("Incubator prefab, HUD shop, and SampleScene placement are fully configured.");
     }
 
+    [MenuItem("Tools/Eggcessive/Rebuild Incubator Click Target")]
+    public static void RebuildClickTarget()
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(IncubatorPrefabPath);
+
+        try
+        {
+            Transform model = root.transform.Find("Incubator Mesh");
+
+            if (model == null)
+            {
+                throw new InvalidOperationException(
+                    "The incubator prefab is missing its nested model.");
+            }
+
+            ConfigureClickTarget(root, model.gameObject);
+            PrefabUtility.SaveAsPrefabAsset(root, IncubatorPrefabPath);
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log("Incubator full-model click target rebuilt.");
+    }
+
     [MenuItem("Tools/Eggcessive/Validate Incubator System")]
     public static void ValidateConfiguredAssets()
     {
@@ -41,6 +69,7 @@ public static class IncubatorSystemSetup
 
         IncubatorController prefabController = incubatorPrefab.GetComponent<IncubatorController>();
         IncubatorEggIntake intake = incubatorPrefab.GetComponentInChildren<IncubatorEggIntake>(true);
+        BoxCollider clickTarget = incubatorPrefab.GetComponent<BoxCollider>();
         Transform nestedModel = incubatorPrefab.transform.Find("Incubator Mesh");
         UnityEngine.Object modelSource = nestedModel != null
             ? PrefabUtility.GetCorrespondingObjectFromSource(nestedModel.gameObject)
@@ -49,6 +78,9 @@ public static class IncubatorSystemSetup
         if (prefabController == null
             || intake == null
             || !intake.GetComponent<Collider>().isTrigger
+            || clickTarget == null
+            || !clickTarget.isTrigger
+            || clickTarget.size.sqrMagnitude <= 0.01f
             || incubatorPrefab.GetComponentsInChildren<TextMeshPro>(true).Length != 2)
         {
             throw new InvalidOperationException("The incubator prefab is missing its controller, intake, or authored TMP displays.");
@@ -133,6 +165,7 @@ public static class IncubatorSystemSetup
             GameObject model = (GameObject)PrefabUtility.InstantiatePrefab(modelAsset);
             model.name = "Incubator Mesh";
             model.transform.SetParent(root.transform, false);
+            ConfigureClickTarget(root, model);
 
             Transform eggStart = FindRequired(model.transform, "SOCKET_incubator_start");
             Transform eggEnd = FindRequired(model.transform, "SOCKET_incubator_end");
@@ -168,8 +201,6 @@ public static class IncubatorSystemSetup
             serializedIntake.ApplyModifiedPropertiesWithoutUndo();
 
             SerializedObject serializedController = new SerializedObject(controller);
-            SetLevel(serializedController.FindProperty("levelOne"), 1, 30f);
-            SetLevel(serializedController.FindProperty("levelTwo"), 3, 20f);
             serializedController.FindProperty("currentLevel").intValue = 1;
             serializedController.FindProperty("eggStart").objectReferenceValue = eggStart;
             serializedController.FindProperty("eggEnd").objectReferenceValue = eggEnd;
@@ -247,7 +278,7 @@ public static class IncubatorSystemSetup
                 "Details",
                 shop,
                 font,
-                "Level 1  |  1 egg  |  30 sec",
+                "Level 1  |  1 egg  |  20 sec",
                 15f,
                 TextAlignmentOptions.Center);
             SetRect(detailsText.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -82f), new Vector2(260f, 30f));
@@ -397,12 +428,6 @@ public static class IncubatorSystemSetup
         text.rectTransform.localRotation = Quaternion.identity;
         text.rectTransform.localScale = Vector3.one * 0.055f;
         return text;
-    }
-
-    private static void SetLevel(SerializedProperty property, int capacity, float secondsPerEgg)
-    {
-        property.FindPropertyRelative("capacity").intValue = capacity;
-        property.FindPropertyRelative("secondsPerEgg").floatValue = secondsPerEgg;
     }
 
     private static void ValidateReference(SerializedObject serializedObject, string propertyName)
@@ -587,5 +612,53 @@ public static class IncubatorSystemSetup
         }
 
         Debug.Log($"Incubator authored bounds: center {bounds.center}, size {bounds.size}.");
+    }
+
+    private static void ConfigureClickTarget(GameObject root, GameObject model)
+    {
+        Renderer[] renderers = model.GetComponentsInChildren<Renderer>(true);
+
+        if (renderers.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The incubator model has no renderers for its click target.");
+        }
+
+        Bounds localBounds = new Bounds(
+            root.transform.InverseTransformPoint(renderers[0].bounds.center),
+            Vector3.zero);
+
+        foreach (Renderer renderer in renderers)
+        {
+            Bounds worldBounds = renderer.bounds;
+            Vector3 center = worldBounds.center;
+            Vector3 extents = worldBounds.extents;
+
+            for (int x = -1; x <= 1; x += 2)
+            {
+                for (int y = -1; y <= 1; y += 2)
+                {
+                    for (int z = -1; z <= 1; z += 2)
+                    {
+                        Vector3 corner = center + Vector3.Scale(
+                            extents,
+                            new Vector3(x, y, z));
+                        localBounds.Encapsulate(
+                            root.transform.InverseTransformPoint(corner));
+                    }
+                }
+            }
+        }
+
+        BoxCollider clickTarget = root.GetComponent<BoxCollider>();
+
+        if (clickTarget == null)
+        {
+            clickTarget = root.AddComponent<BoxCollider>();
+        }
+
+        clickTarget.isTrigger = true;
+        clickTarget.center = localBounds.center;
+        clickTarget.size = localBounds.size + Vector3.one * 0.08f;
     }
 }

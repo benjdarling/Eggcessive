@@ -69,7 +69,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bd739e6347fa42c38a74261be3818709, type: 3}
   m_Name:
   m_EditorClassIdentifier: '::'
-  centsPerEgg: 50
+  centsPerEgg: 100
 --- !u!1 &7195535571874297187
 GameObject:
   m_ObjectHideFlags: 0
