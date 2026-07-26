@@ -12,7 +12,7 @@ public static class GameplayTestBotSetup
     private const string PrefabPath =
         "Assets/Testing/prefabs/prefab_GameplayTestBot.prefab";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
-    private const string FontPath = "Assets/Fonts/Chewy-Regular SDF.asset";
+    private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
 
     [MenuItem("Tools/Eggcessive/Testing/Build Automated Gameplay Test Bot")]
     public static void Build()

@@ -52,7 +52,7 @@ public sealed class EggContainer : MonoBehaviour
             return;
         }
 
-        DepositEggs(1);
+        DepositEggValue(egg.ValueCents);
         Destroy(egg.gameObject);
     }
 
@@ -65,16 +65,55 @@ public sealed class EggContainer : MonoBehaviour
             return 0;
         }
 
+        int standardValue = ProgressionSystem.Instance != null
+            ? ProgressionSystem.Instance.GetEggValueCents(ChickenEgg.EggType.Standard)
+            : centsPerEgg;
+
         for (int index = 0; index < eggCount; index++)
         {
-            Vector3 rewardPosition = RewardPosition
-                + UnityEngine.Random.insideUnitSphere * 0.06f;
-            RoundSystem.Instance?.ShowCoinReward(rewardPosition, centsPerEgg);
-            EggScoreHud.AddCents(centsPerEgg);
-            EggCollected?.Invoke(centsPerEgg);
+            DepositEggValue(standardValue);
         }
 
         return eggCount;
+    }
+
+    public int DepositEggValues(System.Collections.Generic.IReadOnlyList<int> values)
+    {
+        if (values == null
+            || (RoundSystem.Instance != null
+                && !RoundSystem.Instance.IsRoundAcceptingEggs))
+        {
+            return 0;
+        }
+
+        int deposited = 0;
+
+        for (int index = 0; index < values.Count; index++)
+        {
+            if (DepositEggValue(values[index]))
+            {
+                deposited++;
+            }
+        }
+
+        return deposited;
+    }
+
+    public bool DepositEggValue(int valueCents)
+    {
+        if (RoundSystem.Instance != null
+            && !RoundSystem.Instance.IsRoundAcceptingEggs)
+        {
+            return false;
+        }
+
+        int value = Mathf.Max(1, valueCents);
+        Vector3 rewardPosition = RewardPosition
+            + UnityEngine.Random.insideUnitSphere * 0.06f;
+        RoundSystem.Instance?.ShowContainerCoinReward(rewardPosition, value);
+        EggScoreHud.AddCents(value);
+        EggCollected?.Invoke(value);
+        return true;
     }
 
     private void OnValidate()

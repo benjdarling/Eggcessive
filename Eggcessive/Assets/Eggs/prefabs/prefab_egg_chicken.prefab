@@ -99,6 +99,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: '::'
   minimumScale: 0.95
   maximumScale: 1.05
+  typeMaterials:
+  - {fileID: 2100000, guid: 6fb225b46a1782847b8bc1b12cbf88df, type: 2}
+  - {fileID: 2100000, guid: f4973a4c79220e1459868dc558a23958, type: 2}
+  - {fileID: 2100000, guid: ecdf1497da350ae4f9c921281b584043, type: 2}
+  - {fileID: 2100000, guid: 9a77f86dc7f58e5439c87e1c5f6a53ce, type: 2}
 --- !u!114 &7290000000000000001
 MonoBehaviour:
   m_ObjectHideFlags: 0

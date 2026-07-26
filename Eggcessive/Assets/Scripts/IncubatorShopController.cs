@@ -10,6 +10,16 @@ public sealed class IncubatorShopController : MonoBehaviour
         400, 1000, 2200, 4500, 8000, 13000, 20000, 30000, 44000, 62000
     };
 
+    private static readonly int[] CapacityCosts =
+    {
+        1000, 2600, 6500, 15000, 34000, 76000, 170000, 380000, 850000
+    };
+
+    private static readonly int[] SpeedCosts =
+    {
+        1400, 3800, 9500, 23000, 55000, 130000, 310000, 740000, 1800000
+    };
+
     [Header("Scene Incubator")]
     [SerializeField] private IncubatorController incubator = null;
 
@@ -31,7 +41,19 @@ public sealed class IncubatorShopController : MonoBehaviour
             : 0;
 
     public static IncubatorShopController Instance { get; private set; }
+    public bool IsInstalled => PurchasedLevel > 0;
+    public int InstallCost => LevelCosts[0];
     public int CurrentLevel => PurchasedLevel;
+    public int CapacityLevel => IsInstalled ? incubator.CapacityLevel : 0;
+    public int SpeedLevel => IsInstalled ? incubator.SpeedLevel : 0;
+    public int NextCapacityCost =>
+        IsInstalled && CapacityLevel < IncubatorController.MaximumLevel
+            ? CapacityCosts[CapacityLevel - 1]
+            : 0;
+    public int NextSpeedCost =>
+        IsInstalled && SpeedLevel < IncubatorController.MaximumLevel
+            ? SpeedCosts[SpeedLevel - 1]
+            : 0;
     public bool HasUpgrade => PurchasedLevel < IncubatorController.MaximumLevel;
     public int NextLevel => Mathf.Min(
         PurchasedLevel + 1,
@@ -39,6 +61,23 @@ public sealed class IncubatorShopController : MonoBehaviour
     public int NextUpgradeCost => HasUpgrade ? GetCost(NextLevel) : 0;
     public int NextCapacity => IncubatorController.GetCapacity(NextLevel);
     public float NextProductionTime => IncubatorController.GetProductionTime(NextLevel);
+
+    public int NextSplitCapacity => IncubatorController.GetCapacity(
+        Mathf.Clamp(CapacityLevel + 1, 1, IncubatorController.MaximumLevel));
+    public float NextSplitProductionTime => IncubatorController.GetProductionTime(
+        Mathf.Clamp(SpeedLevel + 1, 1, IncubatorController.MaximumLevel));
+
+    public int GetCapacityUpgradeCost(int targetLevel)
+    {
+        int index = Mathf.Clamp(targetLevel, 2, IncubatorController.MaximumLevel) - 2;
+        return CapacityCosts[index];
+    }
+
+    public int GetSpeedUpgradeCost(int targetLevel)
+    {
+        int index = Mathf.Clamp(targetLevel, 2, IncubatorController.MaximumLevel) - 2;
+        return SpeedCosts[index];
+    }
 
     private void Awake()
     {
@@ -120,6 +159,76 @@ public sealed class IncubatorShopController : MonoBehaviour
         return true;
     }
 
+    public bool TryInstall(out string message, bool spendCurrency = true)
+    {
+        if (incubator == null)
+        {
+            message = "Incubator is not connected";
+            return false;
+        }
+
+        if (IsInstalled)
+        {
+            message = "Incubator already installed";
+            return false;
+        }
+
+        if (spendCurrency && !EggScoreHud.TrySpendCents(InstallCost))
+        {
+            message = $"Need {FormatMoney(InstallCost)}";
+            return false;
+        }
+
+        incubator.InstallOrUpgrade(1, 1);
+        message = "Incubator installed";
+        RefreshUi();
+        return true;
+    }
+
+    public bool TryUpgradeCapacity(out string message, bool spendCurrency = true)
+    {
+        if (!IsInstalled || CapacityLevel >= IncubatorController.MaximumLevel)
+        {
+            message = IsInstalled ? "Maximum incubator capacity" : "Install the incubator first";
+            return false;
+        }
+
+        int cost = NextCapacityCost;
+
+        if (spendCurrency && !EggScoreHud.TrySpendCents(cost))
+        {
+            message = $"Need {FormatMoney(cost)}";
+            return false;
+        }
+
+        incubator.InstallOrUpgrade(CapacityLevel + 1, SpeedLevel);
+        message = $"Incubator capacity level {CapacityLevel}";
+        RefreshUi();
+        return true;
+    }
+
+    public bool TryUpgradeSpeed(out string message, bool spendCurrency = true)
+    {
+        if (!IsInstalled || SpeedLevel >= IncubatorController.MaximumLevel)
+        {
+            message = IsInstalled ? "Maximum incubator speed" : "Install the incubator first";
+            return false;
+        }
+
+        int cost = NextSpeedCost;
+
+        if (spendCurrency && !EggScoreHud.TrySpendCents(cost))
+        {
+            message = $"Need {FormatMoney(cost)}";
+            return false;
+        }
+
+        incubator.InstallOrUpgrade(CapacityLevel, SpeedLevel + 1);
+        message = $"Incubator speed level {SpeedLevel}";
+        RefreshUi();
+        return true;
+    }
+
     private void HandleBalanceChanged(int _)
     {
         RefreshUi();
@@ -173,7 +282,7 @@ public sealed class IncubatorShopController : MonoBehaviour
 
     private static string FormatMoney(int cents)
     {
-        return $"${cents / 100}.{cents % 100:D2}";
+        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
     }
 
     private void SetStatus(string message)

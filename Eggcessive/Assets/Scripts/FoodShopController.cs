@@ -93,6 +93,23 @@ public sealed class FoodShopController : MonoBehaviour
             ? FeedSpeedMultipliers[unlockedFeedTier]
             : CurrentFeedSpeedMultiplier;
 
+    public int GetFeedUnlockCost(int targetTier)
+    {
+        return FeedUnlockCosts[
+            Mathf.Clamp(targetTier, 1, MaximumFeedTier) - 1];
+    }
+
+    public string GetFeedName(int tier)
+    {
+        return FeedTierNames[Mathf.Clamp(tier, 1, MaximumFeedTier) - 1];
+    }
+
+    public float GetFeedSpeedMultiplier(int tier)
+    {
+        return FeedSpeedMultipliers[
+            Mathf.Clamp(tier, 1, MaximumFeedTier) - 1];
+    }
+
     private void Awake()
     {
         Instance = this;
@@ -223,7 +240,7 @@ public sealed class FoodShopController : MonoBehaviour
         return true;
     }
 
-    public bool TryUnlockNextFeedTier(out string message)
+    public bool TryUnlockNextFeedTier(out string message, bool spendCurrency = true)
     {
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsSuppliesShopOpen)
         {
@@ -239,7 +256,7 @@ public sealed class FoodShopController : MonoBehaviour
 
         int cost = NextFeedTierUnlockCost;
 
-        if (!EggScoreHud.TrySpendCents(cost))
+        if (spendCurrency && !EggScoreHud.TrySpendCents(cost))
         {
             message = $"Need {FormatMoney(cost)}";
             return false;
@@ -499,7 +516,7 @@ public sealed class FoodShopController : MonoBehaviour
 
     private static string FormatMoney(int cents)
     {
-        return $"${cents / 100}.{cents % 100:D2}";
+        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
     }
 
     private void SetStatus(string message)

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -18,7 +19,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private ChickenEgg targetEgg;
     private int capacity = 3;
     private int storedEggs;
-    private bool smartDelivery;
+    private int smartnessLevel;
+    private readonly List<int> storedEggValues = new List<int>();
+    private readonly List<ChickenEgg.EggType> storedEggTypes =
+        new List<ChickenEgg.EggType>();
     private bool delivering;
     private bool deliveringToIncubator;
     private float nextTargetRefreshTime;
@@ -40,12 +44,12 @@ public sealed class EggCollectorRobot : MonoBehaviour
         IncubatorController targetIncubator,
         float movementSpeed,
         int eggCapacity,
-        bool useSmartDelivery)
+        int deliverySmartnessLevel)
     {
         eggContainer = targetContainer;
         incubator = targetIncubator;
         capacity = Mathf.Max(1, eggCapacity);
-        smartDelivery = useSmartDelivery;
+        smartnessLevel = Mathf.Clamp(deliverySmartnessLevel, 0, 2);
         agent.speed = Mathf.Max(0.1f, movementSpeed);
         agent.acceleration = agent.speed * 5f;
         agent.angularSpeed = 540f;
@@ -114,6 +118,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
         targetEgg = null;
         StopMoving();
         storedEggs = 0;
+        storedEggValues.Clear();
+        storedEggTypes.Clear();
         delivering = false;
         deliveringToIncubator = false;
         RefreshVisibleEggs();
@@ -130,6 +136,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
 
         storedEggs++;
+        storedEggValues.Add(egg.ValueCents);
+        storedEggTypes.Add(egg.Type);
         Destroy(egg.gameObject);
         RefreshVisibleEggs();
 
@@ -189,8 +197,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
         else if (eggContainer != null)
         {
-            int deposited = eggContainer.DepositEggs(storedEggs);
+            int deposited = eggContainer.DepositEggValues(storedEggValues);
             storedEggs -= deposited;
+            storedEggValues.RemoveRange(
+                0,
+                Mathf.Min(deposited, storedEggValues.Count));
+            storedEggTypes.RemoveRange(
+                0,
+                Mathf.Min(deposited, storedEggTypes.Count));
         }
 
         delivering = storedEggs > 0;
@@ -207,11 +221,31 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
         int accepted = incubator.TryAcceptStoredEggs(storedEggs);
         storedEggs -= accepted;
+
+        // Incubation consumes the least valuable eggs first so a smart robot
+        // does not turn a rare galaxy or gold egg into an ordinary chicken.
+        for (int i = 0; i < accepted && storedEggValues.Count > 0; i++)
+        {
+            int leastValuableIndex = 0;
+            for (int candidate = 1; candidate < storedEggValues.Count; candidate++)
+            {
+                if (storedEggValues[candidate] < storedEggValues[leastValuableIndex])
+                {
+                    leastValuableIndex = candidate;
+                }
+            }
+
+            storedEggValues.RemoveAt(leastValuableIndex);
+            if (leastValuableIndex < storedEggTypes.Count)
+            {
+                storedEggTypes.RemoveAt(leastValuableIndex);
+            }
+        }
     }
 
     private bool CanDeliverToIncubator()
     {
-        return smartDelivery
+        return smartnessLevel > 0
             && incubator != null
             && incubator.isActiveAndEnabled
             && incubator.AvailableCapacity > 0;
@@ -236,10 +270,13 @@ public sealed class EggCollectorRobot : MonoBehaviour
             }
 
             float distance = (egg.transform.position - transform.position).sqrMagnitude;
+            float selectionScore = smartnessLevel >= 2
+                ? distance / Mathf.Max(1f, egg.ValueCents / 100f)
+                : distance;
 
-            if (distance < nearestDistance)
+            if (selectionScore < nearestDistance)
             {
-                nearestDistance = distance;
+                nearestDistance = selectionScore;
                 nearest = egg;
             }
         }
@@ -360,6 +397,11 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             if (visibleEggSlots[index] != null)
             {
+                ChickenEgg.ApplyTypeVisual(
+                    visibleEggSlots[index].gameObject,
+                    index < storedEggTypes.Count
+                        ? storedEggTypes[index]
+                        : ChickenEgg.EggType.Standard);
                 visibleEggSlots[index].gameObject.SetActive(index < storedEggs);
             }
         }

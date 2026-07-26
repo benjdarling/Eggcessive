@@ -10,13 +10,6 @@ public sealed class GameplayTestBot : MonoBehaviour
 {
     private static Mouse automationInputMouse;
 
-    private static readonly string[] ShopUpgradeButtonNames =
-    {
-        "Upgrade Collection",
-        "Upgrade Incubator",
-        "Upgrade Feed"
-    };
-
     private static readonly Vector2[] FoodPlacementViewportPoints =
     {
         new Vector2(0.5f, 0.52f),
@@ -28,10 +21,15 @@ public sealed class GameplayTestBot : MonoBehaviour
         new Vector2(0.46f, 0.62f),
         new Vector2(0.56f, 0.62f)
     };
+    private const float EfficientCollectionRatio = 0.72f;
+    private const int MaximumEfficientRoundLeftovers = 2;
+    private const int MaximumDesiredFeedPiles = 4;
 
     [Header("Operation")]
     [SerializeField] private bool startEnabled = false;
-    [SerializeField, Min(100f)] private float pointerSpeed = 1350f;
+    [SerializeField, Min(100f)] private float pointerSpeed = 3600f;
+    [SerializeField, Range(2f, 12f)] private float pointerSpringFrequency = 5.5f;
+    [SerializeField, Range(0.35f, 0.95f)] private float pointerSpringDamping = 0.68f;
     [SerializeField, Min(0f)] private float pointerDwellTime = 0.08f;
     [SerializeField, Min(0.05f)] private float actionPause = 0.2f;
     [SerializeField, Min(0.1f)] private float vacuumHoldTime = 0.85f;
@@ -39,7 +37,6 @@ public sealed class GameplayTestBot : MonoBehaviour
     [Header("Strategy")]
     [SerializeField, Min(0)] private int minimumFeedBags = 1;
     [SerializeField, Min(1)] private int maximumShopPurchasesPerVisit = 12;
-    [SerializeField, Min(1)] private int incubatorEggInterval = 3;
 
     [Header("Authored Status UI")]
     [SerializeField] private TMP_Text statusText = null;
@@ -54,11 +51,14 @@ public sealed class GameplayTestBot : MonoBehaviour
     private int collectionActionCount;
     private int foodPlacementAttempt;
     private int completedActions;
+    private int desiredFeedPiles = 1;
+    private bool stockMultipleFeedBags;
     private CursorLockMode previousCursorLock;
     private bool previousCursorVisible;
     private bool cursorStateCaptured;
     private bool isRunning;
     private Mouse physicalMouse;
+    private Vector2 pointerVelocity;
 
     public bool IsRunning => isRunning;
     public static Mouse PointerMouse =>
@@ -134,6 +134,9 @@ public sealed class GameplayTestBot : MonoBehaviour
         Cursor.visible = true;
         hasLastPhase = false;
         completedActions = 0;
+        desiredFeedPiles = Mathf.Max(1, minimumFeedBags);
+        stockMultipleFeedBags = false;
+        pointerVelocity = Vector2.zero;
         isRunning = true;
         automation = StartCoroutine(AutomationLoop());
     }
@@ -226,10 +229,12 @@ public sealed class GameplayTestBot : MonoBehaviour
         lastPhase = phase;
         hasLastPhase = true;
         ReleaseMouseButtons();
+        pointerVelocity = Vector2.zero;
 
         if (phase == RoundSystem.RoundPhase.Results)
         {
             resultsSkipSent = false;
+            UpdateFeedStrategy(RoundSystem.Instance);
         }
 
         if (phase == RoundSystem.RoundPhase.SuppliesShop)
@@ -255,9 +260,10 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        if (!HasAvailableFood()
-            && foodShop != null
-            && foodShop.OwnedFoodCount > 0)
+        if (foodShop != null
+            && foodShop.OwnedFoodCount > 0
+            && (stockMultipleFeedBags
+                || CountAvailableFoodPiles() < desiredFeedPiles))
         {
             yield return ClickNamedButton("Food Icon Button", "SELECTING FEED");
             yield break;
@@ -272,22 +278,18 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        int level = collection.CurrentCollectionLevel;
-
-        if (level >= 7)
-        {
-            SetStatus($"ROUND  •  SUPERVISING {collection.CurrentCollectionName.ToUpperInvariant()}");
-            yield return new WaitForSecondsRealtime(0.25f);
-            yield break;
-        }
-
-        if (level >= 4)
+        if (collection.HasVacuum)
         {
             yield return UseVacuum();
         }
-        else if (level >= 1)
+        else if (collection.BasketUpgradeLevel > 0)
         {
             yield return UseBasket(collection);
+        }
+        else if (collection.HasRobot)
+        {
+            SetStatus($"ROUND  •  SUPERVISING {collection.CurrentCollectionName.ToUpperInvariant()}");
+            yield return new WaitForSecondsRealtime(0.25f);
         }
         else
         {
@@ -297,7 +299,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator UseHand()
     {
-        if (!TryFindClickableEgg(out ChickenEgg egg, out Vector2 eggPoint))
+        if (!TryFindClickableEgg(out ChickenEgg egg, out _))
         {
             SetStatus("ROUND  •  WAITING FOR EGGS");
             yield return new WaitForSecondsRealtime(0.18f);
@@ -323,12 +325,24 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         SetStatus($"HAND  •  {(incubate ? "TO INCUBATOR" : "TO CONTAINER")}");
-        yield return MovePointer(eggPoint);
+        yield return MovePointerToEgg(egg);
+        if (!IsPointerOverEgg(egg))
+        {
+            yield return new WaitForSecondsRealtime(0.06f);
+            yield break;
+        }
+
         QueueMouseButton(MouseButton.Left, true);
         float pickupWait = 0f;
 
         while (collection.HeldEgg != egg && pickupWait < 0.35f)
         {
+            if (!TryGetEggScreenPoint(egg, out Vector2 liveEggPoint))
+            {
+                break;
+            }
+
+            MovePointerSpring(liveEggPoint, MouseButton.Left);
             pickupWait += Time.unscaledDeltaTime;
             yield return null;
         }
@@ -340,16 +354,23 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        yield return MovePointer(destinationPoint);
+        yield return MovePointer(destinationPoint, MouseButton.Left);
         float arrivalWait = 0f;
 
         while (egg != null
             && collection.HeldEgg == egg
             && Vector3.SqrMagnitude(egg.transform.position - dropPosition) > 0.0016f
-            && arrivalWait < 0.75f)
+            && arrivalWait < 1.2f)
         {
+            ForceMouseButton(MouseButton.Left, true);
             arrivalWait += Time.unscaledDeltaTime;
             yield return null;
+        }
+
+        if (collection.HeldEgg != egg)
+        {
+            yield return new WaitForSecondsRealtime(0.08f);
+            yield break;
         }
 
         QueueMouseButton(MouseButton.Left, false);
@@ -360,28 +381,47 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator UseBasket(EggCarryController collection)
     {
-        bool incubatorAvailable = CanUseIncubator();
+        bool hasCollectibleEgg =
+            TryFindClickableEgg(out ChickenEgg egg, out _);
+        bool basketLoaded =
+            collection.BasketEggCount >= collection.CurrentBasketCapacity
+            || !hasCollectibleEgg;
 
         if (collection.BasketEggCount > 0
-            && incubatorAvailable
-            && collectionActionCount % incubatorEggInterval == 0)
+            && basketLoaded
+            && CanUseIncubator())
         {
             SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  INCUBATING ONE");
-            yield return ClickWorldComponent(FindIncubator());
-            collectionActionCount++;
+            IncubatorController incubator = FindIncubator();
+            int transferCount = Mathf.Min(
+                collection.BasketEggCount,
+                incubator.AvailableCapacity);
+            SetStatus(
+                $"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}" +
+                $"  •  INCUBATING {transferCount}");
+
+            for (int index = 0; index < transferCount; index++)
+            {
+                int eggsBefore = collection.BasketEggCount;
+                yield return ClickWorldComponent(incubator);
+                if (collection.BasketEggCount >= eggsBefore)
+                {
+                    break;
+                }
+
+                collectionActionCount++;
+            }
             yield break;
         }
 
-        if (collection.BasketEggCount >= collection.CurrentBasketCapacity
-            || (collection.BasketEggCount > 0
-                && !TryFindClickableEgg(out _, out _)))
+        if (collection.BasketEggCount > 0 && basketLoaded)
         {
             SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  CASHING IN");
             yield return ClickWorldComponent(EggContainer.Instance);
             yield break;
         }
 
-        if (!TryFindClickableEgg(out ChickenEgg egg, out Vector2 eggPoint))
+        if (!hasCollectibleEgg)
         {
             SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  WAITING");
             yield return new WaitForSecondsRealtime(0.18f);
@@ -389,12 +429,12 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  COLLECTING");
-        yield return ClickScreen(eggPoint);
+        yield return ClickMovingEgg(egg);
     }
 
     private IEnumerator UseVacuum()
     {
-        if (!TryFindClickableEgg(out ChickenEgg egg, out Vector2 eggPoint))
+        if (!TryFindClickableEgg(out ChickenEgg egg, out _))
         {
             SetStatus("VACUUM  •  WAITING FOR EGGS");
             yield return new WaitForSecondsRealtime(0.16f);
@@ -403,10 +443,37 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         bool incubate = ShouldUseIncubator();
         SetStatus($"VACUUM  •  {(incubate ? "RIGHT SUCK TO INCUBATOR" : "CASH SUCK")}");
-        yield return MovePointer(eggPoint);
+        yield return MovePointerToEgg(egg);
+        if (!IsPointerOverEgg(egg))
+        {
+            yield return new WaitForSecondsRealtime(0.06f);
+            yield break;
+        }
+
         MouseButton button = incubate ? MouseButton.Right : MouseButton.Left;
         QueueMouseButton(button, true);
-        yield return new WaitForSecondsRealtime(vacuumHoldTime);
+        float vacuumTime = 0f;
+        ChickenEgg trackedEgg = egg;
+        while (vacuumTime < vacuumHoldTime)
+        {
+            if (!TryGetEggScreenPoint(trackedEgg, out Vector2 liveEggPoint))
+            {
+                TryFindClickableEgg(out trackedEgg, out liveEggPoint);
+            }
+
+            if (trackedEgg != null)
+            {
+                MovePointerSpring(liveEggPoint, button);
+            }
+            else
+            {
+                ForceMouseButton(button, true);
+            }
+
+            vacuumTime += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
         QueueMouseButton(button, false);
         collectionActionCount++;
         completedActions++;
@@ -415,8 +482,13 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator TryPlaceFood()
     {
-        Vector2 viewport = FoodPlacementViewportPoints[
+        Vector2 baseViewport = FoodPlacementViewportPoints[
             foodPlacementAttempt % FoodPlacementViewportPoints.Length];
+        Vector2 jitter = Random.insideUnitCircle;
+        jitter = new Vector2(jitter.x * 0.035f, jitter.y * 0.025f);
+        Vector2 viewport = baseViewport + jitter;
+        viewport.x = Mathf.Clamp(viewport.x, 0.35f, 0.65f);
+        viewport.y = Mathf.Clamp(viewport.y, 0.39f, 0.65f);
         foodPlacementAttempt++;
         Vector2 screenPoint = new Vector2(
             viewport.x * Screen.width,
@@ -449,37 +521,95 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator HandleShop()
     {
+        ProgressionTreePreview preview =
+            Object.FindFirstObjectByType<ProgressionTreePreview>();
+        if (preview != null && preview.IsOpen)
+        {
+            SetStatus("SHOP  •  CLOSING DETAILS");
+            RectTransform emptySpace = FindNamedRectTransform("Shop Title");
+            if (emptySpace != null)
+            {
+                Canvas canvas = emptySpace.GetComponentInParent<Canvas>();
+                Camera uiCamera = canvas != null
+                    && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                        ? canvas.worldCamera
+                        : null;
+                Vector2 point = RectTransformUtility.WorldToScreenPoint(
+                    uiCamera,
+                    emptySpace.TransformPoint(emptySpace.rect.center));
+                yield return ClickScreen(point);
+            }
+            else
+            {
+                preview.Hide();
+                yield return new WaitForSecondsRealtime(actionPause);
+            }
+
+            yield break;
+        }
+
         FoodShopController foodShop = FoodShopController.Instance;
 
-        if (foodShop != null && foodShop.OwnedFoodCount < minimumFeedBags)
+        int desiredFeedInventory = stockMultipleFeedBags
+            ? desiredFeedPiles
+            : Mathf.Max(
+                0,
+                desiredFeedPiles - CountAvailableFoodPiles());
+        if (foodShop != null
+            && foodShop.OwnedFoodCount < desiredFeedInventory)
         {
             Button buyFeed = FindNamedButton("Buy Feed");
 
-            if (IsUsable(buyFeed))
+            if (CanPurchaseProgressionNode(buyFeed))
             {
-                shopPurchaseCount++;
-                yield return ClickButton(buyFeed, "SHOP  •  BUYING FEED BAG");
-                yield break;
+                yield return ClickButton(buyFeed, "SHOP  •  SELECTING FEED BAG");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        "SHOP  •  BUYING FEED BAG");
+                    yield break;
+                }
             }
         }
 
         if (shopPurchaseCount < maximumShopPurchasesPerVisit)
         {
-            for (int offset = 0; offset < ShopUpgradeButtonNames.Length; offset++)
+            ProgressionNodeButton[] nodes =
+                Object.FindObjectsByType<ProgressionNodeButton>(
+                    FindObjectsInactive.Exclude,
+                    FindObjectsSortMode.None);
+            for (int offset = 0; offset < nodes.Length; offset++)
             {
-                int index = (shopUpgradeCursor + offset) % ShopUpgradeButtonNames.Length;
-                Button upgrade = FindNamedButton(ShopUpgradeButtonNames[index]);
-
-                if (!IsUsable(upgrade))
+                int index = (shopUpgradeCursor + offset) % nodes.Length;
+                ProgressionNodeButton node = nodes[index];
+                if (node.UpgradeId == ProgressionSystem.UpgradeId.FoodBag)
                 {
                     continue;
                 }
 
-                shopUpgradeCursor = (index + 1) % ShopUpgradeButtonNames.Length;
-                shopPurchaseCount++;
+                Button upgrade = node.GetComponent<Button>();
+                if (!CanPurchaseProgressionNode(upgrade))
+                {
+                    continue;
+                }
+
                 yield return ClickButton(
                     upgrade,
-                    $"SHOP  •  {ShopUpgradeButtonNames[index].ToUpperInvariant()}");
+                    $"SHOP  •  SELECTING {upgrade.name.ToUpperInvariant()}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (!IsUsable(previewBuy))
+                {
+                    continue;
+                }
+
+                shopUpgradeCursor = (index + 1) % nodes.Length;
+                shopPurchaseCount++;
+                yield return ClickButton(
+                    previewBuy,
+                    $"SHOP  •  BUYING {upgrade.name.ToUpperInvariant()}");
                 yield break;
             }
         }
@@ -489,8 +619,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private bool ShouldUseIncubator()
     {
-        return CanUseIncubator()
-            && collectionActionCount % incubatorEggInterval == 0;
+        return CanUseIncubator();
     }
 
     private bool CanUseIncubator()
@@ -506,19 +635,51 @@ public sealed class GameplayTestBot : MonoBehaviour
         return Object.FindFirstObjectByType<IncubatorController>();
     }
 
-    private static bool HasAvailableFood()
+    private void UpdateFeedStrategy(RoundSystem round)
     {
+        int baseline = Mathf.Max(1, minimumFeedBags);
+        desiredFeedPiles = baseline;
+        stockMultipleFeedBags = false;
+        if (round == null || round.RoundEggsLaid < 3)
+        {
+            return;
+        }
+
+        int laid = round.RoundEggsLaid;
+        int processed = Mathf.Min(laid, round.RoundEggsProcessed);
+        int leftovers = Mathf.Max(0, laid - processed);
+        float collectionRatio = processed / (float)laid;
+        int allowedLeftovers = Mathf.Max(
+            MaximumEfficientRoundLeftovers,
+            Mathf.CeilToInt(laid * 0.2f));
+        if (collectionRatio < EfficientCollectionRatio
+            || leftovers > allowedLeftovers)
+        {
+            return;
+        }
+
+        int scaledTarget = 2 + processed / 12;
+        desiredFeedPiles = Mathf.Clamp(
+            scaledTarget,
+            Mathf.Max(2, baseline),
+            Mathf.Max(MaximumDesiredFeedPiles, baseline));
+        stockMultipleFeedBags = true;
+    }
+
+    private static int CountAvailableFoodPiles()
+    {
+        int available = 0;
         var piles = FoodPile.ActivePiles;
 
         for (int index = 0; index < piles.Count; index++)
         {
             if (piles[index] != null && piles[index].IsAvailable)
             {
-                return true;
+                available++;
             }
         }
 
-        return false;
+        return available;
     }
 
     private bool TryFindClickableEgg(
@@ -601,6 +762,88 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         return false;
+    }
+
+    private bool TryGetEggScreenPoint(ChickenEgg egg, out Vector2 point)
+    {
+        point = default;
+        Camera camera = GetGameplayCamera();
+        if (camera == null || egg == null || egg.IsHeld || egg.IsCollected)
+        {
+            return false;
+        }
+
+        Collider eggCollider = egg.GetComponentInChildren<Collider>();
+        Vector3 worldPoint = eggCollider != null
+            ? eggCollider.bounds.center
+            : egg.transform.position;
+        Vector3 projected = camera.WorldToScreenPoint(worldPoint);
+        if (projected.z <= 0f
+            || projected.x < 2f
+            || projected.y < 2f
+            || projected.x > Screen.width - 2f
+            || projected.y > Screen.height - 2f)
+        {
+            return false;
+        }
+
+        point = projected;
+        return true;
+    }
+
+    private bool IsPointerOverEgg(ChickenEgg egg)
+    {
+        Mouse mouse = automationInputMouse;
+        Camera camera = GetGameplayCamera();
+        return mouse != null
+            && camera != null
+            && egg != null
+            && !egg.IsHeld
+            && !egg.IsCollected
+            && RayHitsEgg(camera, mouse.position.ReadValue(), egg);
+    }
+
+    private IEnumerator MovePointerToEgg(ChickenEgg egg)
+    {
+        float elapsed = 0f;
+        while (elapsed < 1.5f
+            && TryGetEggScreenPoint(egg, out Vector2 livePoint))
+        {
+            MovePointerSpring(livePoint);
+            elapsed += Time.unscaledDeltaTime;
+            yield return null;
+
+            if (IsPointerOverEgg(egg))
+            {
+                yield break;
+            }
+        }
+    }
+
+    private IEnumerator ClickMovingEgg(ChickenEgg egg)
+    {
+        yield return MovePointerToEgg(egg);
+        float dwell = 0f;
+        while (dwell < pointerDwellTime
+            && TryGetEggScreenPoint(egg, out Vector2 livePoint))
+        {
+            MovePointerSpring(livePoint);
+            dwell += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        if (!IsPointerOverEgg(egg))
+        {
+            yield return new WaitForSecondsRealtime(0.05f);
+            yield break;
+        }
+
+        QueueMouseButton(MouseButton.Left, true);
+        yield return null;
+        QueueMouseButton(MouseButton.Left, false);
+        completedActions++;
+        collectionActionCount++;
+        yield return new WaitForSecondsRealtime(actionPause);
     }
 
     private IEnumerator ClickWorldComponent(Component component)
@@ -709,6 +952,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator ClickButton(Button button, string activity)
     {
+        yield return EnsureButtonVisible(button);
         RectTransform rect = button.transform as RectTransform;
 
         if (rect == null)
@@ -728,6 +972,56 @@ public sealed class GameplayTestBot : MonoBehaviour
         yield return ClickScreen(point);
     }
 
+    private IEnumerator EnsureButtonVisible(Button button)
+    {
+        ScrollRect scrollRect = button != null
+            ? button.GetComponentInParent<ScrollRect>()
+            : null;
+        RectTransform buttonRect = button != null
+            ? button.transform as RectTransform
+            : null;
+        RectTransform viewport = scrollRect != null
+            ? scrollRect.viewport
+            : null;
+        if (scrollRect == null || buttonRect == null || viewport == null)
+        {
+            yield break;
+        }
+
+        Canvas canvas = button.GetComponentInParent<Canvas>();
+        Camera uiCamera = canvas != null
+            && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                ? canvas.worldCamera
+                : null;
+        Vector2 viewportCenter = RectTransformUtility.WorldToScreenPoint(
+            uiCamera,
+            viewport.TransformPoint(viewport.rect.center));
+        yield return MovePointer(viewportCenter);
+
+        for (int attempt = 0; attempt < 48; attempt++)
+        {
+            Vector2 buttonPoint = RectTransformUtility.WorldToScreenPoint(
+                uiCamera,
+                buttonRect.TransformPoint(buttonRect.rect.center));
+            Vector2 viewportBottom = RectTransformUtility.WorldToScreenPoint(
+                uiCamera,
+                viewport.TransformPoint(new Vector2(0f, viewport.rect.yMin + 36f)));
+            Vector2 viewportTop = RectTransformUtility.WorldToScreenPoint(
+                uiCamera,
+                viewport.TransformPoint(new Vector2(0f, viewport.rect.yMax - 36f)));
+
+            if (buttonPoint.y >= viewportBottom.y && buttonPoint.y <= viewportTop.y)
+            {
+                yield break;
+            }
+
+            float direction = buttonPoint.y > viewportTop.y ? 1f : -1f;
+            QueueMouseScroll(direction * 120f);
+            yield return null;
+            yield return new WaitForSecondsRealtime(0.025f);
+        }
+    }
+
     private IEnumerator ClickScreen(Vector2 point)
     {
         yield return MovePointer(point);
@@ -739,7 +1033,9 @@ public sealed class GameplayTestBot : MonoBehaviour
         yield return new WaitForSecondsRealtime(actionPause);
     }
 
-    private IEnumerator MovePointer(Vector2 destination)
+    private IEnumerator MovePointer(
+        Vector2 destination,
+        MouseButton? heldButton = null)
     {
         Mouse mouse = automationInputMouse;
 
@@ -750,23 +1046,67 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         destination.x = Mathf.Clamp(destination.x, 1f, Screen.width - 1f);
         destination.y = Mathf.Clamp(destination.y, 1f, Screen.height - 1f);
-        Vector2 current = mouse.position.ReadValue();
-
-        while (Vector2.SqrMagnitude(destination - current) > 4f)
+        float elapsed = 0f;
+        while (elapsed < 1.25f)
         {
-            current = Vector2.MoveTowards(
-                current,
-                destination,
-                pointerSpeed * Mathf.Max(0.001f, Time.unscaledDeltaTime));
-            SetPointerPosition(current);
+            Vector2 current = mouse.position.ReadValue();
+            if (Vector2.SqrMagnitude(destination - current) <= 4f
+                && pointerVelocity.sqrMagnitude <= 900f)
+            {
+                break;
+            }
+
+            MovePointerSpring(destination, heldButton);
+            elapsed += Time.unscaledDeltaTime;
             yield return null;
         }
 
-        SetPointerPosition(destination);
+        SetPointerPosition(destination, heldButton);
+        pointerVelocity *= 0.35f;
         yield return null;
     }
 
-    private void SetPointerPosition(Vector2 position)
+    private void MovePointerSpring(
+        Vector2 destination,
+        MouseButton? heldButton = null)
+    {
+        Mouse mouse = automationInputMouse;
+        if (mouse == null || !mouse.added)
+        {
+            return;
+        }
+
+        destination.x = Mathf.Clamp(destination.x, 1f, Screen.width - 1f);
+        destination.y = Mathf.Clamp(destination.y, 1f, Screen.height - 1f);
+        Vector2 current = mouse.position.ReadValue();
+        float remainingTime = Mathf.Clamp(
+            Time.unscaledDeltaTime,
+            0.001f,
+            0.05f);
+        float angularFrequency = pointerSpringFrequency * Mathf.PI * 2f;
+        float stiffness = angularFrequency * angularFrequency;
+        float damping = 2f * pointerSpringDamping * angularFrequency;
+
+        while (remainingTime > 0f)
+        {
+            float step = Mathf.Min(remainingTime, 1f / 120f);
+            Vector2 acceleration =
+                (destination - current) * stiffness
+                - pointerVelocity * damping;
+            pointerVelocity += acceleration * step;
+            pointerVelocity = Vector2.ClampMagnitude(
+                pointerVelocity,
+                pointerSpeed);
+            current += pointerVelocity * step;
+            remainingTime -= step;
+        }
+
+        SetPointerPosition(current, heldButton);
+    }
+
+    private void SetPointerPosition(
+        Vector2 position,
+        MouseButton? heldButton = null)
     {
         if (physicalMouse != null && physicalMouse.added)
         {
@@ -784,6 +1124,11 @@ public sealed class GameplayTestBot : MonoBehaviour
         state.delta = position - state.position;
         state.position = position;
         state.scroll = Vector2.zero;
+        if (heldButton.HasValue)
+        {
+            state.WithButton(heldButton.Value, true);
+        }
+
         InputSystem.QueueStateEvent(mouse, state);
     }
 
@@ -808,12 +1153,52 @@ public sealed class GameplayTestBot : MonoBehaviour
         return null;
     }
 
+    private static RectTransform FindNamedRectTransform(string objectName)
+    {
+        RectTransform[] rects = Object.FindObjectsByType<RectTransform>(
+            FindObjectsInactive.Exclude,
+            FindObjectsSortMode.None);
+
+        for (int index = 0; index < rects.Length; index++)
+        {
+            RectTransform rect = rects[index];
+            if (rect != null
+                && rect.name == objectName
+                && rect.gameObject.scene.IsValid())
+            {
+                return rect;
+            }
+        }
+
+        return null;
+    }
+
     private static bool IsUsable(Button button)
     {
         return button != null
             && button.isActiveAndEnabled
             && button.gameObject.activeInHierarchy
             && button.interactable;
+    }
+
+    private static bool CanPurchaseProgressionNode(Button button)
+    {
+        if (!IsUsable(button))
+        {
+            return false;
+        }
+
+        ProgressionNodeButton node = button.GetComponent<ProgressionNodeButton>();
+        if (node == null || ProgressionSystem.Instance == null)
+        {
+            return true;
+        }
+
+        ProgressionSystem.NodeState state = node.GetNodeState();
+        return state.Visible
+            && state.PrerequisiteMet
+            && !state.IsMaxed
+            && state.Cost <= EggScoreHud.CurrentCents;
     }
 
     private static void QueueMouseButton(MouseButton button, bool pressed)
@@ -829,6 +1214,35 @@ public sealed class GameplayTestBot : MonoBehaviour
         state.delta = Vector2.zero;
         state.scroll = Vector2.zero;
         state.WithButton(button, pressed);
+        InputSystem.QueueStateEvent(mouse, state);
+    }
+
+    private static void ForceMouseButton(MouseButton button, bool pressed)
+    {
+        Mouse mouse = automationInputMouse;
+        if (mouse == null || !mouse.added)
+        {
+            return;
+        }
+
+        mouse.CopyState(out MouseState state);
+        state.delta = Vector2.zero;
+        state.scroll = Vector2.zero;
+        state.WithButton(button, pressed);
+        InputState.Change(mouse, state);
+    }
+
+    private static void QueueMouseScroll(float verticalDelta)
+    {
+        Mouse mouse = automationInputMouse;
+        if (mouse == null || !mouse.added)
+        {
+            return;
+        }
+
+        mouse.CopyState(out MouseState state);
+        state.delta = Vector2.zero;
+        state.scroll = new Vector2(0f, verticalDelta);
         InputSystem.QueueStateEvent(mouse, state);
     }
 
@@ -878,11 +1292,12 @@ public sealed class GameplayTestBot : MonoBehaviour
     private void OnValidate()
     {
         pointerSpeed = Mathf.Max(100f, pointerSpeed);
+        pointerSpringFrequency = Mathf.Clamp(pointerSpringFrequency, 2f, 12f);
+        pointerSpringDamping = Mathf.Clamp(pointerSpringDamping, 0.35f, 0.95f);
         pointerDwellTime = Mathf.Max(0f, pointerDwellTime);
         actionPause = Mathf.Max(0.05f, actionPause);
         vacuumHoldTime = Mathf.Max(0.1f, vacuumHoldTime);
         minimumFeedBags = Mathf.Max(0, minimumFeedBags);
         maximumShopPurchasesPerVisit = Mathf.Max(1, maximumShopPurchasesPerVisit);
-        incubatorEggInterval = Mathf.Max(1, incubatorEggInterval);
     }
 }

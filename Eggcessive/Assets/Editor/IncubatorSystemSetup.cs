@@ -13,7 +13,7 @@ public static class IncubatorSystemSetup
     private const string ChickenPrefabPath = "Assets/Chicken/prefabs/prefab_chicken.prefab";
     private const string HudPrefabPath = "Assets/UI/prefab_EggScoreHud.prefab";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
-    private const string FontPath = "Assets/Fonts/Chewy-Regular SDF.asset";
+    private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
 
     [MenuItem("Tools/Eggcessive/Build Incubator System")]
     public static void BuildIncubatorSystem()

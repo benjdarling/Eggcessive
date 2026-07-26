@@ -315,8 +315,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: $0.00
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -452,8 +452,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: BUY  $5.00
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -668,10 +668,10 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Level 1  |  1 egg  |  20 sec
+  m_text: Level 1  |  1 egg  |  30 sec
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1004,8 +1004,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: NOT INSTALLED
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1262,8 +1262,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: Purchase to install at the coop
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1480,8 +1480,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: CHICKEN FEED
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1619,8 +1619,8 @@ MonoBehaviour:
 
     $2.00'
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1831,8 +1831,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: INCUBATOR
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -2043,8 +2043,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: x 0
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -2301,8 +2301,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: Buy food, then click its icon
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []

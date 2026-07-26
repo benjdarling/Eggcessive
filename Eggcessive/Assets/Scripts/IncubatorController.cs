@@ -18,6 +18,8 @@ public sealed class IncubatorController : MonoBehaviour
 
     [Header("Levels")]
     [SerializeField, Range(1, 10)] private int currentLevel = 1;
+    [SerializeField, Range(1, 10)] private int capacityLevel = 1;
+    [SerializeField, Range(1, 10)] private int speedLevel = 1;
 
     [Header("Incubator Sockets")]
     [SerializeField] private Transform eggStart = null;
@@ -38,11 +40,17 @@ public sealed class IncubatorController : MonoBehaviour
 
     public const int MaximumLevel = 10;
     public static event Action ChickenHatched;
-    public int CurrentLevel => currentLevel;
+    public static event Action<int> EggsAccepted;
+    public int CurrentLevel => Mathf.Max(capacityLevel, speedLevel);
+    public int CapacityLevel => capacityLevel;
+    public int SpeedLevel => speedLevel;
     public int StoredEggs => storedEggs;
-    public int Capacity => GetCapacity(currentLevel);
-    public int AvailableCapacity => Mathf.Max(0, Capacity - storedEggs);
-    public float SecondsPerEgg => GetProductionTime(currentLevel);
+    public int Capacity => GetCapacity(capacityLevel);
+    public bool IsOffline =>
+        ChickenController.ActiveInstances.Count >= ChickenController.MaximumChickenCount;
+    public int AvailableCapacity =>
+        IsOffline ? 0 : Mathf.Max(0, Capacity - storedEggs);
+    public float SecondsPerEgg => GetProductionTime(speedLevel);
     public Vector3 DepositPosition =>
         eggStart != null ? eggStart.position : transform.position;
 
@@ -55,6 +63,12 @@ public sealed class IncubatorController : MonoBehaviour
     {
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
         {
+            return;
+        }
+
+        if (IsOffline)
+        {
+            RefreshDisplays();
             return;
         }
 
@@ -76,12 +90,21 @@ public sealed class IncubatorController : MonoBehaviour
     public void InstallOrUpgrade(int level)
     {
         int nextLevel = Mathf.Clamp(level, 1, MaximumLevel);
+        InstallOrUpgrade(nextLevel, nextLevel);
+    }
+
+    public void InstallOrUpgrade(int nextCapacityLevel, int nextSpeedLevel)
+    {
+        nextCapacityLevel = Mathf.Clamp(nextCapacityLevel, 1, MaximumLevel);
+        nextSpeedLevel = Mathf.Clamp(nextSpeedLevel, 1, MaximumLevel);
         float previousDuration = SecondsPerEgg;
         float progress = storedEggs > 0
             ? 1f - Mathf.Clamp01(processingTimeRemaining / previousDuration)
             : 0f;
 
-        currentLevel = nextLevel;
+        capacityLevel = nextCapacityLevel;
+        speedLevel = nextSpeedLevel;
+        currentLevel = Mathf.Max(capacityLevel, speedLevel);
         gameObject.SetActive(true);
 
         if (storedEggs > 0)
@@ -94,7 +117,7 @@ public sealed class IncubatorController : MonoBehaviour
 
     public void TryAcceptEgg(Collider other)
     {
-        if (storedEggs >= Capacity)
+        if (IsOffline || storedEggs >= Capacity)
         {
             return;
         }
@@ -112,6 +135,7 @@ public sealed class IncubatorController : MonoBehaviour
         }
 
         storedEggs++;
+        EggsAccepted?.Invoke(1);
         PrepareAcceptedEgg(egg);
         StartCoroutine(MoveEggIntoIncubator(egg.gameObject));
         RefreshDisplays();
@@ -132,8 +156,16 @@ public sealed class IncubatorController : MonoBehaviour
         }
 
         storedEggs += accepted;
+        EggsAccepted?.Invoke(accepted);
         RefreshDisplays();
         return accepted;
+    }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        ChickenHatched = null;
+        EggsAccepted = null;
     }
 
     private void PrepareAcceptedEgg(ChickenEgg egg)
@@ -185,6 +217,13 @@ public sealed class IncubatorController : MonoBehaviour
 
     private void HatchNextEgg()
     {
+        if (IsOffline)
+        {
+            processingTimeRemaining = 0f;
+            RefreshDisplays();
+            return;
+        }
+
         if (chickenPrefab == null || chickenStart == null)
         {
             Debug.LogError($"{nameof(IncubatorController)} on {name} cannot hatch without a chicken prefab and start socket.", this);
@@ -213,19 +252,31 @@ public sealed class IncubatorController : MonoBehaviour
     {
         if (capacityText != null)
         {
-            capacityText.text = $"{storedEggs}/{Capacity}";
+            capacityText.text = IsOffline
+                ? $"CAP {ChickenController.MaximumChickenCount}/{ChickenController.MaximumChickenCount}"
+                : $"{storedEggs}/{Capacity}";
+            capacityText.color = IsOffline
+                ? new Color(1f, 0.24f, 0.16f)
+                : Color.white;
         }
 
         if (timerText != null)
         {
-            if (storedEggs <= 0)
+            if (IsOffline)
+            {
+                timerText.text = "OFFLINE";
+                timerText.color = new Color(1f, 0.24f, 0.16f);
+            }
+            else if (storedEggs <= 0)
             {
                 timerText.text = "--:--";
+                timerText.color = Color.white;
             }
             else
             {
                 int totalSeconds = Mathf.Max(0, Mathf.CeilToInt(processingTimeRemaining));
                 timerText.text = $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
+                timerText.color = Color.white;
             }
         }
     }
@@ -243,6 +294,8 @@ public sealed class IncubatorController : MonoBehaviour
     private void OnValidate()
     {
         currentLevel = Mathf.Clamp(currentLevel, 1, MaximumLevel);
+        capacityLevel = Mathf.Clamp(capacityLevel, 1, MaximumLevel);
+        speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
         eggTravelDuration = Mathf.Max(0.01f, eggTravelDuration);
 
         if (!Application.isPlaying)

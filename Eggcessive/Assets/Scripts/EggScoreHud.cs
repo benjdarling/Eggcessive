@@ -159,7 +159,8 @@ public sealed class EggScoreHud : MonoBehaviour
     {
         if (scoreText != null)
         {
-            scoreText.text = $"${displayedCents / 100}.{displayedCents % 100:D2}";
+            scoreText.text =
+                $"${displayedCents / 100:N0}.{Mathf.Abs(displayedCents % 100):D2}";
         }
     }
 

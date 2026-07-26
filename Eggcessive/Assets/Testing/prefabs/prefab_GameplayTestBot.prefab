@@ -143,13 +143,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameplayTestBot
   startEnabled: 0
-  pointerSpeed: 1350
+  pointerSpeed: 3600
+  pointerSpringFrequency: 5.5
+  pointerSpringDamping: 0.68
   pointerDwellTime: 0.08
   actionPause: 0.2
   vacuumHoldTime: 0.85
   minimumFeedBags: 1
   maximumShopPurchasesPerVisit: 12
-  incubatorEggInterval: 3
   statusText: {fileID: 5336482332662369525}
 --- !u!1 &7747379801060926983
 GameObject:
@@ -295,8 +296,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: "TEST BOT\nOFF  \u2022  F8 TO START"
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
-  m_sharedMaterial: {fileID: 3867782740449532520, guid: d3942efc9debe62489cd2f5e91abc986, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+  m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []

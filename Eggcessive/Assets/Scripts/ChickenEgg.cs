@@ -8,21 +8,39 @@ using UnityEngine;
 [RequireComponent(typeof(Rigidbody))]
 public sealed class ChickenEgg : MonoBehaviour
 {
+    public enum EggType
+    {
+        Standard,
+        Silver,
+        Gold,
+        Galaxy
+    }
+
     private static readonly List<ChickenEgg> ActiveEggs = new List<ChickenEgg>();
+    private static Material[] sharedTypeMaterials;
 
     [Header("Size Variation")]
     [SerializeField, Min(0.01f)] private float minimumScale = 0.95f;
     [SerializeField, Min(0.01f)] private float maximumScale = 1.05f;
+    [SerializeField] private Material[] typeMaterials = null;
 
     private Rigidbody eggBody;
 
     public static IReadOnlyList<ChickenEgg> ActiveInstances => ActiveEggs;
     public bool IsHeld { get; private set; }
     public bool IsCollected { get; private set; }
+    public EggType Type { get; private set; }
+    public int ValueCents { get; private set; } = 100;
 
     private void Awake()
     {
         eggBody = GetComponent<Rigidbody>();
+
+        if (typeMaterials != null && typeMaterials.Length >= 4)
+        {
+            sharedTypeMaterials = typeMaterials;
+        }
+
         float randomScale = Random.Range(minimumScale, maximumScale);
         transform.localScale *= randomScale;
     }
@@ -58,6 +76,38 @@ public sealed class ChickenEgg : MonoBehaviour
         eggBody.isKinematic = true;
         eggBody.useGravity = false;
         return true;
+    }
+
+    public void ConfigureType(EggType type, int valueCents)
+    {
+        Type = type;
+        ValueCents = Mathf.Max(1, valueCents);
+        ApplyTypeVisual(gameObject, type);
+        gameObject.name = type == EggType.Standard
+            ? gameObject.name
+            : $"{type} Egg";
+    }
+
+    public static void ApplyTypeVisual(GameObject visual, EggType type)
+    {
+        if (visual == null
+            || sharedTypeMaterials == null
+            || sharedTypeMaterials.Length < 4)
+        {
+            return;
+        }
+
+        Material material = sharedTypeMaterials[(int)type];
+
+        if (material == null)
+        {
+            return;
+        }
+
+        foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+        {
+            renderer.sharedMaterial = material;
+        }
     }
 
     public void MoveWhileHeld(Vector3 target, float followSpeed)

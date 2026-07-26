@@ -10,6 +10,7 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
+[RequireComponent(typeof(ProgressionSystem))]
 public sealed class RoundSystem : MonoBehaviour
 {
     public enum RoundPhase
@@ -26,6 +27,10 @@ public sealed class RoundSystem : MonoBehaviour
     private const string StartMarkerName = "truck_start";
     private const string StopMarkerName = "truck_stop";
     private const string EndMarkerName = "truck_end";
+#if UNITY_EDITOR
+    private const string UiFontAssetPath =
+        "Assets/Fonts/Cat Song SDF.asset";
+#endif
 
     [Header("Round")]
     [SerializeField, Min(1f)] private float roundDuration = 30f;
@@ -62,6 +67,7 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private TMP_Text resultsPerMinuteText;
     [SerializeField] private TMP_Text resultsHatchedText;
     [SerializeField] private TMP_Text resultsChickenCountText;
+    [SerializeField] private TMP_Text resultsQuotaText;
     [SerializeField] private TMP_Text shopBalanceText;
     [SerializeField] private TMP_Text shopFeedDetailsText;
     [SerializeField] private TMP_Text shopIncubatorDetailsText;
@@ -99,20 +105,41 @@ public sealed class RoundSystem : MonoBehaviour
     private int roundEggsCollected;
     private int roundCashMade;
     private int roundEggsLaid;
+    private int roundEggsIncubated;
     private int roundChickensHatched;
     private int finalChickenCount;
+    private int roundEggTarget;
+    private int eggsTowardTruck;
+    private int trucksFilled;
+    private int roundQuotaBonus;
+    private int pendingTruckReplacements;
     private Coroutine rewardDisplayCoroutine;
     private TMP_Text activeRewardText;
     private Vector2 activeRewardStartPosition;
     private float lastRewardAddedTime;
     private int accumulatedRewardCents;
     private int activeCoinAnimations;
+    private int shopDisplayedBalanceCents;
+    private Tweener shopBalanceTween;
     private bool skipResultsAnimation;
     private bool configured;
 
     public static RoundSystem Instance { get; private set; }
     public RoundPhase Phase { get; private set; } = RoundPhase.Intermission;
     public float TimeRemaining => roundTimeRemaining;
+    public int RoundNumber => roundNumber;
+    public int EggTarget => roundEggTarget;
+    public int EggsTowardTruck => eggsTowardTruck;
+    public int TrucksFilled => trucksFilled;
+    public int RoundEggsCollected => roundEggsCollected;
+    public int RoundEggsLaid => roundEggsLaid;
+    public int RoundEggsIncubated => roundEggsIncubated;
+    public int RoundEggsProcessed =>
+        roundEggsCollected + roundEggsIncubated;
+    public float StartupProductionMultiplier =>
+        roundNumber <= 0
+            ? 1.75f
+            : Mathf.Lerp(1f, 1.75f, Mathf.Clamp01((5f - roundNumber) / 4f));
     public bool IsRoundInProgress => Phase == RoundPhase.InProgress;
     public bool IsRoundAcceptingEggs =>
         Phase == RoundPhase.InProgress || Phase == RoundPhase.Settling;
@@ -185,6 +212,7 @@ public sealed class RoundSystem : MonoBehaviour
         EggContainer.EggCollected += HandleEggCollected;
         ChickenController.EggLaid += HandleEggLaid;
         IncubatorController.ChickenHatched += HandleChickenHatched;
+        IncubatorController.EggsAccepted += HandleEggsAccepted;
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
         ShowIntermission();
     }
@@ -202,14 +230,9 @@ public sealed class RoundSystem : MonoBehaviour
             && intermissionShopButton != null
             && resultsShopButton != null
             && resultsContinueButton != null
-            && buyFeedButton != null
-            && upgradeFeedButton != null
-            && upgradeIncubatorButton != null
-            && upgradeCollectionButton != null
             && doneShoppingButton != null
-            && shopCollectionDetailsText != null
-            && collectionProgressText != null
-            && collectionProgressFill != null
+            && shopBalanceText != null
+            && shopStatusText != null
             && roundCanvasRect != null
             && coinEffectLayer != null
             && coinHudTarget != null
@@ -223,10 +246,6 @@ public sealed class RoundSystem : MonoBehaviour
         intermissionShopButton.onClick.AddListener(HandleIntermissionShopClicked);
         resultsShopButton.onClick.AddListener(HandleResultsShopClicked);
         resultsContinueButton.onClick.AddListener(HandleResultsContinueClicked);
-        buyFeedButton.onClick.AddListener(HandleBuyFeedClicked);
-        upgradeFeedButton.onClick.AddListener(HandleUpgradeFeedClicked);
-        upgradeIncubatorButton.onClick.AddListener(HandleUpgradeIncubatorClicked);
-        upgradeCollectionButton.onClick.AddListener(HandleUpgradeCollectionClicked);
         doneShoppingButton.onClick.AddListener(ShowIntermission);
     }
 
@@ -274,16 +293,14 @@ public sealed class RoundSystem : MonoBehaviour
         intermissionShopButton?.onClick.RemoveListener(HandleIntermissionShopClicked);
         resultsShopButton?.onClick.RemoveListener(HandleResultsShopClicked);
         resultsContinueButton?.onClick.RemoveListener(HandleResultsContinueClicked);
-        buyFeedButton?.onClick.RemoveListener(HandleBuyFeedClicked);
-        upgradeFeedButton?.onClick.RemoveListener(HandleUpgradeFeedClicked);
-        upgradeIncubatorButton?.onClick.RemoveListener(HandleUpgradeIncubatorClicked);
-        upgradeCollectionButton?.onClick.RemoveListener(HandleUpgradeCollectionClicked);
         doneShoppingButton?.onClick.RemoveListener(ShowIntermission);
 
         EggContainer.EggCollected -= HandleEggCollected;
         ChickenController.EggLaid -= HandleEggLaid;
         IncubatorController.ChickenHatched -= HandleChickenHatched;
+        IncubatorController.EggsAccepted -= HandleEggsAccepted;
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
+        shopBalanceTween?.Kill();
         ClearRewardPresentation();
 
         if (Instance == this)
@@ -339,7 +356,13 @@ public sealed class RoundSystem : MonoBehaviour
         roundEggsCollected = 0;
         roundCashMade = 0;
         roundEggsLaid = 0;
+        roundEggsIncubated = 0;
         roundChickensHatched = 0;
+        roundEggTarget = CalculateEggTarget(roundNumber);
+        eggsTowardTruck = 0;
+        trucksFilled = 0;
+        roundQuotaBonus = 0;
+        pendingTruckReplacements = 0;
         liveStatsRefreshTime = 0f;
         SetPhase(RoundPhase.InProgress);
         timerDisplay.SetActive(true);
@@ -522,26 +545,24 @@ public sealed class RoundSystem : MonoBehaviour
 
     private IEnumerator AnimateResults()
     {
-        resultsCashText.text = "CASH MADE";
-        resultsCollectedText.text = "EGGS COLLECTED";
-        resultsLaidText.text = "EGGS LAID";
-        resultsPerMinuteText.text = "EGGS PER MINUTE";
-        resultsHatchedText.text = "CHICKENS HATCHED";
-        resultsChickenCountText.text = "CHICKEN COUNT";
+        resultsCashText.text = "—";
+        resultsCollectedText.text = "—";
+        resultsLaidText.text = "—";
+        resultsPerMinuteText.text = "—";
+        resultsHatchedText.text = "—";
+        resultsChickenCountText.text = "—";
+        resultsQuotaText.text = "—";
 
         yield return CountResult(
             resultsCashText,
-            "CASH MADE",
             roundCashMade,
             value => FormatMoney(Mathf.RoundToInt(value)));
         yield return CountResult(
             resultsCollectedText,
-            "EGGS COLLECTED",
             roundEggsCollected,
             value => Mathf.RoundToInt(value).ToString());
         yield return CountResult(
             resultsLaidText,
-            "EGGS LAID",
             roundEggsLaid,
             value => Mathf.RoundToInt(value).ToString());
 
@@ -550,19 +571,22 @@ public sealed class RoundSystem : MonoBehaviour
             : 0f;
         yield return CountResult(
             resultsPerMinuteText,
-            "EGGS PER MINUTE",
             eggsPerMinute,
             value => value.ToString("0.0"));
         yield return CountResult(
             resultsHatchedText,
-            "CHICKENS HATCHED",
             roundChickensHatched,
             value => Mathf.RoundToInt(value).ToString());
         yield return CountResult(
             resultsChickenCountText,
-            "CHICKEN COUNT",
             finalChickenCount,
             value => Mathf.RoundToInt(value).ToString());
+        yield return CountResult(
+            resultsQuotaText,
+            trucksFilled,
+            value => Mathf.RoundToInt(value).ToString());
+        resultsQuotaText.text =
+            $"{trucksFilled}  <size=16><color=#86A382>+{FormatMoney(roundQuotaBonus)}</color></size>";
 
         resultsAnimation = null;
         resultsShopButton.gameObject.SetActive(true);
@@ -571,7 +595,6 @@ public sealed class RoundSystem : MonoBehaviour
 
     private IEnumerator CountResult(
         TMP_Text label,
-        string statName,
         float target,
         Func<float, string> formatter)
     {
@@ -582,11 +605,11 @@ public sealed class RoundSystem : MonoBehaviour
         {
             elapsed += Time.deltaTime;
             float value = Mathf.Lerp(0f, target, Mathf.Clamp01(elapsed / countDuration));
-            label.text = $"{statName}  <color=#FFD95A>{formatter(value)}</color>";
+            label.text = $"<color=#FFD95A>{formatter(value)}</color>";
             yield return null;
         }
 
-        label.text = $"{statName}  <color=#FFD95A>{formatter(target)}</color>";
+        label.text = $"<color=#FFD95A>{formatter(target)}</color>";
 
         if (!skipResultsAnimation)
         {
@@ -601,6 +624,7 @@ public sealed class RoundSystem : MonoBehaviour
         intermissionScreen.SetActive(false);
         suppliesShopScreen.SetActive(true);
         shopStatusText.text = string.Empty;
+        SetShopBalanceImmediate(EggScoreHud.CurrentCents);
         RefreshShopUi();
     }
 
@@ -699,7 +723,20 @@ public sealed class RoundSystem : MonoBehaviour
     private void RefreshShopUi()
     {
         int balance = EggScoreHud.CurrentCents;
-        shopBalanceText.text = FormatMoney(balance);
+        shopBalanceText.text = FormatMoney(shopDisplayedBalanceCents);
+
+        if (suppliesShopScreen != null)
+        {
+            ProgressionNodeButton[] nodes =
+                suppliesShopScreen.GetComponentsInChildren<ProgressionNodeButton>(true);
+
+            for (int index = 0; index < nodes.Length; index++)
+            {
+                nodes[index].Refresh();
+            }
+
+            return;
+        }
 
         FoodShopController foodShop = FoodShopController.Instance;
 
@@ -796,6 +833,16 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
+    public void SetShopStatus(string message)
+    {
+        if (shopStatusText != null)
+        {
+            shopStatusText.text = message;
+        }
+
+        RefreshShopUi();
+    }
+
     private static void SetAffordability(
         Button button,
         Image progressFill,
@@ -823,7 +870,7 @@ public sealed class RoundSystem : MonoBehaviour
 
     private static string FormatMoney(int cents)
     {
-        return $"${cents / 100}.{cents % 100:D2}";
+        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
     }
 
     private void SetPhase(RoundPhase phase)
@@ -851,7 +898,10 @@ public sealed class RoundSystem : MonoBehaviour
     private void RefreshTimer()
     {
         int seconds = Mathf.CeilToInt(roundTimeRemaining);
-        timerText.text = $"ROUND {roundNumber}\n{seconds / 60}:{seconds % 60:D2}";
+        timerText.text =
+            $"ROUND {roundNumber}  •  TRUCK {trucksFilled + 1}\n" +
+            $"{seconds / 60}:{seconds % 60:D2}   •   " +
+            $"EGGS {eggsTowardTruck}/{roundEggTarget}";
     }
 
     private void HandleEggCollected(int cents)
@@ -863,10 +913,82 @@ public sealed class RoundSystem : MonoBehaviour
 
         roundEggsCollected++;
         roundCashMade += cents;
+
+        if (IsRoundAcceptingEggs && roundEggTarget > 0)
+        {
+            eggsTowardTruck++;
+
+            while (eggsTowardTruck >= roundEggTarget)
+            {
+                eggsTowardTruck -= roundEggTarget;
+                CompleteTruckQuota();
+            }
+        }
+
+        RefreshTimer();
         RefreshLiveStats();
     }
 
+    private void CompleteTruckQuota()
+    {
+        trucksFilled++;
+        int bonus = Mathf.RoundToInt(
+            roundEggTarget
+            * 75f
+            * trucksFilled
+            * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
+        roundQuotaBonus += bonus;
+        roundCashMade += bonus;
+        EggScoreHud.AddCents(bonus);
+
+        if (truck != null)
+        {
+            ShowCoinReward(truck.position + Vector3.up * 0.45f, bonus);
+        }
+
+        pendingTruckReplacements++;
+
+        if (truckMovement == null)
+        {
+            truckMovement = StartCoroutine(ReplaceFilledTrucks());
+        }
+    }
+
+    private IEnumerator ReplaceFilledTrucks()
+    {
+        while (pendingTruckReplacements > 0
+            && Phase == RoundPhase.InProgress)
+        {
+            pendingTruckReplacements--;
+            yield return MoveTruck(truckEnd, 0.55f);
+            DestroyTruck();
+
+            if (Phase != RoundPhase.InProgress)
+            {
+                break;
+            }
+
+            SpawnTruck();
+            yield return MoveTruck(truckStop, 0.65f);
+        }
+
+        truckMovement = null;
+    }
+
     public void ShowCoinReward(Vector3 worldPosition, int cents)
+    {
+        ShowCoinReward(worldPosition, cents, false);
+    }
+
+    public void ShowContainerCoinReward(Vector3 worldPosition, int cents)
+    {
+        ShowCoinReward(worldPosition, cents, true);
+    }
+
+    private void ShowCoinReward(
+        Vector3 worldPosition,
+        int cents,
+        bool useTenCentCoins)
     {
         if (roundCanvasRect == null || coinEffectLayer == null || coinHudTarget == null)
         {
@@ -901,7 +1023,10 @@ public sealed class RoundSystem : MonoBehaviour
             null,
         out Vector2 targetPosition);
 
-        int coinCount = Mathf.Max(0, cents / 10);
+        int coinCount = useTenCentCoins
+            ? Mathf.Clamp(Mathf.CeilToInt(cents / 10f), 1, 500)
+            : Mathf.Clamp(Mathf.CeilToInt(cents / 100f), 1, 12);
+        float coinStagger = Mathf.Min(0.055f, 0.65f / coinCount);
         AccumulateRewardNumber(startPosition, cents);
 
         for (int index = 0; index < coinCount; index++)
@@ -910,7 +1035,7 @@ public sealed class RoundSystem : MonoBehaviour
             StartCoroutine(FlyCoinToHud(
                 startPosition + UnityEngine.Random.insideUnitCircle * 18f,
                 targetPosition,
-                index * 0.055f));
+                index * coinStagger));
         }
     }
 
@@ -1066,12 +1191,103 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
+    private void HandleEggsAccepted(int count)
+    {
+        if (IsRoundAcceptingEggs)
+        {
+            roundEggsIncubated += Mathf.Max(0, count);
+        }
+    }
+
     private void HandleBalanceChanged(int _)
     {
         if (Phase == RoundPhase.SuppliesShop)
         {
+            AnimateShopBalanceTo(EggScoreHud.CurrentCents);
             RefreshShopUi();
         }
+    }
+
+    public void AnimateShopSpend(int cents)
+    {
+        if (cents <= 0
+            || Phase != RoundPhase.SuppliesShop
+            || shopBalanceText == null
+            || floatingRewardPrefab == null)
+        {
+            return;
+        }
+
+        Vector2 screenPoint = RectTransformUtility.WorldToScreenPoint(
+            null,
+            shopBalanceText.rectTransform.TransformPoint(
+                shopBalanceText.rectTransform.rect.center));
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                roundCanvasRect,
+                screenPoint,
+                null,
+                out Vector2 localPoint))
+        {
+            return;
+        }
+
+        GameObject spendObject = Instantiate(floatingRewardPrefab, coinEffectLayer);
+        spendObject.name = "Shop Spend Reward";
+        TMP_Text spendText = spendObject.GetComponent<TMP_Text>();
+        spendText.text = $"-{FormatMoney(cents)}";
+        spendText.color = new Color(1f, 0.31f, 0.22f);
+        spendText.fontSize = Mathf.Clamp(
+            30f + Mathf.Log10(1f + cents / 100f) * 6f,
+            30f,
+            48f);
+        RectTransform spendRect = spendText.rectTransform;
+        spendRect.anchoredPosition = localPoint + new Vector2(0f, -8f);
+        spendRect.localScale = Vector3.one;
+        Sequence spendSequence = DOTween.Sequence()
+            .SetUpdate(true)
+            .SetTarget(spendObject);
+        spendSequence.Append(
+            spendRect.DOPunchScale(Vector3.one * 0.22f, 0.24f, 6, 0.55f));
+        spendSequence.Join(
+            spendRect.DOAnchorPosY(spendRect.anchoredPosition.y + 62f, 0.72f)
+                .SetEase(Ease.OutCubic));
+        spendSequence.Join(
+            spendText.DOFade(0f, 0.72f)
+                .SetEase(Ease.InQuad));
+        spendSequence.OnComplete(() => Destroy(spendObject));
+    }
+
+    private void SetShopBalanceImmediate(int cents)
+    {
+        shopBalanceTween?.Kill();
+        shopBalanceTween = null;
+        shopDisplayedBalanceCents = Mathf.Max(0, cents);
+        if (shopBalanceText != null)
+        {
+            shopBalanceText.text = FormatMoney(shopDisplayedBalanceCents);
+        }
+    }
+
+    private void AnimateShopBalanceTo(int targetCents)
+    {
+        targetCents = Mathf.Max(0, targetCents);
+        shopBalanceTween?.Kill();
+        shopBalanceTween = DOTween.To(
+                () => shopDisplayedBalanceCents,
+                value =>
+                {
+                    shopDisplayedBalanceCents = value;
+                    if (shopBalanceText != null)
+                    {
+                        shopBalanceText.text = FormatMoney(value);
+                    }
+                },
+                targetCents,
+                0.55f)
+            .SetEase(Ease.OutCubic)
+            .SetUpdate(true)
+            .SetTarget(this)
+            .OnComplete(() => shopBalanceTween = null);
     }
 
     private void RefreshLiveStats()
@@ -1083,7 +1299,15 @@ public sealed class RoundSystem : MonoBehaviour
             $"{roundEggsCollected}\n" +
             $"{eggsPerMinute:0.0}\n" +
             $"+{FormatMoney(roundCashMade)}\n" +
-            $"{CountChickens()}";
+            $"{CountChickens()}/{ChickenController.MaximumChickenCount}\n" +
+            $"{trucksFilled}";
+    }
+
+    private static int CalculateEggTarget(int round)
+    {
+        return Mathf.Max(
+            5,
+            Mathf.CeilToInt(7f * Mathf.Pow(1.16f, Mathf.Max(0, round - 1))));
     }
 
     private static int CountChickens()
@@ -1326,19 +1550,19 @@ public sealed class RoundSystem : MonoBehaviour
 
         timerDisplay = CreateUiObject("Round Timer", canvasObject.transform).gameObject;
         RectTransform timerRect = timerDisplay.GetComponent<RectTransform>();
-        timerRect.anchorMin = new Vector2(0.915f, 1f);
-        timerRect.anchorMax = new Vector2(0.915f, 1f);
-        timerRect.pivot = new Vector2(0.5f, 1f);
-        timerRect.anchoredPosition = new Vector2(0f, -16f);
-        timerRect.sizeDelta = new Vector2(210f, 54f);
+        timerRect.anchorMin = new Vector2(0.5f, 0f);
+        timerRect.anchorMax = new Vector2(0.5f, 0f);
+        timerRect.pivot = new Vector2(0.5f, 0f);
+        timerRect.anchoredPosition = new Vector2(0f, 24f);
+        timerRect.sizeDelta = new Vector2(430f, 82f);
         Image timerBackground = timerDisplay.AddComponent<Image>();
         timerBackground.color = new Color(0.08f, 0.09f, 0.075f, 0.88f);
         timerBackground.raycastTarget = false;
 
-        timerText = CreateText("Timer Text", timerDisplay.transform, 19f, TextAlignmentOptions.Center);
+        timerText = CreateText("Timer Text", timerDisplay.transform, 28f, TextAlignmentOptions.Center);
         timerText.color = new Color(1f, 0.9f, 0.42f);
         timerText.fontStyle = FontStyles.Bold;
-        timerText.lineSpacing = -11f;
+        timerText.lineSpacing = -8f;
         timerText.raycastTarget = false;
         StretchToParent(timerText.rectTransform);
 
@@ -1348,7 +1572,7 @@ public sealed class RoundSystem : MonoBehaviour
         liveStatsRect.anchorMax = new Vector2(0.915f, 1f);
         liveStatsRect.pivot = new Vector2(0.5f, 1f);
         liveStatsRect.anchoredPosition = new Vector2(0f, -78f);
-        liveStatsRect.sizeDelta = new Vector2(210f, 104f);
+        liveStatsRect.sizeDelta = new Vector2(210f, 128f);
         Image liveStatsBackground = liveStatsDisplay.AddComponent<Image>();
         liveStatsBackground.color = new Color(0.055f, 0.065f, 0.055f, 0.82f);
         liveStatsBackground.raycastTarget = false;
@@ -1361,7 +1585,7 @@ public sealed class RoundSystem : MonoBehaviour
         liveStatsText.lineSpacing = 1f;
         liveStatsText.margin = new Vector4(12f, 8f, 8f, 6f);
         StretchToParent(liveStatsText.rectTransform);
-        liveStatsText.text = "EGGS\nEGGS/MIN\nCASH\nCHICKENS";
+        liveStatsText.text = "EGGS\nEGGS/MIN\nCASH\nCHICKENS\nTRUCKS";
 
         liveStatsValueText = CreateText(
             "Live Stats Values",
@@ -1405,7 +1629,7 @@ public sealed class RoundSystem : MonoBehaviour
             "Results Title",
             card,
             42f,
-            TextAlignmentOptions.Center);
+            TextAlignmentOptions.Left);
         resultsTitleText.text = "ROUND 1 COMPLETE";
         resultsTitleText.fontStyle = FontStyles.Bold;
         resultsTitleText.color = new Color(1f, 0.84f, 0.3f);
@@ -1418,22 +1642,23 @@ public sealed class RoundSystem : MonoBehaviour
             "Results Subtitle",
             card,
             17f,
-            TextAlignmentOptions.Center);
+            TextAlignmentOptions.Left);
         subtitle.text = "DELIVERY COMPLETE";
         subtitle.color = new Color(0.66f, 0.78f, 0.65f);
         SetRect(subtitle.rectTransform, new Vector2(0f, 198f), new Vector2(590f, 28f));
 
-        resultsCashText = CreateResultStat(card, "Cash Made", 135f);
-        resultsCollectedText = CreateResultStat(card, "Eggs Collected", 90f);
-        resultsLaidText = CreateResultStat(card, "Eggs Laid", 45f);
-        resultsPerMinuteText = CreateResultStat(card, "Eggs Per Minute", 0f);
-        resultsHatchedText = CreateResultStat(card, "Chickens Hatched", -45f);
-        resultsChickenCountText = CreateResultStat(card, "Chicken Count", -90f);
+        resultsCashText = CreateResultStat(card, "Cash Made", "CASH MADE", 135f);
+        resultsCollectedText = CreateResultStat(card, "Eggs Collected", "EGGS COLLECTED", 90f);
+        resultsLaidText = CreateResultStat(card, "Eggs Laid", "EGGS LAID", 45f);
+        resultsPerMinuteText = CreateResultStat(card, "Eggs Per Minute", "EGGS PER MINUTE", 0f);
+        resultsHatchedText = CreateResultStat(card, "Chickens Hatched", "CHICKENS HATCHED", -45f);
+        resultsChickenCountText = CreateResultStat(card, "Chicken Count", "CHICKEN COUNT", -90f);
+        resultsQuotaText = CreateResultStat(card, "Truck Quota", "TRUCKS / BONUS", -135f);
 
         resultsShopButton = CreateButton(
             "Open Supplies Shop",
             card,
-            new Vector2(-140f, -185f),
+            new Vector2(-140f, -220f),
             new Vector2(250f, 52f),
             "SUPPLIES SHOP",
             new Color(0.18f, 0.57f, 0.34f));
@@ -1441,27 +1666,646 @@ public sealed class RoundSystem : MonoBehaviour
         resultsContinueButton = CreateButton(
             "Continue Button",
             card,
-            new Vector2(140f, -185f),
+            new Vector2(140f, -220f),
             new Vector2(250f, 52f),
             "NEXT ROUND",
             new Color(0.82f, 0.26f, 0.1f));
         resultsScreen.SetActive(false);
     }
 
-    private TMP_Text CreateResultStat(Transform parent, string objectName, float y)
+    private TMP_Text CreateResultStat(
+        Transform parent,
+        string objectName,
+        string labelText,
+        float y)
     {
-        TMP_Text stat = CreateText(
-            objectName,
-            parent,
-            23f,
+        RectTransform row = CreateUiObject($"{objectName} Row", parent);
+        SetRect(row, new Vector2(0f, y), new Vector2(560f, 38f));
+
+        TMP_Text label = CreateText(
+            $"{objectName} Label",
+            row,
+            20f,
+            TextAlignmentOptions.Left);
+        label.text = labelText;
+        label.color = Color.white;
+        label.fontStyle = FontStyles.Bold;
+        SetRect(label.rectTransform, new Vector2(-165f, 0f), new Vector2(230f, 34f));
+
+        TMP_Text dots = CreateText(
+            $"{objectName} Dots",
+            row,
+            16f,
             TextAlignmentOptions.Center);
-        stat.color = Color.white;
-        stat.fontStyle = FontStyles.Bold;
-        SetRect(stat.rectTransform, new Vector2(0f, y), new Vector2(560f, 38f));
-        return stat;
+        dots.text = "................................";
+        dots.color = new Color(0.28f, 0.36f, 0.28f);
+        SetRect(dots.rectTransform, new Vector2(45f, -1f), new Vector2(220f, 30f));
+
+        TMP_Text value = CreateText(
+            objectName,
+            row,
+            22f,
+            TextAlignmentOptions.Right);
+        value.color = new Color(1f, 0.84f, 0.3f);
+        value.fontStyle = FontStyles.Bold;
+        SetRect(value.rectTransform, new Vector2(190f, 0f), new Vector2(180f, 34f));
+        return value;
     }
 
     private void BuildSuppliesShopUi(Transform canvasTransform)
+    {
+        suppliesShopScreen = CreateUiObject(
+            "Supplies Shop Screen",
+            canvasTransform).gameObject;
+        StretchToParent(suppliesShopScreen.GetComponent<RectTransform>());
+        Image backdrop = suppliesShopScreen.AddComponent<Image>();
+        backdrop.color = new Color(0.025f, 0.035f, 0.03f, 0.97f);
+        Button dismissPreviewButton = suppliesShopScreen.AddComponent<Button>();
+        dismissPreviewButton.targetGraphic = backdrop;
+        dismissPreviewButton.transition = Selectable.Transition.None;
+        dismissPreviewButton.navigation = new Navigation
+        {
+            mode = Navigation.Mode.None
+        };
+
+        RectTransform card = CreateUiObject(
+            "Supplies",
+            suppliesShopScreen.transform);
+        SetRect(card, Vector2.zero, new Vector2(1230f, 920f));
+        Image cardImage = card.gameObject.AddComponent<Image>();
+        cardImage.color = new Color(0.08f, 0.095f, 0.075f, 0.99f);
+        ProgressionTreePreview treePreview =
+            card.gameObject.AddComponent<ProgressionTreePreview>();
+
+        TMP_Text title = CreateText(
+            "Shop Title",
+            card,
+            38f,
+            TextAlignmentOptions.Left);
+        title.text = "SUPPLIES";
+        title.fontStyle = FontStyles.Bold;
+        title.color = new Color(1f, 0.84f, 0.3f);
+        SetRect(title.rectTransform, new Vector2(-305f, 410f), new Vector2(500f, 52f));
+
+        CreateIconBadge(
+            "Balance Coin",
+            card,
+            new Vector2(235f, 410f),
+            new Vector2(40f, 40f),
+            "$",
+            new Color(1f, 0.73f, 0.16f));
+
+        shopBalanceText = CreateText(
+            "Available Cash",
+            card,
+            30f,
+            TextAlignmentOptions.Left);
+        shopBalanceText.text = "$0.00";
+        shopBalanceText.fontStyle = FontStyles.Bold;
+        shopBalanceText.color = Color.white;
+        SetRect(
+            shopBalanceText.rectTransform,
+            new Vector2(365f, 410f),
+            new Vector2(210f, 44f));
+
+        RectTransform scrollRoot = CreateUiObject("Progression Scroll View", card);
+        SetRect(scrollRoot, new Vector2(0f, -28f), new Vector2(1180f, 800f));
+        Image scrollBackground = scrollRoot.gameObject.AddComponent<Image>();
+        scrollBackground.color = new Color(0f, 0f, 0f, 0.001f);
+        ScrollRect treeScroll = scrollRoot.gameObject.AddComponent<ScrollRect>();
+        treeScroll.horizontal = false;
+        treeScroll.vertical = true;
+        treeScroll.movementType = ScrollRect.MovementType.Clamped;
+        treeScroll.inertia = true;
+        treeScroll.decelerationRate = 0.08f;
+        treeScroll.scrollSensitivity = 42f;
+
+        RectTransform treeViewport = CreateUiObject("Tree Viewport", scrollRoot);
+        StretchToParent(treeViewport);
+        Image viewportImage = treeViewport.gameObject.AddComponent<Image>();
+        viewportImage.color = new Color(0f, 0f, 0f, 0.001f);
+        treeViewport.gameObject.AddComponent<RectMask2D>();
+
+        RectTransform treeContent = CreateUiObject("Tree Content", treeViewport);
+        treeContent.anchorMin = new Vector2(0.5f, 1f);
+        treeContent.anchorMax = new Vector2(0.5f, 1f);
+        treeContent.pivot = new Vector2(0.5f, 1f);
+        treeContent.anchoredPosition = Vector2.zero;
+        treeContent.sizeDelta = new Vector2(1180f, 1450f);
+        treeScroll.viewport = treeViewport;
+        treeScroll.content = treeContent;
+        ProgressionTreePanController panController =
+            scrollRoot.gameObject.AddComponent<ProgressionTreePanController>();
+        panController.Configure(treeScroll, treeViewport, treePreview);
+
+        CreateProgressionHeader(
+            treeContent,
+            "CONSUMABLES",
+            "+",
+            new Vector2(-470f, 650f),
+            new Color(0.5f, 0.43f, 0.2f));
+        CreateProgressionHeader(
+            treeContent,
+            "FOOD",
+            "F",
+            new Vector2(-240f, 650f),
+            new Color(0.86f, 0.46f, 0.1f));
+        CreateProgressionHeader(
+            treeContent,
+            "INCUBATION",
+            "I",
+            new Vector2(75f, 650f),
+            new Color(0.12f, 0.65f, 0.38f));
+        CreateProgressionHeader(
+            treeContent,
+            "COLLECTION",
+            "C",
+            new Vector2(425f, 650f),
+            new Color(0.16f, 0.52f, 0.84f));
+
+        Color foodColor = new Color(0.62f, 0.31f, 0.07f);
+        Color premiumColor = new Color(0.44f, 0.2f, 0.62f);
+        Color valueColor = new Color(0.66f, 0.48f, 0.08f);
+        Color incubationColor = new Color(0.08f, 0.48f, 0.28f);
+        Color collectionColor = new Color(0.08f, 0.35f, 0.64f);
+        Color robotColor = new Color(0.37f, 0.25f, 0.62f);
+
+        buyFeedButton = CreateProgressionNode(
+            "Buy Feed",
+            treeContent,
+            new Vector2(-505f, 550f),
+            ProgressionSystem.UpgradeId.FoodBag,
+            foodColor);
+
+        Vector2 feedPrevious = new Vector2(-240f, 620f);
+        for (int tier = 2; tier <= FoodShopController.MaximumFeedTier; tier++)
+        {
+            Vector2 position = new Vector2(-345f, 550f - (tier - 2) * 95f);
+            CreateTreeConnector(treeContent, feedPrevious, position, foodColor);
+            Button node = CreateProgressionNode(
+                $"Upgrade Feed Speed {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.FeedSpeed,
+                foodColor,
+                tier);
+            if (tier == 2)
+            {
+                upgradeFeedButton = node;
+            }
+            feedPrevious = position;
+        }
+
+        Vector2 premiumPrevious = new Vector2(-240f, 620f);
+        Vector2 premiumTierTwoPosition = Vector2.zero;
+        for (int tier = 1; tier <= 8; tier++)
+        {
+            Vector2 position = new Vector2(-205f, 550f - (tier - 1) * 95f);
+            CreateTreeConnector(treeContent, premiumPrevious, position, premiumColor);
+            CreateProgressionNode(
+                $"Upgrade Premium Eggs {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.RareEggChance,
+                premiumColor,
+                tier);
+            if (tier == 2)
+            {
+                premiumTierTwoPosition = position;
+            }
+            premiumPrevious = position;
+        }
+
+        Vector2 valuePrevious = premiumTierTwoPosition;
+        for (int tier = 1; tier <= 8; tier++)
+        {
+            Vector2 position = new Vector2(-75f, 360f - (tier - 1) * 95f);
+            CreateTreeConnector(treeContent, valuePrevious, position, valueColor);
+            CreateProgressionNode(
+                $"Upgrade Egg Value {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.EggValue,
+                valueColor,
+                tier);
+            valuePrevious = position;
+        }
+
+        upgradeIncubatorButton = CreateProgressionNode(
+            "Upgrade Incubator",
+            treeContent,
+            new Vector2(75f, 550f),
+            ProgressionSystem.UpgradeId.IncubatorInstall,
+            incubationColor);
+        CreateTreeConnector(
+            treeContent,
+            new Vector2(75f, 620f),
+            new Vector2(75f, 550f),
+            incubationColor);
+        Vector2 capacityPrevious = new Vector2(75f, 515f);
+        Vector2 speedPrevious = new Vector2(75f, 515f);
+        for (int tier = 2; tier <= IncubatorController.MaximumLevel; tier++)
+        {
+            float y = 430f - (tier - 2) * 95f;
+            Vector2 capacityPosition = new Vector2(25f, y);
+            Vector2 speedPosition = new Vector2(135f, y);
+            CreateTreeConnector(treeContent, capacityPrevious, capacityPosition, incubationColor);
+            CreateTreeConnector(treeContent, speedPrevious, speedPosition, incubationColor);
+            CreateProgressionNode(
+                $"Upgrade Incubator Capacity {tier}",
+                treeContent,
+                capacityPosition,
+                ProgressionSystem.UpgradeId.IncubatorCapacity,
+                incubationColor,
+                tier);
+            CreateProgressionNode(
+                $"Upgrade Incubator Speed {tier}",
+                treeContent,
+                speedPosition,
+                ProgressionSystem.UpgradeId.IncubatorSpeed,
+                incubationColor,
+                tier);
+            capacityPrevious = capacityPosition;
+            speedPrevious = speedPosition;
+        }
+
+        Vector2 basketPrevious = new Vector2(425f, 620f);
+        Vector2 basketOnePosition = Vector2.zero;
+        for (int tier = 1; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(425f, 550f - (tier - 1) * 95f);
+            CreateTreeConnector(treeContent, basketPrevious, position, collectionColor);
+            Button node = CreateProgressionNode(
+                $"Upgrade Basket Capacity {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.BasketCapacity,
+                collectionColor,
+                tier);
+            if (tier == 1)
+            {
+                upgradeCollectionButton = node;
+                basketOnePosition = position;
+            }
+            basketPrevious = position;
+        }
+
+        Vector2 vacuumPowerPrevious = basketOnePosition;
+        Vector2 vacuumPowerOnePosition = Vector2.zero;
+        for (int tier = 1; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(315f, 430f - (tier - 1) * 95f);
+            CreateTreeConnector(treeContent, vacuumPowerPrevious, position, collectionColor);
+            CreateProgressionNode(
+                $"Upgrade Vacuum Power {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.VacuumPower,
+                collectionColor,
+                tier);
+            if (tier == 1)
+            {
+                vacuumPowerOnePosition = position;
+            }
+            vacuumPowerPrevious = position;
+        }
+
+        Vector2 vacuumRangePrevious = vacuumPowerOnePosition;
+        for (int tier = 1; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(215f, 335f - (tier - 1) * 95f);
+            CreateTreeConnector(treeContent, vacuumRangePrevious, position, collectionColor);
+            CreateProgressionNode(
+                $"Upgrade Vacuum Range {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.VacuumRange,
+                collectionColor,
+                tier);
+            vacuumRangePrevious = position;
+        }
+
+        Button robotUnlock = CreateProgressionNode(
+            "Unlock Collector Robot",
+            treeContent,
+            new Vector2(515f, 430f),
+            ProgressionSystem.UpgradeId.RobotUnlock,
+            robotColor);
+        CreateTreeConnector(
+            treeContent,
+            basketOnePosition,
+            robotUnlock.transform.GetComponent<RectTransform>().anchoredPosition,
+            robotColor);
+
+        Vector2 robotRoot = new Vector2(515f, 395f);
+        Vector2 robotSpeedPrevious = robotRoot;
+        Vector2 robotCapacityPrevious = robotRoot;
+        Vector2 robotLogicPrevious = robotRoot;
+        for (int tier = 2; tier <= 3; tier++)
+        {
+            float y = 310f - (tier - 2) * 95f;
+            Vector2 speedPosition = new Vector2(415f, y);
+            Vector2 capacityPosition = new Vector2(535f, y);
+            CreateTreeConnector(treeContent, robotSpeedPrevious, speedPosition, robotColor);
+            CreateTreeConnector(treeContent, robotCapacityPrevious, capacityPosition, robotColor);
+            CreateProgressionNode(
+                $"Upgrade Robot Speed {tier}",
+                treeContent,
+                speedPosition,
+                ProgressionSystem.UpgradeId.RobotSpeed,
+                robotColor,
+                tier);
+            CreateProgressionNode(
+                $"Upgrade Robot Capacity {tier}",
+                treeContent,
+                capacityPosition,
+                ProgressionSystem.UpgradeId.RobotCapacity,
+                robotColor,
+                tier);
+            robotSpeedPrevious = speedPosition;
+            robotCapacityPrevious = capacityPosition;
+        }
+
+        for (int tier = 1; tier <= 2; tier++)
+        {
+            Vector2 position = new Vector2(475f, 120f - (tier - 1) * 95f);
+            CreateTreeConnector(treeContent, robotLogicPrevious, position, robotColor);
+            CreateProgressionNode(
+                $"Upgrade Robot Logic {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.RobotSmartness,
+                robotColor,
+                tier);
+            robotLogicPrevious = position;
+        }
+
+        CreateProgressionPreview(
+            card,
+            treePreview,
+            dismissPreviewButton);
+
+        shopStatusText = CreateText(
+            "Shop Status",
+            card,
+            14f,
+            TextAlignmentOptions.Center);
+        shopStatusText.color = new Color(1f, 0.84f, 0.3f);
+        SetRect(
+            shopStatusText.rectTransform,
+            new Vector2(92f, 410f),
+            new Vector2(220f, 30f));
+
+        doneShoppingButton = CreateButton(
+            "Done Shopping",
+            card,
+            new Vector2(527f, 410f),
+            new Vector2(44f, 44f),
+            "×",
+            new Color(0.82f, 0.26f, 0.1f));
+        TMP_Text closeText = doneShoppingButton.GetComponentInChildren<TMP_Text>();
+        closeText.fontSize = 30f;
+        closeText.fontStyle = FontStyles.Bold;
+        suppliesShopScreen.SetActive(false);
+    }
+
+    private static void CreateProgressionHeader(
+        Transform parent,
+        string title,
+        string glyph,
+        Vector2 position,
+        Color color)
+    {
+        RectTransform header = CreateUiObject($"{title} Branch", parent);
+        SetRect(header, position, new Vector2(220f, 54f));
+        Image background = header.gameObject.AddComponent<Image>();
+        background.color = new Color(color.r, color.g, color.b, 0.32f);
+        background.raycastTarget = false;
+        CreateIconBadge(
+            $"{title} Icon",
+            header,
+            new Vector2(-88f, 0f),
+            new Vector2(40f, 40f),
+            glyph,
+            color);
+        TMP_Text label = CreateText(
+            $"{title} Label",
+            header,
+            23f,
+            TextAlignmentOptions.Left);
+        label.text = title;
+        label.fontStyle = FontStyles.Bold;
+        label.color = Color.white;
+        SetRect(label.rectTransform, new Vector2(24f, 0f), new Vector2(158f, 46f));
+    }
+
+    private static void CreateTreeConnector(
+        Transform parent,
+        Vector2 start,
+        Vector2 end,
+        Color color)
+    {
+        RectTransform connector = CreateUiObject("Branch Connector", parent);
+        Vector2 direction = end - start;
+        SetRect(
+            connector,
+            (start + end) * 0.5f,
+            new Vector2(direction.magnitude, 4f));
+        connector.localRotation = Quaternion.Euler(
+            0f,
+            0f,
+            Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg);
+        Image image = connector.gameObject.AddComponent<Image>();
+        image.color = new Color(color.r, color.g, color.b, 0.45f);
+        image.raycastTarget = false;
+        connector.SetAsFirstSibling();
+    }
+
+    private static Button CreateProgressionNode(
+        string objectName,
+        Transform parent,
+        Vector2 position,
+        ProgressionSystem.UpgradeId id,
+        Color color,
+        int targetLevel = 0)
+    {
+        bool tierNode = targetLevel > 0;
+        Button button = CreateButton(
+            objectName,
+            parent,
+            position,
+            tierNode ? new Vector2(96f, 66f) : new Vector2(128f, 72f),
+            string.Empty,
+            color);
+        Outline selectionOutline = button.gameObject.AddComponent<Outline>();
+        selectionOutline.effectColor = new Color(0f, 0f, 0f, 0.48f);
+        selectionOutline.effectDistance = new Vector2(1.5f, -1.5f);
+        TMP_Text label = button.GetComponentInChildren<TMP_Text>();
+        label.alignment = tierNode
+            ? TextAlignmentOptions.Center
+            : TextAlignmentOptions.Left;
+        label.fontSize = tierNode ? 12f : 12.5f;
+        label.margin = tierNode
+            ? new Vector4(3f, 3f, 3f, 18f)
+            : new Vector4(38f, 5f, 4f, 19f);
+        label.textWrappingMode = TextWrappingModes.Normal;
+
+        TMP_Text icon = null;
+        TMP_Text cost = null;
+        Image fill = null;
+        if (tierNode)
+        {
+            cost = CreateText(
+                "Node Cost",
+                button.transform,
+                9.5f,
+                TextAlignmentOptions.Center);
+            cost.fontStyle = FontStyles.Bold;
+            cost.color = new Color(1f, 0.88f, 0.35f);
+            SetRect(cost.rectTransform, new Vector2(0f, -24f), new Vector2(88f, 14f));
+        }
+        else
+        {
+            RectTransform badge = CreateIconBadge(
+                "Node Icon",
+                button.transform,
+                new Vector2(-47f, 7f),
+                new Vector2(30f, 30f),
+                "?",
+                new Color(
+                    Mathf.Min(1f, color.r + 0.18f),
+                    Mathf.Min(1f, color.g + 0.18f),
+                    Mathf.Min(1f, color.b + 0.18f)));
+            icon = badge.GetComponentInChildren<TMP_Text>();
+
+            cost = CreateText(
+                "Node Cost",
+                button.transform,
+                11f,
+                TextAlignmentOptions.Right);
+            cost.fontStyle = FontStyles.Bold;
+            cost.color = new Color(1f, 0.88f, 0.35f);
+            SetRect(cost.rectTransform, new Vector2(18f, -20f), new Vector2(84f, 15f));
+
+            fill = CreateProgressBar(
+                "Node Affordability",
+                button.transform,
+                new Vector2(0f, -31f),
+                new Vector2(108f, 5f),
+                new Color(1f, 0.73f, 0.16f),
+                out TMP_Text hiddenProgressText);
+            hiddenProgressText.gameObject.SetActive(false);
+        }
+
+        ProgressionNodeButton node = button.gameObject.AddComponent<ProgressionNodeButton>();
+        node.Configure(
+            id,
+            icon,
+            label,
+            cost,
+            fill,
+            selectionOutline,
+            color,
+            targetLevel);
+        return button;
+    }
+
+    private static void CreateProgressionPreview(
+        Transform parent,
+        ProgressionTreePreview treePreview,
+        Button dismissButton)
+    {
+        RectTransform panel = CreateUiObject("Node Preview", parent);
+        SetRect(panel, Vector2.zero, new Vector2(320f, 270f));
+        Image panelImage = panel.gameObject.AddComponent<Image>();
+        panelImage.color = new Color(0.055f, 0.065f, 0.055f, 0.995f);
+        Outline outline = panel.gameObject.AddComponent<Outline>();
+        outline.effectColor = new Color(1f, 0.76f, 0.22f, 0.88f);
+        outline.effectDistance = new Vector2(3f, -3f);
+
+        RectTransform accent = CreateUiObject("Accent", panel);
+        accent.anchorMin = new Vector2(0f, 1f);
+        accent.anchorMax = Vector2.one;
+        accent.pivot = new Vector2(0.5f, 1f);
+        accent.anchoredPosition = Vector2.zero;
+        accent.sizeDelta = new Vector2(0f, 7f);
+        Image accentImage = accent.gameObject.AddComponent<Image>();
+        accentImage.color = new Color(1f, 0.72f, 0.16f);
+        accentImage.raycastTarget = false;
+
+        TMP_Text title = CreateText(
+            "Preview Title",
+            panel,
+            25f,
+            TextAlignmentOptions.Left);
+        title.color = Color.white;
+        title.fontStyle = FontStyles.Bold;
+        SetRect(title.rectTransform, new Vector2(0f, 105f), new Vector2(286f, 38f));
+
+        TMP_Text level = CreateText(
+            "Preview Level",
+            panel,
+            13f,
+            TextAlignmentOptions.Left);
+        level.color = new Color(0.7f, 0.75f, 0.68f);
+        level.fontStyle = FontStyles.Bold;
+        SetRect(level.rectTransform, new Vector2(0f, 77f), new Vector2(286f, 24f));
+
+        TMP_Text description = CreateText(
+            "Preview Description",
+            panel,
+            15f,
+            TextAlignmentOptions.TopLeft);
+        description.color = new Color(0.93f, 0.95f, 0.9f);
+        description.textWrappingMode = TextWrappingModes.Normal;
+        SetRect(
+            description.rectTransform,
+            new Vector2(0f, 18f),
+            new Vector2(286f, 92f));
+
+        TMP_Text price = CreateText(
+            "Preview Price",
+            panel,
+            16f,
+            TextAlignmentOptions.Left);
+        price.color = new Color(1f, 0.86f, 0.32f);
+        price.fontStyle = FontStyles.Bold;
+        SetRect(price.rectTransform, new Vector2(0f, -44f), new Vector2(286f, 26f));
+
+        Image affordabilityFill = CreateProgressBar(
+            "Preview Affordability",
+            panel,
+            new Vector2(0f, -69f),
+            new Vector2(286f, 15f),
+            new Color(1f, 0.69f, 0.13f),
+            out TMP_Text affordabilityText);
+
+        Button buy = CreateButton(
+            "Preview Buy",
+            panel,
+            new Vector2(0f, -105f),
+            new Vector2(286f, 42f),
+            "BUY",
+            new Color(0.16f, 0.62f, 0.31f));
+        TMP_Text buyText = buy.GetComponentInChildren<TMP_Text>();
+        buyText.fontSize = 17f;
+        buyText.fontStyle = FontStyles.Bold;
+
+        treePreview.Configure(
+            panel.gameObject,
+            title,
+            level,
+            description,
+            price,
+            affordabilityText,
+            affordabilityFill,
+            buy,
+            buyText,
+            dismissButton);
+        panel.gameObject.SetActive(false);
+    }
+
+    private void BuildLegacySuppliesShopUi(Transform canvasTransform)
     {
         suppliesShopScreen = CreateUiObject("Supplies Shop Screen", canvasTransform).gameObject;
         StretchToParent(suppliesShopScreen.GetComponent<RectTransform>());
@@ -1803,6 +2647,8 @@ public sealed class RoundSystem : MonoBehaviour
     {
         RectTransform rectTransform = CreateUiObject(objectName, parent);
         TextMeshProUGUI text = rectTransform.gameObject.AddComponent<TextMeshProUGUI>();
+        text.font = UnityEditor.AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(
+            UiFontAssetPath);
         text.fontSize = fontSize;
         text.alignment = alignment;
         text.textWrappingMode = TextWrappingModes.NoWrap;

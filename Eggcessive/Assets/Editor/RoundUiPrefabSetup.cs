@@ -17,6 +17,7 @@ public static class RoundUiPrefabSetup
     private const string FloatingRewardPrefabPath = "Assets/UI/prefab_FloatingReward.prefab";
     private const string UiInputActionsPath = "Assets/UI/RoundUiInputActions.asset";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
+    private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
 
     [MenuItem("Tools/Eggcessive/Rebuild Round UI Prefabs")]
     public static void Generate()
@@ -61,12 +62,82 @@ public static class RoundUiPrefabSetup
 
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
+        ValidateInputReferences();
         Debug.Log("Round UI, input actions, flying coin, and floating reward prefabs rebuilt.");
+    }
+
+    [MenuItem("Tools/Eggcessive/Validate Round UI Input")]
+    public static void ValidateInputReferences()
+    {
+        GameObject prefab =
+            AssetDatabase.LoadAssetAtPath<GameObject>(RoundPrefabPath);
+        if (prefab == null)
+        {
+            throw new MissingReferenceException(
+                $"Missing round UI prefab at {RoundPrefabPath}.");
+        }
+
+        InputSystemUIInputModule inputModule =
+            prefab.GetComponentInChildren<InputSystemUIInputModule>(true);
+        if (inputModule == null)
+        {
+            throw new MissingComponentException(
+                nameof(InputSystemUIInputModule));
+        }
+
+        SerializedObject serializedModule = new SerializedObject(inputModule);
+        string[] requiredReferences =
+        {
+            "m_ActionsAsset",
+            "m_PointAction",
+            "m_MoveAction",
+            "m_SubmitAction",
+            "m_CancelAction",
+            "m_LeftClickAction",
+            "m_RightClickAction",
+            "m_ScrollWheelAction"
+        };
+        for (int index = 0; index < requiredReferences.Length; index++)
+        {
+            SerializedProperty property =
+                serializedModule.FindProperty(requiredReferences[index]);
+            if (property == null || property.objectReferenceValue == null)
+            {
+                throw new MissingReferenceException(
+                    $"Round UI input reference {requiredReferences[index]} " +
+                    "is missing or unresolved.");
+            }
+        }
+
+        Button readyButton = null;
+        foreach (Button button in prefab.GetComponentsInChildren<Button>(true))
+        {
+            if (button.name == "Ready Button")
+            {
+                readyButton = button;
+                break;
+            }
+        }
+
+        if (readyButton == null)
+        {
+            throw new MissingReferenceException(
+                "The authored Ready Button is missing.");
+        }
+
+        Debug.Log(
+            "Round UI input validation passed: Point, Click, navigation, " +
+            "and the authored Ready Button are valid.");
     }
 
     private static InputActionAsset CreateUiInputActions()
     {
-        AssetDatabase.DeleteAsset(UiInputActionsPath);
+        InputActionAsset existing =
+            AssetDatabase.LoadAssetAtPath<InputActionAsset>(UiInputActionsPath);
+        if (existing != null)
+        {
+            return existing;
+        }
 
         DefaultInputActions defaults = new DefaultInputActions();
         InputActionAsset actions = Object.Instantiate(defaults.asset);
@@ -172,6 +243,7 @@ public static class RoundUiPrefabSetup
 
     private static GameObject CreateFlyingCoinPrefab()
     {
+        TMP_FontAsset font = LoadUiFont();
         GameObject root = new GameObject(
             "prefab_FlyingCoin",
             typeof(RectTransform),
@@ -193,6 +265,7 @@ public static class RoundUiPrefabSetup
         symbolRect.SetParent(rect, false);
         Stretch(symbolRect);
         TextMeshProUGUI symbol = symbolObject.GetComponent<TextMeshProUGUI>();
+        symbol.font = font;
         symbol.text = "$";
         symbol.fontSize = 17f;
         symbol.alignment = TextAlignmentOptions.Center;
@@ -207,6 +280,7 @@ public static class RoundUiPrefabSetup
 
     private static GameObject CreateFloatingRewardPrefab()
     {
+        TMP_FontAsset font = LoadUiFont();
         GameObject root = new GameObject(
             "prefab_FloatingReward",
             typeof(RectTransform),
@@ -215,6 +289,7 @@ public static class RoundUiPrefabSetup
         RectTransform rect = root.GetComponent<RectTransform>();
         rect.sizeDelta = new Vector2(260f, 70f);
         TextMeshProUGUI reward = root.GetComponent<TextMeshProUGUI>();
+        reward.font = font;
         reward.fontSize = 34f;
         reward.alignment = TextAlignmentOptions.Center;
         reward.color = new Color(1f, 0.82f, 0.18f);
@@ -226,6 +301,19 @@ public static class RoundUiPrefabSetup
         GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, FloatingRewardPrefabPath);
         Object.DestroyImmediate(root);
         return prefab;
+    }
+
+    private static TMP_FontAsset LoadUiFont()
+    {
+        TMP_FontAsset font =
+            AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(FontPath);
+        if (font == null)
+        {
+            throw new MissingReferenceException(
+                $"Missing UI font at {FontPath}.");
+        }
+
+        return font;
     }
 
     private static void Stretch(RectTransform rect)

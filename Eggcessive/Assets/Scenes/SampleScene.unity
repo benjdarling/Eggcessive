@@ -733,6 +733,22 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 4534617947099466320, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
+      propertyPath: m_AdditionalShaderChannelsFlag
+      value: 25
+      objectReference: {fileID: 0}
+    - target: {fileID: 5336482332662369525, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
+      propertyPath: m_sharedMaterial
+      value: 
+      objectReference: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+    - target: {fileID: 5336482332662369525, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
+      propertyPath: m_TextStyleHashCode
+      value: -1183493901
+      objectReference: {fileID: 0}
+    - target: {fileID: 5336482332662369525, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
+      propertyPath: m_hasFontAssetChanged
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 6964360209016729599, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
       propertyPath: m_Name
       value: prefab_GameplayTestBot
@@ -1077,6 +1093,13 @@ MonoBehaviour:
   carryHeight: 0.3
   followSpeed: 25
   collectionLevel: 0
+  basketUpgradeLevel: 0
+  vacuumPowerLevel: 0
+  vacuumRangeLevel: 0
+  robotUnlocked: 0
+  robotSpeedLevel: 0
+  robotCapacityLevel: 0
+  robotSmartnessLevel: 0
   basketPrefabs:
   - {fileID: 5780343050482960981, guid: 3806d875a48d0fb48ae087377e8de5c0, type: 3}
   - {fileID: 2353661828662519870, guid: 71869ed13927fb54dae7025a352ea8ec, type: 3}
@@ -7762,12 +7785,20 @@ PrefabInstance:
       value: -1183493901
       objectReference: {fileID: 0}
     - target: {fileID: 5894257072807244814, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
+      propertyPath: m_sharedMaterial
+      value: 
+      objectReference: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
+    - target: {fileID: 5894257072807244814, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
       propertyPath: m_fontColor32.rgba
       value: 4280366663
       objectReference: {fileID: 0}
     - target: {fileID: 5894257072807244814, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
       propertyPath: m_TextStyleHashCode
       value: -1183493901
+      objectReference: {fileID: 0}
+    - target: {fileID: 5894257072807244814, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
+      propertyPath: m_hasFontAssetChanged
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6570981280963540114, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
       propertyPath: m_TextStyleHashCode
@@ -7776,7 +7807,7 @@ PrefabInstance:
     - target: {fileID: 7566036128289858678, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
       propertyPath: m_sharedMaterial
       value: 
-      objectReference: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+      objectReference: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
     - target: {fileID: 7566036128289858678, guid: 610dcf9103feee1428ea8141f4d15eff, type: 3}
       propertyPath: m_TextStyleHashCode
       value: -1183493901

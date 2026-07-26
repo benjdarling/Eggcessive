@@ -8,6 +8,7 @@ using UnityEngine.AI;
 [RequireComponent(typeof(CapsuleCollider))]
 public sealed class ChickenController : MonoBehaviour
 {
+    public const int MaximumChickenCount = 100;
     public static event Action EggLaid;
 
     private enum ChickenState
@@ -319,6 +320,9 @@ public sealed class ChickenController : MonoBehaviour
             FoodScoreNormalized);
         eggTimerRemaining -= Time.deltaTime
             * activeFoodProductionSpeed
+            * (RoundSystem.Instance != null
+                ? RoundSystem.Instance.StartupProductionMultiplier
+                : 1f)
             / Mathf.Max(0.01f, eggIntervalMultiplier);
     }
 
@@ -903,10 +907,19 @@ public sealed class ChickenController : MonoBehaviour
         GameObject egg = Instantiate(eggPrefab, eggPosition, eggRotation);
         EggLaid?.Invoke();
 
-        if (!egg.TryGetComponent(out ChickenEgg _))
+        if (!egg.TryGetComponent(out ChickenEgg chickenEgg))
         {
-            egg.AddComponent<ChickenEgg>();
+            chickenEgg = egg.AddComponent<ChickenEgg>();
         }
+
+        ProgressionSystem progression = ProgressionSystem.Instance;
+        ChickenEgg.EggType eggType = progression != null
+            ? progression.RollEggType()
+            : ChickenEgg.EggType.Standard;
+        int eggValue = progression != null
+            ? progression.GetEggValueCents(eggType)
+            : 100;
+        chickenEgg.ConfigureType(eggType, eggValue);
 
         if (egg.TryGetComponent(out Rigidbody eggBody) && !eggBody.isKinematic)
         {
