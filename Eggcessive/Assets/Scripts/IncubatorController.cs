@@ -224,7 +224,14 @@ public sealed class IncubatorController : MonoBehaviour
 
         if (egg != null)
         {
-            Destroy(egg);
+            if (egg.TryGetComponent(out ChickenEgg chickenEgg))
+            {
+                chickenEgg.ReleaseToPool();
+            }
+            else
+            {
+                Destroy(egg);
+            }
         }
     }
 

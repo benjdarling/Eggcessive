@@ -53,7 +53,7 @@ public sealed class EggContainer : MonoBehaviour
         }
 
         DepositEggValue(egg.ValueCents);
-        Destroy(egg.gameObject);
+        egg.ReleaseToPool();
     }
 
     public int DepositEggs(int eggCount)

@@ -138,7 +138,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         storedEggs++;
         storedEggValues.Add(egg.ValueCents);
         storedEggTypes.Add(egg.Type);
-        Destroy(egg.gameObject);
+        egg.ReleaseToPool();
         RefreshVisibleEggs();
 
         if (storedEggs >= capacity)

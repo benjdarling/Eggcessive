@@ -85,7 +85,7 @@ GameObject:
   - component: {fileID: 6481239536847051713}
   - component: {fileID: 6481249536847051714}
   - component: {fileID: 6481259536847051715}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: prefab_chicken
   m_TagString: Untagged
   m_Icon: {fileID: 0}

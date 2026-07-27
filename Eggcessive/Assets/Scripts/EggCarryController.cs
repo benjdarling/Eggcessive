@@ -418,7 +418,7 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (egg != null)
         {
-            Destroy(egg.gameObject);
+            egg.ReleaseToPool();
         }
 
         if (generation == basketAnimationGeneration
@@ -610,7 +610,7 @@ public sealed class EggCarryController : MonoBehaviour
 
             if (deposited > 0 && egg.TryCollectFromTool())
             {
-                Destroy(egg.gameObject);
+                egg.ReleaseToPool();
             }
             else
             {

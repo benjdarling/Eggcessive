@@ -151,6 +151,7 @@ public sealed class ChickenController : MonoBehaviour
     private bool hasIncubatorExitDestination;
     private bool isTraversingIncubatorExit;
     private Vector3 incubatorExitDestination;
+    private int eggCollisionMask;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
@@ -159,6 +160,7 @@ public sealed class ChickenController : MonoBehaviour
 
     private void Awake()
     {
+        eggCollisionMask = LayerMask.GetMask("Egg");
         float randomScale = Random.Range(
             1f - scaleVariation,
             1f + scaleVariation);
@@ -805,7 +807,7 @@ public sealed class ChickenController : MonoBehaviour
             bodyBounds.extents + searchPadding,
             eggColliderBuffer,
             Quaternion.identity,
-            Physics.AllLayers,
+            eggCollisionMask,
             QueryTriggerInteraction.Ignore);
 
         for (int i = 0; i < hitCount; i++)
@@ -912,13 +914,12 @@ public sealed class ChickenController : MonoBehaviour
                 + Vector3.up * eggSpawnHeight
                 - GetPlanarForward() * eggSpawnBehindDistance;
         Quaternion eggRotation = Quaternion.Euler(0f, Random.Range(-180f, 180f), 0f);
-        GameObject egg = Instantiate(eggPrefab, eggPosition, eggRotation);
+        ChickenEgg chickenEgg = ChickenEgg.Spawn(
+            eggPrefab,
+            eggPosition,
+            eggRotation);
+        GameObject egg = chickenEgg.gameObject;
         EggLaid?.Invoke();
-
-        if (!egg.TryGetComponent(out ChickenEgg chickenEgg))
-        {
-            chickenEgg = egg.AddComponent<ChickenEgg>();
-        }
 
         ProgressionSystem progression = ProgressionSystem.Instance;
         ChickenEgg.EggType eggType = progression != null
