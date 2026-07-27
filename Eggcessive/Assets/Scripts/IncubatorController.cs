@@ -35,8 +35,15 @@ public sealed class IncubatorController : MonoBehaviour
     [SerializeField] private GameObject chickenPrefab = null;
     [SerializeField, Min(0.01f)] private float eggTravelDuration = 0.65f;
 
+    [Header("Audio")]
+    [SerializeField] private AudioClip processingLoopSfx = null;
+    [SerializeField] private AudioClip hatchDoneSfx = null;
+    [SerializeField, Range(0f, 1f)] private float sfxVolume = 1f;
+
     private int storedEggs;
     private float processingTimeRemaining;
+    private AudioSource processingAudioSource;
+    private AudioSource hatchDoneAudioSource;
 
     public const int MaximumLevel = 10;
     public static event Action ChickenHatched;
@@ -56,11 +63,14 @@ public sealed class IncubatorController : MonoBehaviour
 
     private void Awake()
     {
+        InitializeAudio();
         RefreshDisplays();
     }
 
     private void Update()
     {
+        UpdateProcessingAudio();
+
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
         {
             return;
@@ -82,6 +92,7 @@ public sealed class IncubatorController : MonoBehaviour
         if (processingTimeRemaining <= 0f)
         {
             HatchNextEgg();
+            UpdateProcessingAudio();
         }
 
         RefreshDisplays();
@@ -138,6 +149,7 @@ public sealed class IncubatorController : MonoBehaviour
         EggsAccepted?.Invoke(1);
         PrepareAcceptedEgg(egg);
         StartCoroutine(MoveEggIntoIncubator(egg.gameObject));
+        UpdateProcessingAudio();
         RefreshDisplays();
     }
 
@@ -157,6 +169,7 @@ public sealed class IncubatorController : MonoBehaviour
 
         storedEggs += accepted;
         EggsAccepted?.Invoke(accepted);
+        UpdateProcessingAudio();
         RefreshDisplays();
         return accepted;
     }
@@ -235,6 +248,7 @@ public sealed class IncubatorController : MonoBehaviour
             chickenPrefab,
             chickenStart.position,
             chickenStart.rotation);
+        PlayHatchDoneSfx();
         ChickenHatched?.Invoke();
 
         if (chickenEnd != null
@@ -246,6 +260,65 @@ public sealed class IncubatorController : MonoBehaviour
         // Capacity becomes available when the chicken actually spawns.
         storedEggs--;
         processingTimeRemaining = storedEggs > 0 ? SecondsPerEgg : 0f;
+    }
+
+    private void InitializeAudio()
+    {
+        processingAudioSource = CreateSpatialAudioSource(true);
+        processingAudioSource.clip = processingLoopSfx;
+        hatchDoneAudioSource = CreateSpatialAudioSource(false);
+    }
+
+    private AudioSource CreateSpatialAudioSource(bool loop)
+    {
+        AudioSource source = gameObject.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.loop = loop;
+        source.spatialBlend = 1f;
+        source.dopplerLevel = 0f;
+        source.rolloffMode = AudioRolloffMode.Logarithmic;
+        source.minDistance = 2.25f;
+        source.maxDistance = 15f;
+        source.volume = sfxVolume;
+        return source;
+    }
+
+    private void UpdateProcessingAudio()
+    {
+        if (processingAudioSource == null || processingLoopSfx == null)
+        {
+            return;
+        }
+
+        bool shouldPlay = storedEggs > 0
+            && !IsOffline
+            && (RoundSystem.Instance == null
+                || RoundSystem.Instance.IsRoundInProgress);
+
+        if (shouldPlay && !processingAudioSource.isPlaying)
+        {
+            processingAudioSource.Play();
+        }
+        else if (!shouldPlay && processingAudioSource.isPlaying)
+        {
+            processingAudioSource.Stop();
+        }
+    }
+
+    private void PlayHatchDoneSfx()
+    {
+        if (hatchDoneAudioSource != null && hatchDoneSfx != null)
+        {
+            hatchDoneAudioSource.PlayOneShot(hatchDoneSfx);
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (processingAudioSource != null)
+        {
+            processingAudioSource.Stop();
+        }
     }
 
     private void RefreshDisplays()

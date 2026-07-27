@@ -9449,7 +9449,38 @@ MonoBehaviour:
   coinEffectLayer: {fileID: 3778511676556455697}
   coinHudTarget: {fileID: 6141976038429337275}
   flyingCoinPrefab: {fileID: 5029729844846779995, guid: ca99090701c09514d840eaa7ee5eea5b, type: 3}
+  flyingCoinSpinDegreesPerSecond: 1440
   floatingRewardPrefab: {fileID: 3103224535744667012, guid: d2b78e050a97a9f48932de71fd312e81, type: 3}
+  buttonClickSfx: {fileID: 8300000, guid: d480ab8825cb4e5591918d7d8b61a0bc, type: 3}
+  cashRegisterSfx: {fileID: 8300000, guid: 86187ad3cbb8f9a4ab032e83cdad9d35, type: 3}
+  countdownTickSfx: {fileID: 8300000, guid: a26739ddbf3064946a59a0f296ef12fa, type: 3}
+  roundStartSfx: {fileID: 8300000, guid: d45a8a4b65105074b927c0e935fb3586, type: 3}
+  roundEndSfx: {fileID: 8300000, guid: 2d9cc3730eb34478a619ed93856cf2ed, type: 3}
+  grabSfx: {fileID: 8300000, guid: 81f979c18ed64402863949154bbc71ee, type: 3}
+  vacuumOnSfx: {fileID: 8300000, guid: f6b42ca87a104b8ba15bc78e5b437d51, type: 3}
+  vacuumEggSfx: {fileID: 8300000, guid: 09dfe690d6324b8d8800fa469c2d41bc, type: 3}
+  foodPickupSfx: {fileID: 8300000, guid: 541eb061347d44619bed49040706465c, type: 3}
+  foodPlaceSfx: {fileID: 8300000, guid: e3118e6fc12249318140262de67086a9, type: 3}
+  cursorMovementSfx: {fileID: 8300000, guid: 8c24d3e97c2224d4ab69ad70aafe4ff2, type: 3}
+  coinLandingSfx:
+  - {fileID: 8300000, guid: e8a44df1fff4e7d4cb04ba5e1c34e7ae, type: 3}
+  - {fileID: 8300000, guid: 27b0b400c3c51c248bb504b0c72761ef, type: 3}
+  - {fileID: 8300000, guid: a1edf68a33ce78740915045c10293155, type: 3}
+  - {fileID: 8300000, guid: 71b1b3c6703c26442a6bf77b6d3f7ce3, type: 3}
+  uiSfxVolume: 1
+  cashRegisterSfxVolume: 0.65
+  coinAudioVoiceCount: 12
+  cursorMovementMaximumVolume: 1
+  cursorMovementMinimumPitch: 0.85
+  cursorMovementMaximumPitch: 1.35
+  cursorMovementSpeedForMaximum: 1.25
+  cursorMovementResponse: 10
+  truckEnterSfx: {fileID: 8300000, guid: 6a82217d5633cd74d92f806aeb7b725f, type: 3}
+  truckExitSfx: {fileID: 8300000, guid: f3e6577d8f194a22bd5e5652ae84657d, type: 3}
+  truckSfxVolume: 0.8
+  truckExitSoundLeadTime: 0.3
+  farmAmbienceSfx: {fileID: 8300000, guid: 17dd832de55f30e49984d86c77c48e59, type: 3}
+  farmAmbienceVolume: 1
 --- !u!1 &2025466995524022328
 GameObject:
   m_ObjectHideFlags: 0
@@ -14622,7 +14653,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: SUPPLIES
+  m_text: SUPPLIES SHOP
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
@@ -19114,7 +19145,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "\xD7"
+  m_text: X
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}

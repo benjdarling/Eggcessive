@@ -219,27 +219,39 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
-        int accepted = incubator.TryAcceptStoredEggs(storedEggs);
+        int standardEggs = CountStoredStandardEggs();
+        int accepted = incubator.TryAcceptStoredEggs(standardEggs);
         storedEggs -= accepted;
 
-        // Incubation consumes the least valuable eggs first so a smart robot
-        // does not turn a rare galaxy or gold egg into an ordinary chicken.
+        // Rare eggs are always preserved for cash. Incubation consumes only
+        // standard eggs, starting with the least valuable one.
         for (int i = 0; i < accepted && storedEggValues.Count > 0; i++)
         {
-            int leastValuableIndex = 0;
-            for (int candidate = 1; candidate < storedEggValues.Count; candidate++)
+            int leastValuableIndex = -1;
+            for (int candidate = 0; candidate < storedEggValues.Count; candidate++)
             {
-                if (storedEggValues[candidate] < storedEggValues[leastValuableIndex])
+                if (candidate >= storedEggTypes.Count
+                    || storedEggTypes[candidate]
+                        != ChickenEgg.EggType.Standard)
+                {
+                    continue;
+                }
+
+                if (leastValuableIndex < 0
+                    || storedEggValues[candidate]
+                        < storedEggValues[leastValuableIndex])
                 {
                     leastValuableIndex = candidate;
                 }
             }
 
-            storedEggValues.RemoveAt(leastValuableIndex);
-            if (leastValuableIndex < storedEggTypes.Count)
+            if (leastValuableIndex < 0)
             {
-                storedEggTypes.RemoveAt(leastValuableIndex);
+                break;
             }
+
+            storedEggValues.RemoveAt(leastValuableIndex);
+            storedEggTypes.RemoveAt(leastValuableIndex);
         }
     }
 
@@ -248,7 +260,22 @@ public sealed class EggCollectorRobot : MonoBehaviour
         return smartnessLevel > 0
             && incubator != null
             && incubator.isActiveAndEnabled
-            && incubator.AvailableCapacity > 0;
+            && incubator.AvailableCapacity > 0
+            && CountStoredStandardEggs() > 0;
+    }
+
+    private int CountStoredStandardEggs()
+    {
+        int count = 0;
+        for (int index = 0; index < storedEggTypes.Count; index++)
+        {
+            if (storedEggTypes[index] == ChickenEgg.EggType.Standard)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private ChickenEgg FindNearestAvailableEgg()

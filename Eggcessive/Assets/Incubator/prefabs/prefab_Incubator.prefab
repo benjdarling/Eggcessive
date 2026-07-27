@@ -57,6 +57,9 @@ MonoBehaviour:
   timerText: {fileID: 5995300471214098659}
   chickenPrefab: {fileID: 4761822751608631720, guid: 0d60fca0103985a4884284e644365276, type: 3}
   eggTravelDuration: 0.65
+  processingLoopSfx: {fileID: 8300000, guid: b1fab8aac5bc8584b9f3edc7103a04d6, type: 3}
+  hatchDoneSfx: {fileID: 8300000, guid: 30186eab1a0590641a18f26edc4ff245, type: 3}
+  sfxVolume: 1
 --- !u!65 &3017398200160471412
 BoxCollider:
   m_ObjectHideFlags: 0

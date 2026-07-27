@@ -146,6 +146,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c1b5f4d97a8e4f34a6c2b9d840f6173e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: '::'
+  scaleVariation: 0.05
   minIdleTime: 1
   maxIdleTime: 3
   wanderRadius: 1

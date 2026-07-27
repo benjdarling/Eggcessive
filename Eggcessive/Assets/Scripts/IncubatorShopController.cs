@@ -156,6 +156,7 @@ public sealed class IncubatorShopController : MonoBehaviour
         incubator.InstallOrUpgrade(nextLevel);
         message = nextLevel == 1 ? "Incubator installed" : $"Incubator level {nextLevel}";
         RefreshUi();
+        RoundSystem.Instance?.PlayCashRegisterSfx();
         return true;
     }
 
@@ -182,6 +183,10 @@ public sealed class IncubatorShopController : MonoBehaviour
         incubator.InstallOrUpgrade(1, 1);
         message = "Incubator installed";
         RefreshUi();
+        if (spendCurrency)
+        {
+            RoundSystem.Instance?.PlayCashRegisterSfx();
+        }
         return true;
     }
 
@@ -204,6 +209,10 @@ public sealed class IncubatorShopController : MonoBehaviour
         incubator.InstallOrUpgrade(CapacityLevel + 1, SpeedLevel);
         message = $"Incubator capacity level {CapacityLevel}";
         RefreshUi();
+        if (spendCurrency)
+        {
+            RoundSystem.Instance?.PlayCashRegisterSfx();
+        }
         return true;
     }
 
@@ -226,6 +235,10 @@ public sealed class IncubatorShopController : MonoBehaviour
         incubator.InstallOrUpgrade(CapacityLevel, SpeedLevel + 1);
         message = $"Incubator speed level {SpeedLevel}";
         RefreshUi();
+        if (spendCurrency)
+        {
+            RoundSystem.Instance?.PlayCashRegisterSfx();
+        }
         return true;
     }
 

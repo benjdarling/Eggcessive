@@ -548,6 +548,7 @@ public sealed class ProgressionSystem : MonoBehaviour
         }
 
         NotifyChanged();
+        RoundSystem.Instance?.PlayCashRegisterSfx();
         return true;
     }
 

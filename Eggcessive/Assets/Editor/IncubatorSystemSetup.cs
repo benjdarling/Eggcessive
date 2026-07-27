@@ -14,6 +14,10 @@ public static class IncubatorSystemSetup
     private const string HudPrefabPath = "Assets/UI/prefab_EggScoreHud.prefab";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
+    private const string ProcessingLoopSfxPath =
+        "Assets/Sounds/UI/sfx_incubator_on.wav";
+    private const string HatchDoneSfxPath =
+        "Assets/Sounds/UI/sfx_incubator_done.wav";
 
     [MenuItem("Tools/Eggcessive/Build Incubator System")]
     public static void BuildIncubatorSystem()
@@ -99,6 +103,8 @@ public static class IncubatorSystemSetup
         ValidateReference(serializedIncubator, "capacityText");
         ValidateReference(serializedIncubator, "timerText");
         ValidateReference(serializedIncubator, "chickenPrefab");
+        ValidateReference(serializedIncubator, "processingLoopSfx");
+        ValidateReference(serializedIncubator, "hatchDoneSfx");
         ValidateReference(new SerializedObject(intake), "incubator");
 
         IncubatorShopController prefabShop = hudPrefab.GetComponent<IncubatorShopController>();
@@ -152,10 +158,19 @@ public static class IncubatorSystemSetup
         GameObject modelAsset = AssetDatabase.LoadAssetAtPath<GameObject>(IncubatorModelPath);
         GameObject chickenPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(ChickenPrefabPath);
         TMP_FontAsset font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(FontPath);
+        AudioClip processingLoopSfx =
+            AssetDatabase.LoadAssetAtPath<AudioClip>(ProcessingLoopSfxPath);
+        AudioClip hatchDoneSfx =
+            AssetDatabase.LoadAssetAtPath<AudioClip>(HatchDoneSfxPath);
 
-        if (modelAsset == null || chickenPrefab == null || font == null)
+        if (modelAsset == null
+            || chickenPrefab == null
+            || font == null
+            || processingLoopSfx == null
+            || hatchDoneSfx == null)
         {
-            throw new InvalidOperationException("The incubator model, chicken prefab, or TMP font asset is missing.");
+            throw new InvalidOperationException(
+                "The incubator model, chicken prefab, TMP font, or audio is missing.");
         }
 
         GameObject root = new GameObject("prefab_Incubator");
@@ -210,6 +225,10 @@ public static class IncubatorSystemSetup
             serializedController.FindProperty("timerText").objectReferenceValue = timerText;
             serializedController.FindProperty("chickenPrefab").objectReferenceValue = chickenPrefab;
             serializedController.FindProperty("eggTravelDuration").floatValue = 0.65f;
+            serializedController.FindProperty("processingLoopSfx").objectReferenceValue =
+                processingLoopSfx;
+            serializedController.FindProperty("hatchDoneSfx").objectReferenceValue =
+                hatchDoneSfx;
             serializedController.ApplyModifiedPropertiesWithoutUndo();
 
             GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, IncubatorPrefabPath);

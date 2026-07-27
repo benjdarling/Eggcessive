@@ -738,6 +738,12 @@ PrefabInstance:
       value: 25
       objectReference: {fileID: 0}
     - target: {fileID: 5336482332662369525, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
+      propertyPath: m_text
+      value: 'TEST BOT
+
+        OFF  .  F8 TO START'
+      objectReference: {fileID: 0}
+    - target: {fileID: 5336482332662369525, guid: e8c6e757e182dfc4f9fdb0a4d0ecc0e8, type: 3}
       propertyPath: m_sharedMaterial
       value: 
       objectReference: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}

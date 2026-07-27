@@ -24,6 +24,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     private const float EfficientCollectionRatio = 0.72f;
     private const int MaximumEfficientRoundLeftovers = 2;
     private const int MaximumDesiredFeedPiles = 4;
+    private const int ChickensPerDesiredFoodPile = 4;
 
     [Header("Operation")]
     [SerializeField] private bool startEnabled = false;
@@ -52,7 +53,6 @@ public sealed class GameplayTestBot : MonoBehaviour
     private int foodPlacementAttempt;
     private int completedActions;
     private int desiredFeedPiles = 1;
-    private bool stockMultipleFeedBags;
     private CursorLockMode previousCursorLock;
     private bool previousCursorVisible;
     private bool cursorStateCaptured;
@@ -135,9 +135,9 @@ public sealed class GameplayTestBot : MonoBehaviour
         hasLastPhase = false;
         completedActions = 0;
         desiredFeedPiles = Mathf.Max(1, minimumFeedBags);
-        stockMultipleFeedBags = false;
         pointerVelocity = Vector2.zero;
         isRunning = true;
+        EggCarryController.Instance?.SetAutomationRareEggProtection(true);
         automation = StartCoroutine(AutomationLoop());
     }
 
@@ -151,6 +151,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         isRunning = false;
         ReleaseMouseButtons();
+        EggCarryController.Instance?.SetAutomationRareEggProtection(false);
         EggCarryController.Instance?.CancelPointerInteraction();
 
         if (automationInputMouse != null)
@@ -260,10 +261,10 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
+        int desiredPileCount = GetDesiredFeedPileCount();
         if (foodShop != null
             && foodShop.OwnedFoodCount > 0
-            && (stockMultipleFeedBags
-                || CountAvailableFoodPiles() < desiredFeedPiles))
+            && CountAvailableFoodPiles() < desiredPileCount)
         {
             yield return ClickNamedButton("Food Icon Button", "SELECTING FEED");
             yield break;
@@ -278,6 +279,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
+        collection.SetAutomationRareEggProtection(true);
         if (collection.HasVacuum)
         {
             yield return UseVacuum();
@@ -306,7 +308,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        bool incubate = ShouldUseIncubator();
+        bool incubate = ShouldUseIncubator(egg);
         Component destination = incubate
             ? FindIncubator()
             : EggContainer.Instance;
@@ -389,6 +391,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (collection.BasketEggCount > 0
             && basketLoaded
+            && !collection.BasketContainsRareEggs
             && CanUseIncubator())
         {
             SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  INCUBATING ONE");
@@ -441,7 +444,8 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        bool incubate = ShouldUseIncubator();
+        bool incubate = ShouldUseIncubator(egg)
+            && !HasUncollectedRareEggs();
         SetStatus($"VACUUM  •  {(incubate ? "RIGHT SUCK TO INCUBATOR" : "CASH SUCK")}");
         yield return MovePointerToEgg(egg);
         if (!IsPointerOverEgg(egg))
@@ -549,12 +553,120 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         FoodShopController foodShop = FoodShopController.Instance;
+        ProgressionNodeButton[] nodes =
+            Object.FindObjectsByType<ProgressionNodeButton>(
+                FindObjectsInactive.Exclude,
+                FindObjectsSortMode.None);
+        int availableFoodPiles = CountAvailableFoodPiles();
+        int desiredFeedInventory = Mathf.Max(
+            0,
+            GetDesiredFeedPileCount() - availableFoodPiles);
+        int totalFoodSupply = availableFoodPiles
+            + (foodShop != null ? foodShop.OwnedFoodCount : 0);
 
-        int desiredFeedInventory = stockMultipleFeedBags
-            ? desiredFeedPiles
-            : Mathf.Max(
-                0,
-                desiredFeedPiles - CountAvailableFoodPiles());
+        if (foodShop != null
+            && totalFoodSupply <= 0
+            && desiredFeedInventory > 0)
+        {
+            Button essentialFeed = FindNamedButton("Buy Feed");
+            if (CanPurchaseProgressionNode(essentialFeed))
+            {
+                yield return ClickButton(
+                    essentialFeed,
+                    "SHOP - SELECTING ESSENTIAL FEED");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        "SHOP - BUYING ESSENTIAL FEED");
+                    yield break;
+                }
+            }
+        }
+
+        IncubatorShopController incubatorShop =
+            IncubatorShopController.Instance;
+        bool needsIncubator = incubatorShop != null
+            && !incubatorShop.IsInstalled;
+        if (totalFoodSupply > 0 && needsIncubator)
+        {
+            ProgressionNodeButton incubatorPriorityNode =
+                FindAffordableProgressionNode(
+                    nodes,
+                    ProgressionSystem.UpgradeId.IncubatorInstall);
+            if (incubatorPriorityNode != null
+                && shopPurchaseCount < maximumShopPurchasesPerVisit)
+            {
+                Button incubatorUpgrade =
+                    incubatorPriorityNode.GetComponent<Button>();
+                yield return ClickButton(
+                    incubatorUpgrade,
+                    "SHOP - PRIORITISING INCUBATOR");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        "SHOP - BUYING INCUBATOR");
+                    yield break;
+                }
+            }
+
+            yield return ClickNamedButton(
+                "Done Shopping",
+                "SHOP - SAVING FOR INCUBATOR");
+            yield break;
+        }
+
+        ProgressionNodeButton vacuumPriorityNode =
+            FindVacuumPriorityNode(nodes);
+        if (vacuumPriorityNode != null)
+        {
+            Button priorityUpgrade = vacuumPriorityNode.GetComponent<Button>();
+            if (CanPurchaseProgressionNode(priorityUpgrade))
+            {
+                yield return ClickButton(
+                    priorityUpgrade,
+                    $"SHOP  â€¢  PRIORITISING {priorityUpgrade.name.ToUpperInvariant()}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        $"SHOP  â€¢  BUYING {priorityUpgrade.name.ToUpperInvariant()}");
+                    yield break;
+                }
+            }
+        }
+
+        ProgressionNodeButton feedSpeedPriorityNode =
+            FindAffordableProgressionNode(
+                nodes,
+                ProgressionSystem.UpgradeId.FeedSpeed);
+        if (totalFoodSupply > 0
+            && feedSpeedPriorityNode != null
+            && shopPurchaseCount < maximumShopPurchasesPerVisit)
+        {
+            Button feedSpeedUpgrade =
+                feedSpeedPriorityNode.GetComponent<Button>();
+            yield return ClickButton(
+                feedSpeedUpgrade,
+                $"SHOP - PRIORITISING {feedSpeedUpgrade.name.ToUpperInvariant()}");
+            Button previewBuy = FindNamedButton("Preview Buy");
+            if (IsUsable(previewBuy))
+            {
+                shopPurchaseCount++;
+                yield return ClickButton(
+                    previewBuy,
+                    $"SHOP - BUYING {feedSpeedUpgrade.name.ToUpperInvariant()}");
+                yield break;
+            }
+        }
+
         if (foodShop != null
             && foodShop.OwnedFoodCount < desiredFeedInventory)
         {
@@ -575,12 +687,16 @@ public sealed class GameplayTestBot : MonoBehaviour
             }
         }
 
+        if (vacuumPriorityNode != null)
+        {
+            yield return ClickNamedButton(
+                "Done Shopping",
+                "SHOP  â€¢  SAVING FOR VACUUM");
+            yield break;
+        }
+
         if (shopPurchaseCount < maximumShopPurchasesPerVisit)
         {
-            ProgressionNodeButton[] nodes =
-                Object.FindObjectsByType<ProgressionNodeButton>(
-                    FindObjectsInactive.Exclude,
-                    FindObjectsSortMode.None);
             for (int offset = 0; offset < nodes.Length; offset++)
             {
                 int index = (shopUpgradeCursor + offset) % nodes.Length;
@@ -617,9 +733,11 @@ public sealed class GameplayTestBot : MonoBehaviour
         yield return ClickNamedButton("Done Shopping", "SHOP  •  DONE");
     }
 
-    private bool ShouldUseIncubator()
+    private bool ShouldUseIncubator(ChickenEgg egg)
     {
-        return CanUseIncubator();
+        return egg != null
+            && egg.Type == ChickenEgg.EggType.Standard
+            && CanUseIncubator();
     }
 
     private bool CanUseIncubator()
@@ -628,6 +746,89 @@ public sealed class GameplayTestBot : MonoBehaviour
         return incubator != null
             && incubator.isActiveAndEnabled
             && incubator.AvailableCapacity > 0;
+    }
+
+    private static bool HasUncollectedRareEggs()
+    {
+        var eggs = ChickenEgg.ActiveInstances;
+        for (int index = 0; index < eggs.Count; index++)
+        {
+            ChickenEgg egg = eggs[index];
+            if (egg != null
+                && !egg.IsCollected
+                && egg.Type != ChickenEgg.EggType.Standard)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ProgressionNodeButton FindVacuumPriorityNode(
+        ProgressionNodeButton[] nodes)
+    {
+        EggCarryController collection = EggCarryController.Instance;
+        if (collection == null || collection.HasVacuum || nodes == null)
+        {
+            return null;
+        }
+
+        ProgressionSystem.UpgradeId priorityId =
+            collection.BasketUpgradeLevel < 1
+                ? ProgressionSystem.UpgradeId.BasketCapacity
+                : ProgressionSystem.UpgradeId.VacuumPower;
+
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node != null
+                && node.UpgradeId == priorityId
+                && node.TargetLevel == 1)
+            {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    private static ProgressionNodeButton FindAffordableProgressionNode(
+        ProgressionNodeButton[] nodes,
+        ProgressionSystem.UpgradeId upgradeId)
+    {
+        if (nodes == null)
+        {
+            return null;
+        }
+
+        ProgressionNodeButton bestNode = null;
+        int bestTargetLevel = int.MaxValue;
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node == null || node.UpgradeId != upgradeId)
+            {
+                continue;
+            }
+
+            Button button = node.GetComponent<Button>();
+            if (!CanPurchaseProgressionNode(button))
+            {
+                continue;
+            }
+
+            int targetLevel = node.TargetLevel > 0
+                ? node.TargetLevel
+                : int.MaxValue - 1;
+            if (targetLevel < bestTargetLevel)
+            {
+                bestNode = node;
+                bestTargetLevel = targetLevel;
+            }
+        }
+
+        return bestNode;
     }
 
     private static IncubatorController FindIncubator()
@@ -639,7 +840,6 @@ public sealed class GameplayTestBot : MonoBehaviour
     {
         int baseline = Mathf.Max(1, minimumFeedBags);
         desiredFeedPiles = baseline;
-        stockMultipleFeedBags = false;
         if (round == null || round.RoundEggsLaid < 3)
         {
             return;
@@ -663,7 +863,23 @@ public sealed class GameplayTestBot : MonoBehaviour
             scaledTarget,
             Mathf.Max(2, baseline),
             Mathf.Max(MaximumDesiredFeedPiles, baseline));
-        stockMultipleFeedBags = true;
+    }
+
+    private int GetDesiredFeedPileCount()
+    {
+        int activeChickenCount = 0;
+        var chickens = ChickenController.ActiveInstances;
+        for (int index = 0; index < chickens.Count; index++)
+        {
+            if (chickens[index] != null && chickens[index].isActiveAndEnabled)
+            {
+                activeChickenCount++;
+            }
+        }
+
+        int sharedPileTarget = Mathf.CeilToInt(
+            activeChickenCount / (float)ChickensPerDesiredFoodPile);
+        return Mathf.Min(desiredFeedPiles, sharedPileTarget);
     }
 
     private static int CountAvailableFoodPiles()
@@ -695,6 +911,8 @@ public sealed class GameplayTestBot : MonoBehaviour
             return false;
         }
 
+        int bestRarity = -1;
+        int bestValue = -1;
         float bestDistance = float.PositiveInfinity;
         Vector2 screenCenter = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
         var eggs = ChickenEgg.ActiveInstances;
@@ -731,14 +949,21 @@ public sealed class GameplayTestBot : MonoBehaviour
             }
 
             float distance = Vector2.SqrMagnitude(point - screenCenter);
+            int rarity = (int)egg.Type;
 
-            if (distance >= bestDistance)
+            if (rarity < bestRarity
+                || (rarity == bestRarity && egg.ValueCents < bestValue)
+                || (rarity == bestRarity
+                    && egg.ValueCents == bestValue
+                    && distance >= bestDistance))
             {
                 continue;
             }
 
             selectedEgg = egg;
             selectedPoint = point;
+            bestRarity = rarity;
+            bestValue = egg.ValueCents;
             bestDistance = distance;
         }
 

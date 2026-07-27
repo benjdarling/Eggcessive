@@ -237,6 +237,7 @@ public sealed class FoodShopController : MonoBehaviour
         ownedFood++;
         RefreshUi();
         message = $"{CurrentFeedName} added";
+        RoundSystem.Instance?.PlayCashRegisterSfx();
         return true;
     }
 
@@ -265,6 +266,10 @@ public sealed class FoodShopController : MonoBehaviour
         unlockedFeedTier++;
         RefreshUi();
         message = $"{CurrentFeedName} unlocked";
+        if (spendCurrency)
+        {
+            RoundSystem.Instance?.PlayCashRegisterSfx();
+        }
         return true;
     }
 
@@ -308,6 +313,7 @@ public sealed class FoodShopController : MonoBehaviour
         previewRenderers = placementPreview.GetComponentsInChildren<Renderer>(true);
         placementPreview.SetActive(false);
         SetStatus("Click in the pen to place");
+        RoundSystem.Instance?.PlayFoodPickupSfx();
     }
 
     private void UpdatePlacementPreview(Vector2 pointerPosition)
@@ -400,6 +406,7 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         ownedFood--;
+        RoundSystem.Instance?.PlayFoodPlaceSfx();
         CancelPlacement();
         RefreshUi();
     }

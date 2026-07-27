@@ -81,6 +81,7 @@ public sealed class EggCarryController : MonoBehaviour
     private readonly HashSet<ChickenEgg> vacuumInFlight = new HashSet<ChickenEgg>();
     private readonly HashSet<ChickenEgg> vacuumIncubatorInFlight =
         new HashSet<ChickenEgg>();
+    private bool automationPreservesRareEggs;
 
     public const int MaximumCollectionLevel = 9;
     public static EggCarryController Instance { get; private set; }
@@ -100,6 +101,8 @@ public sealed class EggCarryController : MonoBehaviour
     public string NextCollectionDetails => GetTierDetails(NextCollectionLevel);
     public bool HasPendingCollection => vacuumInFlight.Count > 0;
     public int BasketEggCount => basketEggCount;
+    public bool BasketContainsRareEggs =>
+        basketEggTypes.Exists(type => type != ChickenEgg.EggType.Standard);
     public int CurrentBasketCapacity => BasketCapacity;
     public ChickenEgg HeldEgg => heldEgg;
     public float HandCarryHeight => carryHeight;
@@ -143,6 +146,7 @@ public sealed class EggCarryController : MonoBehaviour
     private void OnDisable()
     {
         RoundSystem.PhaseChanged -= HandleRoundPhaseChanged;
+        RoundSystem.Instance?.SetVacuumSfxActive(false);
         ReleaseEgg();
     }
 
@@ -162,12 +166,14 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (!roundActive)
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
             ReleaseEgg();
             return;
         }
 
         if (FoodShopController.IsPlacementActive)
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
             ReleaseEgg();
             return;
         }
@@ -176,6 +182,7 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (mouse == null)
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
             return;
         }
 
@@ -187,19 +194,24 @@ public sealed class EggCarryController : MonoBehaviour
             && EventSystem.current.IsPointerOverGameObject()
             && heldEgg == null)
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
             return;
         }
 
         if (IsBasketMode)
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
             UpdateBasket(pointerPosition, mouse);
         }
         else if (IsVacuumMode)
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(
+                mouse.leftButton.isPressed || mouse.rightButton.isPressed);
             UpdateVacuum(mouse);
         }
         else
         {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
             UpdateHand(pointerPosition, mouse);
         }
     }
@@ -239,6 +251,7 @@ public sealed class EggCarryController : MonoBehaviour
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
         message = $"{CurrentCollectionName} unlocked";
+        RoundSystem.Instance?.PlayCashRegisterSfx();
         return true;
     }
 
@@ -252,7 +265,13 @@ public sealed class EggCarryController : MonoBehaviour
 
     public void CancelPointerInteraction()
     {
+        RoundSystem.Instance?.SetVacuumSfxActive(false);
         ReleaseEgg();
+    }
+
+    public void SetAutomationRareEggProtection(bool enabled)
+    {
+        automationPreservesRareEggs = enabled;
     }
 
     private void UpdateHand(Vector2 pointerPosition, Mouse mouse)
@@ -308,6 +327,7 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
+        RoundSystem.Instance?.PlayGrabSfx();
         int slotIndex = basketEggCount;
         basketEggValues.Add(egg.ValueCents);
         basketEggTypes.Add(egg.Type);
@@ -425,15 +445,6 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
-        if (routeToIncubator
-            && (incubator == null
-                || !incubator.isActiveAndEnabled
-                || incubator.AvailableCapacity
-                    <= vacuumIncubatorInFlight.Count))
-        {
-            return;
-        }
-
         int powerIndex = Mathf.Clamp(vacuumPowerLevel - 1, 0, 2);
         int rangeIndex = Mathf.Clamp(
             (vacuumRangeLevel > 0 ? vacuumRangeLevel : vacuumPowerLevel) - 1,
@@ -495,9 +506,21 @@ public sealed class EggCarryController : MonoBehaviour
                 continue;
             }
 
+            bool eggRoutesToIncubator = routeToIncubator
+                && (!automationPreservesRareEggs
+                    || egg.Type == ChickenEgg.EggType.Standard);
+            if (eggRoutesToIncubator
+                && (incubator == null
+                    || !incubator.isActiveAndEnabled
+                    || incubator.AvailableCapacity
+                        <= vacuumIncubatorInFlight.Count))
+            {
+                continue;
+            }
+
             vacuumInFlight.Add(egg);
 
-            if (routeToIncubator)
+            if (eggRoutesToIncubator)
             {
                 vacuumIncubatorInFlight.Add(egg);
             }
@@ -505,9 +528,9 @@ public sealed class EggCarryController : MonoBehaviour
             StartCoroutine(VacuumEgg(
                 egg,
                 VacuumPowers[powerIndex],
-                routeToIncubator));
+                eggRoutesToIncubator));
 
-            if (routeToIncubator
+            if (eggRoutesToIncubator
                 && incubator.AvailableCapacity
                     <= vacuumIncubatorInFlight.Count)
             {
@@ -528,6 +551,7 @@ public sealed class EggCarryController : MonoBehaviour
             yield break;
         }
 
+        RoundSystem.Instance?.PlayVacuumEggSfx();
         Vector3 start = egg.transform.position;
         float suctionDuration = 0.48f / Mathf.Max(0.1f, power);
         float elapsed = 0f;
@@ -770,6 +794,7 @@ public sealed class EggCarryController : MonoBehaviour
         }
 
         heldEgg = nearestEgg;
+        RoundSystem.Instance?.PlayGrabSfx();
         carryTarget = heldEgg.transform.position;
         UpdateCarryTarget(pointerPosition);
     }

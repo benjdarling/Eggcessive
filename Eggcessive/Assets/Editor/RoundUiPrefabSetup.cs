@@ -18,6 +18,43 @@ public static class RoundUiPrefabSetup
     private const string UiInputActionsPath = "Assets/UI/RoundUiInputActions.asset";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
+    private const string CoinModelPath = "Assets/UI/meshes/ui_coin.fbx";
+    private const string CoinMaterialPath = "Assets/UI/materials/mat_ui_coin.mat";
+    private const string CashRegisterSfxPath =
+        "Assets/Sounds/UI/sfx_ui_cashregister.wav";
+    private const string ButtonClickSfxPath =
+        "Assets/Sounds/UI/sfx_ui_click.wav";
+    private const string CountdownTickSfxPath =
+        "Assets/Sounds/UI/sfx_ui_countdown_tick.wav";
+    private const string RoundStartSfxPath =
+        "Assets/Sounds/UI/sfx_ui_round_start.wav";
+    private const string RoundEndSfxPath =
+        "Assets/Sounds/UI/sfx_ui_round_end.wav";
+    private const string TruckEnterSfxPath =
+        "Assets/Sounds/UI/sfx_truck_enter.wav";
+    private const string TruckExitSfxPath =
+        "Assets/Sounds/UI/sfx_truck_exit.wav";
+    private const string FarmAmbienceSfxPath =
+        "Assets/Sounds/UI/sfx_farm_ambience.wav";
+    private const string GrabSfxPath =
+        "Assets/Sounds/UI/sfx_grab.wav";
+    private const string VacuumOnSfxPath =
+        "Assets/Sounds/UI/sfx_vacuum_on.wav";
+    private const string VacuumEggSfxPath =
+        "Assets/Sounds/UI/sfx_vacuum_egg.wav";
+    private const string FoodPickupSfxPath =
+        "Assets/Sounds/UI/sfx_food_pickup.wav";
+    private const string FoodPlaceSfxPath =
+        "Assets/Sounds/UI/sfx_food_place.wav";
+    private const string CursorMovementSfxPath =
+        "Assets/Sounds/UI/sfx_cursor_movement.wav";
+    private static readonly string[] CoinLandingSfxPaths =
+    {
+        "Assets/Sounds/UI/sfx_ui_coin_01.wav",
+        "Assets/Sounds/UI/sfx_ui_coin_02.wav",
+        "Assets/Sounds/UI/sfx_ui_coin_03.wav",
+        "Assets/Sounds/UI/sfx_ui_coin_04.wav"
+    };
 
     [MenuItem("Tools/Eggcessive/Rebuild Round UI Prefabs")]
     public static void Generate()
@@ -50,6 +87,43 @@ public static class RoundUiPrefabSetup
                 flyingCoinPrefab;
             serializedSystem.FindProperty("floatingRewardPrefab").objectReferenceValue =
                 floatingRewardPrefab;
+            serializedSystem.FindProperty("cashRegisterSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(CashRegisterSfxPath);
+            serializedSystem.FindProperty("buttonClickSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(ButtonClickSfxPath);
+            serializedSystem.FindProperty("countdownTickSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(CountdownTickSfxPath);
+            serializedSystem.FindProperty("roundStartSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(RoundStartSfxPath);
+            serializedSystem.FindProperty("roundEndSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(RoundEndSfxPath);
+            serializedSystem.FindProperty("truckEnterSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(TruckEnterSfxPath);
+            serializedSystem.FindProperty("truckExitSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(TruckExitSfxPath);
+            serializedSystem.FindProperty("farmAmbienceSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(FarmAmbienceSfxPath);
+            serializedSystem.FindProperty("grabSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(GrabSfxPath);
+            serializedSystem.FindProperty("vacuumOnSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(VacuumOnSfxPath);
+            serializedSystem.FindProperty("vacuumEggSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(VacuumEggSfxPath);
+            serializedSystem.FindProperty("foodPickupSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(FoodPickupSfxPath);
+            serializedSystem.FindProperty("foodPlaceSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(FoodPlaceSfxPath);
+            serializedSystem.FindProperty("cursorMovementSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(CursorMovementSfxPath);
+            SerializedProperty coinSfx =
+                serializedSystem.FindProperty("coinLandingSfx");
+            coinSfx.arraySize = CoinLandingSfxPaths.Length;
+            for (int index = 0; index < CoinLandingSfxPaths.Length; index++)
+            {
+                coinSfx.GetArrayElementAtIndex(index).objectReferenceValue =
+                    AssetDatabase.LoadAssetAtPath<AudioClip>(
+                        CoinLandingSfxPaths[index]);
+            }
             serializedSystem.ApplyModifiedPropertiesWithoutUndo();
 
             GameObject roundPrefab = PrefabUtility.SaveAsPrefabAsset(root, RoundPrefabPath);
@@ -243,35 +317,27 @@ public static class RoundUiPrefabSetup
 
     private static GameObject CreateFlyingCoinPrefab()
     {
-        TMP_FontAsset font = LoadUiFont();
+        GameObject coinModel =
+            AssetDatabase.LoadAssetAtPath<GameObject>(CoinModelPath);
+        Material coinMaterial =
+            AssetDatabase.LoadAssetAtPath<Material>(CoinMaterialPath);
+        if (coinModel == null || coinMaterial == null)
+        {
+            throw new MissingReferenceException(
+                "The flying coin model or material could not be loaded.");
+        }
+
         GameObject root = new GameObject(
             "prefab_FlyingCoin",
             typeof(RectTransform),
             typeof(CanvasRenderer),
-            typeof(Image));
+            typeof(UiModelGraphic));
         RectTransform rect = root.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(34f, 34f);
-        Image image = root.GetComponent<Image>();
-        image.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Knob.psd");
-        image.color = new Color(0.96f, 0.64f, 0.08f);
-        image.raycastTarget = false;
-
-        GameObject symbolObject = new GameObject(
-            "Symbol",
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(TextMeshProUGUI));
-        RectTransform symbolRect = symbolObject.GetComponent<RectTransform>();
-        symbolRect.SetParent(rect, false);
-        Stretch(symbolRect);
-        TextMeshProUGUI symbol = symbolObject.GetComponent<TextMeshProUGUI>();
-        symbol.font = font;
-        symbol.text = "$";
-        symbol.fontSize = 17f;
-        symbol.alignment = TextAlignmentOptions.Center;
-        symbol.color = Color.white;
-        symbol.fontStyle = FontStyles.Bold;
-        symbol.raycastTarget = false;
+        rect.sizeDelta = new Vector2(40f, 40f);
+        UiModelGraphic graphic = root.GetComponent<UiModelGraphic>();
+        graphic.SetSourceModel(coinModel);
+        graphic.material = coinMaterial;
+        graphic.raycastTarget = false;
 
         GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, FlyingCoinPrefabPath);
         Object.DestroyImmediate(root);

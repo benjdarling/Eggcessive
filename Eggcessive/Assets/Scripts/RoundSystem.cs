@@ -94,7 +94,48 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private RectTransform coinEffectLayer;
     [SerializeField] private RectTransform coinHudTarget;
     [SerializeField] private GameObject flyingCoinPrefab = null;
+    [SerializeField, Min(0f)]
+    private float flyingCoinSpinDegreesPerSecond = 1440f;
     [SerializeField] private GameObject floatingRewardPrefab = null;
+
+    [Header("UI Audio")]
+    [SerializeField] private AudioClip buttonClickSfx = null;
+    [SerializeField] private AudioClip cashRegisterSfx = null;
+    [SerializeField] private AudioClip countdownTickSfx = null;
+    [SerializeField] private AudioClip roundStartSfx = null;
+    [SerializeField] private AudioClip roundEndSfx = null;
+    [SerializeField] private AudioClip grabSfx = null;
+    [SerializeField] private AudioClip vacuumOnSfx = null;
+    [SerializeField] private AudioClip vacuumEggSfx = null;
+    [SerializeField] private AudioClip foodPickupSfx = null;
+    [SerializeField] private AudioClip foodPlaceSfx = null;
+    [SerializeField] private AudioClip cursorMovementSfx = null;
+    [SerializeField] private AudioClip[] coinLandingSfx = null;
+    [SerializeField, Range(0f, 1f)] private float uiSfxVolume = 1f;
+    [SerializeField, Range(0f, 1f)] private float cashRegisterSfxVolume = 0.65f;
+    [SerializeField, Min(1)] private int coinAudioVoiceCount = 12;
+
+    [Header("Cursor Movement Audio")]
+    [SerializeField, Range(0f, 1f)]
+    private float cursorMovementMaximumVolume = 1f;
+    [SerializeField, Range(0.1f, 3f)]
+    private float cursorMovementMinimumPitch = 0.85f;
+    [SerializeField, Range(0.1f, 3f)]
+    private float cursorMovementMaximumPitch = 1.35f;
+    [SerializeField, Min(0.01f)]
+    private float cursorMovementSpeedForMaximum = 1.25f;
+    [SerializeField, Min(0f)]
+    private float cursorMovementResponse = 10f;
+
+    [Header("Truck Audio")]
+    [SerializeField] private AudioClip truckEnterSfx = null;
+    [SerializeField] private AudioClip truckExitSfx = null;
+    [SerializeField, Range(0f, 1f)] private float truckSfxVolume = 0.8f;
+    [SerializeField, Min(0f)] private float truckExitSoundLeadTime = 0.3f;
+
+    [Header("Ambience")]
+    [SerializeField] private AudioClip farmAmbienceSfx = null;
+    [SerializeField, Range(0f, 1f)] private float farmAmbienceVolume = 1f;
 
     private Coroutine truckMovement;
     private Coroutine resultsAnimation;
@@ -123,6 +164,24 @@ public sealed class RoundSystem : MonoBehaviour
     private Tweener shopBalanceTween;
     private bool skipResultsAnimation;
     private bool configured;
+    private readonly List<Button> uiClickButtons = new List<Button>();
+    private AudioSource buttonClickAudioSource;
+    private AudioSource cashRegisterAudioSource;
+    private AudioSource roundCueAudioSource;
+    private AudioSource grabAudioSource;
+    private AudioSource vacuumAudioSource;
+    private AudioSource vacuumEggAudioSource;
+    private AudioSource foodAudioSource;
+    private AudioSource cursorMovementAudioSource;
+    private AudioSource[] coinAudioSources = Array.Empty<AudioSource>();
+    private AudioSource truckEnterAudioSource;
+    private AudioSource truckExitAudioSource;
+    private AudioSource farmAmbienceAudioSource;
+    private Vector2 lastCursorPosition;
+    private float cursorMovementIntensity;
+    private bool hasCursorPosition;
+    private int nextCoinAudioSource;
+    private int lastCoinLandingClipIndex = -1;
 
     public static RoundSystem Instance { get; private set; }
     public RoundPhase Phase { get; private set; } = RoundPhase.Intermission;
@@ -194,6 +253,7 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         Instance = this;
+        InitializeUiAudio();
         if (!HasAuthoredUi())
         {
             Debug.LogError(
@@ -203,6 +263,8 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
+        ApplyWideSuppliesShopLayout();
+        BindButtonClickSfx();
         BindUiEvents();
         EggScoreHud gameplayHud = FindFirstObjectByType<EggScoreHud>(
             FindObjectsInactive.Include);
@@ -215,6 +277,222 @@ public sealed class RoundSystem : MonoBehaviour
         IncubatorController.EggsAccepted += HandleEggsAccepted;
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
         ShowIntermission();
+    }
+
+    private void InitializeUiAudio()
+    {
+        buttonClickAudioSource = Create2dAudioSource();
+        cashRegisterAudioSource = Create2dAudioSource();
+        roundCueAudioSource = Create2dAudioSource();
+        grabAudioSource = Create2dAudioSource();
+        vacuumAudioSource = Create2dAudioSource();
+        vacuumAudioSource.clip = vacuumOnSfx;
+        vacuumAudioSource.loop = true;
+        vacuumAudioSource.volume = uiSfxVolume;
+        vacuumEggAudioSource = Create2dAudioSource();
+        foodAudioSource = Create2dAudioSource();
+        StartCursorMovementSfx();
+        coinAudioSources = new AudioSource[
+            Mathf.Max(1, coinAudioVoiceCount)];
+
+        for (int index = 0; index < coinAudioSources.Length; index++)
+        {
+            coinAudioSources[index] = Create2dAudioSource();
+        }
+
+        truckEnterAudioSource = Create2dAudioSource();
+        truckExitAudioSource = Create2dAudioSource();
+        StartFarmAmbience();
+    }
+
+    private AudioSource Create2dAudioSource()
+    {
+        AudioSource source = gameObject.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.loop = false;
+        source.spatialBlend = 0f;
+        source.dopplerLevel = 0f;
+        return source;
+    }
+
+    private void StartCursorMovementSfx()
+    {
+        if (cursorMovementSfx == null)
+        {
+            return;
+        }
+
+        cursorMovementAudioSource = Create2dAudioSource();
+        cursorMovementAudioSource.clip = cursorMovementSfx;
+        cursorMovementAudioSource.loop = true;
+        cursorMovementAudioSource.volume = 0f;
+        cursorMovementAudioSource.pitch = cursorMovementMinimumPitch;
+        cursorMovementAudioSource.Play();
+    }
+
+    private void StartFarmAmbience()
+    {
+        if (farmAmbienceSfx == null)
+        {
+            return;
+        }
+
+        farmAmbienceAudioSource = Create2dAudioSource();
+        farmAmbienceAudioSource.clip = farmAmbienceSfx;
+        farmAmbienceAudioSource.loop = true;
+        farmAmbienceAudioSource.volume = farmAmbienceVolume;
+        farmAmbienceAudioSource.Play();
+    }
+
+    private void BindButtonClickSfx()
+    {
+        Button[] buttons = FindObjectsByType<Button>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+
+        for (int index = 0; index < buttons.Length; index++)
+        {
+            Button button = buttons[index];
+            button.onClick.AddListener(PlayButtonClickSfx);
+            uiClickButtons.Add(button);
+        }
+    }
+
+    private void PlayButtonClickSfx()
+    {
+        if (buttonClickAudioSource == null || buttonClickSfx == null)
+        {
+            return;
+        }
+
+        buttonClickAudioSource.pitch = 1f;
+        buttonClickAudioSource.PlayOneShot(buttonClickSfx, uiSfxVolume);
+    }
+
+    public void PlayCashRegisterSfx()
+    {
+        if (cashRegisterAudioSource == null || cashRegisterSfx == null)
+        {
+            return;
+        }
+
+        cashRegisterAudioSource.pitch = 1f;
+        cashRegisterAudioSource.PlayOneShot(
+            cashRegisterSfx,
+            uiSfxVolume * cashRegisterSfxVolume);
+    }
+
+    public void PlayGrabSfx()
+    {
+        if (grabAudioSource == null || grabSfx == null)
+        {
+            return;
+        }
+
+        grabAudioSource.pitch = 1f;
+        grabAudioSource.PlayOneShot(grabSfx, uiSfxVolume);
+    }
+
+    public void SetVacuumSfxActive(bool active)
+    {
+        if (vacuumAudioSource == null || vacuumOnSfx == null)
+        {
+            return;
+        }
+
+        if (active)
+        {
+            if (!vacuumAudioSource.isPlaying)
+            {
+                vacuumAudioSource.pitch = 1f;
+                vacuumAudioSource.Play();
+            }
+
+            return;
+        }
+
+        if (vacuumAudioSource.isPlaying)
+        {
+            vacuumAudioSource.Stop();
+        }
+    }
+
+    public void PlayVacuumEggSfx()
+    {
+        if (vacuumEggAudioSource == null || vacuumEggSfx == null)
+        {
+            return;
+        }
+
+        vacuumEggAudioSource.pitch = 1f;
+        vacuumEggAudioSource.PlayOneShot(vacuumEggSfx, uiSfxVolume);
+    }
+
+    public void PlayFoodPickupSfx()
+    {
+        PlayFoodSfx(foodPickupSfx);
+    }
+
+    public void PlayFoodPlaceSfx()
+    {
+        PlayFoodSfx(foodPlaceSfx);
+    }
+
+    private void PlayFoodSfx(AudioClip clip)
+    {
+        if (foodAudioSource == null || clip == null)
+        {
+            return;
+        }
+
+        foodAudioSource.pitch = 1f;
+        foodAudioSource.PlayOneShot(clip, uiSfxVolume);
+    }
+
+    private void PlayRoundCueSfx(AudioClip clip)
+    {
+        if (roundCueAudioSource == null || clip == null)
+        {
+            return;
+        }
+
+        roundCueAudioSource.pitch = 1f;
+        roundCueAudioSource.PlayOneShot(clip, uiSfxVolume);
+    }
+
+    private void PlayCoinLandingSfx()
+    {
+        if (coinAudioSources.Length == 0
+            || coinLandingSfx == null
+            || coinLandingSfx.Length == 0)
+        {
+            return;
+        }
+
+        int clipIndex = UnityEngine.Random.Range(0, coinLandingSfx.Length);
+        if (coinLandingSfx.Length > 1
+            && clipIndex == lastCoinLandingClipIndex)
+        {
+            clipIndex = (clipIndex + UnityEngine.Random.Range(
+                1,
+                coinLandingSfx.Length)) % coinLandingSfx.Length;
+        }
+
+        AudioClip clip = coinLandingSfx[clipIndex];
+        if (clip == null)
+        {
+            return;
+        }
+
+        lastCoinLandingClipIndex = clipIndex;
+        AudioSource source = coinAudioSources[nextCoinAudioSource];
+        nextCoinAudioSource =
+            (nextCoinAudioSource + 1) % coinAudioSources.Length;
+        source.Stop();
+        source.clip = clip;
+        source.pitch = UnityEngine.Random.Range(0.95f, 1.05f);
+        source.volume = uiSfxVolume;
+        source.Play();
     }
 
     private bool HasAuthoredUi()
@@ -252,6 +530,7 @@ public sealed class RoundSystem : MonoBehaviour
     private void Update()
     {
         Mouse pointerMouse = GameplayTestBot.PointerMouse;
+        UpdateCursorMovementSfx(pointerMouse);
 
         if (Phase == RoundPhase.Results
             && resultsAnimation != null
@@ -283,8 +562,68 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
+    private void UpdateCursorMovementSfx(Mouse pointerMouse)
+    {
+        if (cursorMovementAudioSource == null)
+        {
+            return;
+        }
+
+        float targetIntensity = 0f;
+
+        if (Phase == RoundPhase.InProgress && pointerMouse != null)
+        {
+            Vector2 cursorPosition = pointerMouse.position.ReadValue();
+
+            if (hasCursorPosition)
+            {
+                float screenDiagonal = Mathf.Max(
+                    1f,
+                    Mathf.Sqrt(Screen.width * Screen.width
+                        + Screen.height * Screen.height));
+                float deltaTime = Mathf.Max(0.0001f, Time.unscaledDeltaTime);
+                float normalizedSpeed =
+                    Vector2.Distance(cursorPosition, lastCursorPosition)
+                    / screenDiagonal
+                    / deltaTime;
+                targetIntensity = Mathf.Clamp01(
+                    normalizedSpeed / cursorMovementSpeedForMaximum);
+            }
+
+            lastCursorPosition = cursorPosition;
+            hasCursorPosition = true;
+        }
+        else
+        {
+            hasCursorPosition = false;
+        }
+
+        float response = 1f - Mathf.Exp(
+            -cursorMovementResponse * Time.unscaledDeltaTime);
+        cursorMovementIntensity = Mathf.Lerp(
+            cursorMovementIntensity,
+            targetIntensity,
+            response);
+        cursorMovementAudioSource.volume =
+            cursorMovementMaximumVolume * Mathf.Sqrt(cursorMovementIntensity);
+        cursorMovementAudioSource.pitch = Mathf.Lerp(
+            cursorMovementMinimumPitch,
+            cursorMovementMaximumPitch,
+            cursorMovementIntensity);
+    }
+
     private void OnDestroy()
     {
+        for (int index = 0; index < uiClickButtons.Count; index++)
+        {
+            Button button = uiClickButtons[index];
+            if (button != null)
+            {
+                button.onClick.RemoveListener(PlayButtonClickSfx);
+            }
+        }
+        uiClickButtons.Clear();
+
         if (readyButton != null)
         {
             readyButton.onClick.RemoveListener(HandleReadyClicked);
@@ -334,12 +673,13 @@ public sealed class RoundSystem : MonoBehaviour
         liveStatsDisplay.SetActive(false);
         SpawnTruck();
 
-        float arrivalDuration = Mathf.Max(0.1f, countdownStepDuration * 3f - 1f);
+        float arrivalDuration = GetTruckArrivalDuration();
         truckMovement = StartCoroutine(MoveTruck(truckStop, arrivalDuration));
 
         for (int count = 3; count >= 1; count--)
         {
             countdownText.text = count.ToString();
+            PlayRoundCueSfx(countdownTickSfx);
             yield return PulseCountdown(countdownStepDuration);
         }
 
@@ -372,6 +712,7 @@ public sealed class RoundSystem : MonoBehaviour
         RoundStarted?.Invoke(roundNumber);
 
         countdownText.text = "GO!";
+        PlayRoundCueSfx(roundStartSfx);
         yield return PulseCountdown(0.7f);
 
         if (Phase == RoundPhase.InProgress)
@@ -455,6 +796,7 @@ public sealed class RoundSystem : MonoBehaviour
         liveStatsDisplay.SetActive(false);
         countdownDisplay.SetActive(false);
         finalChickenCount = CountChickens();
+        PlayRoundCueSfx(roundEndSfx);
         RoundEnded?.Invoke(roundNumber);
 
         if (truckMovement != null)
@@ -480,6 +822,17 @@ public sealed class RoundSystem : MonoBehaviour
             yield break;
         }
 
+        PlayTruckMovementSfx(destination);
+        if (destination == truckEnd && truckExitSoundLeadTime > 0f)
+        {
+            yield return new WaitForSeconds(truckExitSoundLeadTime);
+
+            if (truck == null)
+            {
+                yield break;
+            }
+        }
+
         Vector3 startPosition = truck.position;
         Quaternion startRotation = truck.rotation;
         Vector3 direction = destination.position - startPosition;
@@ -503,6 +856,40 @@ public sealed class RoundSystem : MonoBehaviour
         {
             truck.SetPositionAndRotation(destination.position, targetRotation);
         }
+    }
+
+    private void PlayTruckMovementSfx(Transform destination)
+    {
+        AudioSource source;
+        AudioClip clip;
+
+        if (destination == truckStop)
+        {
+            source = truckEnterAudioSource;
+            clip = truckEnterSfx;
+        }
+        else if (destination == truckEnd)
+        {
+            source = truckExitAudioSource;
+            clip = truckExitSfx;
+        }
+        else
+        {
+            return;
+        }
+
+        if (source == null || clip == null)
+        {
+            return;
+        }
+
+        source.pitch = 1f;
+        source.PlayOneShot(clip, truckSfxVolume);
+    }
+
+    private float GetTruckArrivalDuration()
+    {
+        return Mathf.Max(0.1f, countdownStepDuration * 3f - 1f);
     }
 
     private void ShowIntermission()
@@ -960,7 +1347,9 @@ public sealed class RoundSystem : MonoBehaviour
             && Phase == RoundPhase.InProgress)
         {
             pendingTruckReplacements--;
-            yield return MoveTruck(truckEnd, 0.55f);
+            yield return MoveTruck(
+                truckEnd,
+                truckDepartureDuration * 0.5f);
             DestroyTruck();
 
             if (Phase != RoundPhase.InProgress)
@@ -969,7 +1358,9 @@ public sealed class RoundSystem : MonoBehaviour
             }
 
             SpawnTruck();
-            yield return MoveTruck(truckStop, 0.65f);
+            yield return MoveTruck(
+                truckStop,
+                GetTruckArrivalDuration() * 0.5f);
         }
 
         truckMovement = null;
@@ -1027,7 +1418,7 @@ public sealed class RoundSystem : MonoBehaviour
             ? Mathf.Clamp(Mathf.CeilToInt(cents / 10f), 1, 500)
             : Mathf.Clamp(Mathf.CeilToInt(cents / 100f), 1, 12);
         float coinStagger = Mathf.Min(0.055f, 0.65f / coinCount);
-        AccumulateRewardNumber(startPosition, cents);
+        AccumulateRewardNumber(startPosition, cents, useTenCentCoins);
 
         for (int index = 0; index < coinCount; index++)
         {
@@ -1039,12 +1430,17 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
-    private void AccumulateRewardNumber(Vector2 startPosition, int cents)
+    private void AccumulateRewardNumber(
+        Vector2 startPosition,
+        int cents,
+        bool playCashRegisterOnStart)
     {
         const float accumulationWindow = 0.75f;
         float now = Time.unscaledTime;
         bool joinsCurrentReward = activeRewardText != null
             && now - lastRewardAddedTime <= accumulationWindow;
+        bool playCashRegisterNow =
+            playCashRegisterOnStart && !joinsCurrentReward;
 
         if (!joinsCurrentReward)
         {
@@ -1081,6 +1477,10 @@ public sealed class RoundSystem : MonoBehaviour
             0.3f,
             7,
             0.55f);
+        if (playCashRegisterNow)
+        {
+            PlayCashRegisterSfx();
+        }
     }
 
     private IEnumerator AnimateRewardNumber()
@@ -1152,6 +1552,8 @@ public sealed class RoundSystem : MonoBehaviour
         coinObject.name = "Flying Coin";
         RectTransform coin = coinObject.GetComponent<RectTransform>();
         coin.anchoredPosition = startPosition;
+        float spinAngle = UnityEngine.Random.Range(0f, 360f);
+        coin.localRotation = Quaternion.Euler(0f, spinAngle, 0f);
 
         const float duration = 0.62f;
         float elapsed = 0f;
@@ -1164,11 +1566,14 @@ public sealed class RoundSystem : MonoBehaviour
             Vector2 arc = Vector2.up * Mathf.Sin(progress * Mathf.PI) * 90f;
             coin.anchoredPosition = Vector2.Lerp(startPosition, targetPosition, eased) + arc;
             coin.localScale = Vector3.one * Mathf.Lerp(1f, 0.65f, eased);
+            spinAngle += flyingCoinSpinDegreesPerSecond * Time.deltaTime;
+            coin.localRotation = Quaternion.Euler(0f, spinAngle, 0f);
             yield return null;
         }
 
         if (coin != null)
         {
+            PlayCoinLandingSfx();
             Destroy(coin.gameObject);
         }
 
@@ -1231,8 +1636,9 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        GameObject spendObject = Instantiate(floatingRewardPrefab, coinEffectLayer);
+        GameObject spendObject = Instantiate(floatingRewardPrefab, roundCanvasRect);
         spendObject.name = "Shop Spend Reward";
+        spendObject.transform.SetAsLastSibling();
         TMP_Text spendText = spendObject.GetComponent<TMP_Text>();
         spendText.text = $"-{FormatMoney(cents)}";
         spendText.color = new Color(1f, 0.31f, 0.22f);
@@ -1742,7 +2148,7 @@ public sealed class RoundSystem : MonoBehaviour
             card,
             38f,
             TextAlignmentOptions.Left);
-        title.text = "SUPPLIES";
+        title.text = "SUPPLIES SHOP";
         title.fontStyle = FontStyles.Bold;
         title.color = new Color(1f, 0.84f, 0.3f);
         SetRect(title.rectTransform, new Vector2(-305f, 410f), new Vector2(500f, 52f));
@@ -2061,13 +2467,182 @@ public sealed class RoundSystem : MonoBehaviour
             card,
             new Vector2(527f, 410f),
             new Vector2(44f, 44f),
-            "×",
+            "X",
             new Color(0.82f, 0.26f, 0.1f));
         TMP_Text closeText = doneShoppingButton.GetComponentInChildren<TMP_Text>();
+        closeText.text = "X";
+        closeText.color = Color.white;
         closeText.fontSize = 30f;
         closeText.fontStyle = FontStyles.Bold;
+        ApplyWideSuppliesShopLayout();
         suppliesShopScreen.SetActive(false);
     }
+
+#endif
+
+    private void ApplyWideSuppliesShopLayout()
+    {
+        if (suppliesShopScreen == null)
+        {
+            return;
+        }
+
+        RectTransform card = suppliesShopScreen.transform.Find("Supplies")
+            as RectTransform;
+        if (card == null)
+        {
+            return;
+        }
+
+        SetRuntimeRect(card, Vector2.zero, new Vector2(1600f, 920f));
+        SetChildRect(
+            card,
+            "Shop Title",
+            new Vector2(-480f, 410f),
+            new Vector2(560f, 52f));
+        TMP_Text title = card.Find("Shop Title")?.GetComponent<TMP_Text>();
+        if (title != null)
+        {
+            title.text = "SUPPLIES SHOP";
+        }
+
+        SetChildRect(
+            card,
+            "Balance Coin",
+            new Vector2(420f, 410f),
+            new Vector2(40f, 40f));
+        SetChildRect(
+            card,
+            "Available Cash",
+            new Vector2(550f, 410f),
+            new Vector2(210f, 44f));
+        SetChildRect(
+            card,
+            "Shop Status",
+            new Vector2(250f, 410f),
+            new Vector2(220f, 30f));
+        SetChildRect(
+            card,
+            "Done Shopping",
+            new Vector2(712f, 410f),
+            new Vector2(44f, 44f));
+
+        TMP_Text closeText = doneShoppingButton != null
+            ? doneShoppingButton.GetComponentInChildren<TMP_Text>(true)
+            : card.Find("Done Shopping")?.GetComponentInChildren<TMP_Text>(true);
+        if (closeText != null)
+        {
+            closeText.text = "X";
+            closeText.color = Color.white;
+            closeText.fontSize = 30f;
+            closeText.fontStyle = FontStyles.Bold;
+        }
+
+        RectTransform scrollRoot = card.Find("Progression Scroll View")
+            as RectTransform;
+        if (scrollRoot == null)
+        {
+            return;
+        }
+
+        SetRuntimeRect(scrollRoot, new Vector2(0f, -28f), new Vector2(1550f, 800f));
+        RectTransform treeContent = scrollRoot.Find("Tree Viewport/Tree Content")
+            as RectTransform;
+        if (treeContent == null)
+        {
+            return;
+        }
+
+        if (treeContent.sizeDelta.x < 1500f)
+        {
+            ExpandTreeHorizontally(treeContent, 1.28f);
+        }
+
+        treeContent.sizeDelta = new Vector2(1550f, treeContent.sizeDelta.y);
+        RectTransform consumablesHeader = treeContent.Find("CONSUMABLES Branch")
+            as RectTransform;
+        if (consumablesHeader != null)
+        {
+            consumablesHeader.sizeDelta = new Vector2(280f, 54f);
+            SetChildRect(
+                consumablesHeader,
+                "CONSUMABLES Icon",
+                new Vector2(-118f, 0f),
+                new Vector2(40f, 40f));
+            SetChildRect(
+                consumablesHeader,
+                "CONSUMABLES Label",
+                new Vector2(24f, 0f),
+                new Vector2(218f, 46f));
+        }
+    }
+
+    private static void ExpandTreeHorizontally(
+        RectTransform treeContent,
+        float scale)
+    {
+        for (int index = 0; index < treeContent.childCount; index++)
+        {
+            RectTransform child = treeContent.GetChild(index) as RectTransform;
+            if (child == null)
+            {
+                continue;
+            }
+
+            if (child.name != "Branch Connector")
+            {
+                Vector2 position = child.anchoredPosition;
+                position.x *= scale;
+                child.anchoredPosition = position;
+                continue;
+            }
+
+            float angle = child.localEulerAngles.z * Mathf.Deg2Rad;
+            Vector2 direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+            Vector2 center = child.anchoredPosition;
+            Vector2 start = center - direction * child.sizeDelta.x * 0.5f;
+            Vector2 end = center + direction * child.sizeDelta.x * 0.5f;
+            start.x *= scale;
+            end.x *= scale;
+            Vector2 expandedDirection = end - start;
+            child.anchoredPosition = (start + end) * 0.5f;
+            child.sizeDelta = new Vector2(
+                expandedDirection.magnitude,
+                child.sizeDelta.y);
+            child.localRotation = Quaternion.Euler(
+                0f,
+                0f,
+                Mathf.Atan2(expandedDirection.y, expandedDirection.x)
+                    * Mathf.Rad2Deg);
+        }
+    }
+
+    private static void SetChildRect(
+        Transform parent,
+        string childName,
+        Vector2 position,
+        Vector2 size)
+    {
+        RectTransform child = parent.Find(childName) as RectTransform;
+        if (child != null)
+        {
+            SetRuntimeRect(child, position, size);
+        }
+    }
+
+    private static void SetRuntimeRect(
+        RectTransform rectTransform,
+        Vector2 position,
+        Vector2 size)
+    {
+        rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
+        rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+        rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        rectTransform.anchoredPosition = position;
+        rectTransform.sizeDelta = size;
+    }
+
+#if UNITY_EDITOR
 
     private static void CreateProgressionHeader(
         Transform parent,
@@ -2680,5 +3255,12 @@ public sealed class RoundSystem : MonoBehaviour
         countdownStepDuration = Mathf.Max(0.1f, countdownStepDuration);
         truckVisualScale = Mathf.Clamp(truckVisualScale, 0.1f, 0.5f);
         truckDepartureDuration = Mathf.Max(0.1f, truckDepartureDuration);
+        cursorMovementMaximumPitch = Mathf.Max(
+            cursorMovementMinimumPitch,
+            cursorMovementMaximumPitch);
+        cursorMovementSpeedForMaximum = Mathf.Max(
+            0.01f,
+            cursorMovementSpeedForMaximum);
+        cursorMovementResponse = Mathf.Max(0f, cursorMovementResponse);
     }
 }

@@ -33,6 +33,9 @@ public sealed class ChickenController : MonoBehaviour
     private const string WingFlutterLayerName = "Wing Flutter Layer";
     private static bool hasWarnedAboutMissingNavMesh;
 
+    [Header("Size Variation")]
+    [SerializeField, Range(0f, 0.2f)] private float scaleVariation = 0.05f;
+
     [Header("Movement")]
     [SerializeField, Min(0f)] private float minIdleTime = 1f;
     [SerializeField, Min(0f)] private float maxIdleTime = 3f;
@@ -156,6 +159,11 @@ public sealed class ChickenController : MonoBehaviour
 
     private void Awake()
     {
+        float randomScale = Random.Range(
+            1f - scaleVariation,
+            1f + scaleVariation);
+        transform.localScale *= randomScale;
+
         path = new NavMeshPath();
         agent = GetComponent<NavMeshAgent>();
         bodyCollider = GetComponent<CapsuleCollider>();
