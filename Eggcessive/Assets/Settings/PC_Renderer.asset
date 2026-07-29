@@ -56,7 +56,8 @@ MonoBehaviour:
   m_RendererFeatures:
   - {fileID: 7833122117494664109}
   - {fileID: -7161082364921220862}
-  m_RendererFeatureMap: ad6b866f10d7b46c02718eb787b99e9c
+  - {fileID: 2387461982374619823}
+  m_RendererFeatureMap: ad6b866f10d7b46c02718eb787b99e9caf6a300e06f82121
   m_UseNativeRenderPass: 1
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
@@ -111,3 +112,20 @@ MonoBehaviour:
     BlurQuality: 0
     Falloff: 100
     SampleCount: -1
+--- !u!114 &2387461982374619823
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 118be4b8c7a444e89f281457259652be, type: 3}
+  m_Name: Pickup Outline
+  m_EditorClassIdentifier: Assembly-CSharp::PickupOutlineRendererFeature
+  m_Active: 1
+  settings:
+    maskMaterial: {fileID: 2100000, guid: 45a3663dc5b04464a09fc71952ed709f, type: 2}
+    outlineMaterial: {fileID: 2100000, guid: 88c2523e05444324a4620491eb87727a, type: 2}
+    pickupRenderingLayerMask: 512

@@ -13,30 +13,41 @@ public sealed class ChickenEgg : MonoBehaviour
 
     public enum EggType
     {
-        Standard,
-        Silver,
-        Gold,
-        Galaxy
+        Common,
+        Rare,
+        Epic,
+        Legendary,
+        Cosmic
     }
 
     private static readonly List<ChickenEgg> ActiveEggs = new List<ChickenEgg>();
-    private static readonly Stack<ChickenEgg> EggPool = new Stack<ChickenEgg>();
+    private static readonly Stack<ChickenEgg> CommonEggPool = new Stack<ChickenEgg>();
+    private static readonly Stack<ChickenEgg> CosmicEggPool = new Stack<ChickenEgg>();
+    private static readonly int BaseMapTransform = Shader.PropertyToID("_BaseMap_ST");
+    private static readonly int MainTextureTransform = Shader.PropertyToID("_MainTex_ST");
     private static Material[] sharedTypeMaterials;
+    private static MaterialPropertyBlock typePropertyBlock;
+    private const float GroundContactMinimumUpDot = 0.45f;
 
     [Header("Size Variation")]
     [SerializeField, Min(0.01f)] private float minimumScale = 0.95f;
     [SerializeField, Min(0.01f)] private float maximumScale = 1.05f;
     [SerializeField] private Material[] typeMaterials = null;
+    [SerializeField] private bool cosmicVisualPrefab;
 
     private Rigidbody eggBody;
     private Collider[] eggColliders;
     private GrassInteractor grassInteractor;
     private Vector3 baseLocalScale;
+    private readonly HashSet<Collider> groundContacts =
+        new HashSet<Collider>();
     private bool isPooled;
 
     public static IReadOnlyList<ChickenEgg> ActiveInstances => ActiveEggs;
     public bool IsHeld { get; private set; }
     public bool IsCollected { get; private set; }
+    public bool IsGroundedForPickupPreview =>
+        !IsHeld && !IsCollected && groundContacts.Count > 0;
     public EggType Type { get; private set; }
     public int ValueCents { get; private set; } = 100;
 
@@ -44,8 +55,10 @@ public sealed class ChickenEgg : MonoBehaviour
     private static void ResetStatics()
     {
         ActiveEggs.Clear();
-        EggPool.Clear();
+        CommonEggPool.Clear();
+        CosmicEggPool.Clear();
         sharedTypeMaterials = null;
+        typePropertyBlock = null;
     }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -64,9 +77,16 @@ public sealed class ChickenEgg : MonoBehaviour
         Vector3 position,
         Quaternion rotation)
     {
-        while (EggPool.Count > 0)
+        ChickenEgg prefabEgg = prefab != null
+            ? prefab.GetComponent<ChickenEgg>()
+            : null;
+        Stack<ChickenEgg> pool = prefabEgg != null && prefabEgg.cosmicVisualPrefab
+            ? CosmicEggPool
+            : CommonEggPool;
+
+        while (pool.Count > 0)
         {
-            ChickenEgg pooledEgg = EggPool.Pop();
+            ChickenEgg pooledEgg = pool.Pop();
             if (pooledEgg == null)
             {
                 continue;
@@ -94,7 +114,7 @@ public sealed class ChickenEgg : MonoBehaviour
         grassInteractor = GetComponent<GrassInteractor>();
         baseLocalScale = transform.localScale;
 
-        if (typeMaterials != null && typeMaterials.Length >= 4)
+        if (typeMaterials != null && typeMaterials.Length >= 5)
         {
             sharedTypeMaterials = typeMaterials;
         }
@@ -112,6 +132,7 @@ public sealed class ChickenEgg : MonoBehaviour
     private void OnDisable()
     {
         ActiveEggs.Remove(this);
+        groundContacts.Clear();
     }
 
     private void FixedUpdate()
@@ -132,6 +153,7 @@ public sealed class ChickenEgg : MonoBehaviour
         }
 
         IsHeld = true;
+        groundContacts.Clear();
 
         if (!eggBody.isKinematic)
         {
@@ -150,7 +172,7 @@ public sealed class ChickenEgg : MonoBehaviour
         Type = type;
         ValueCents = Mathf.Max(1, valueCents);
         ApplyTypeVisual(gameObject, type);
-        gameObject.name = type == EggType.Standard
+        gameObject.name = type == EggType.Common
             ? gameObject.name
             : $"{type} Egg";
     }
@@ -159,7 +181,7 @@ public sealed class ChickenEgg : MonoBehaviour
     {
         if (visual == null
             || sharedTypeMaterials == null
-            || sharedTypeMaterials.Length < 4)
+            || sharedTypeMaterials.Length < 5)
         {
             return;
         }
@@ -171,9 +193,25 @@ public sealed class ChickenEgg : MonoBehaviour
             return;
         }
 
-        foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+        int atlasIndex = type switch
+        {
+            EggType.Rare => 1,
+            EggType.Epic => 2,
+            _ => 0
+        };
+        float offsetX = atlasIndex * (16f / 512f);
+        Vector4 textureTransform = (int)type <= (int)EggType.Epic
+            ? new Vector4(1f, 1f, offsetX, 0f)
+            : new Vector4(1f, 1f, 0f, 0f);
+        typePropertyBlock ??= new MaterialPropertyBlock();
+
+        foreach (MeshRenderer renderer in visual.GetComponentsInChildren<MeshRenderer>(true))
         {
             renderer.sharedMaterial = material;
+            renderer.GetPropertyBlock(typePropertyBlock);
+            typePropertyBlock.SetVector(BaseMapTransform, textureTransform);
+            typePropertyBlock.SetVector(MainTextureTransform, textureTransform);
+            renderer.SetPropertyBlock(typePropertyBlock);
         }
     }
 
@@ -186,6 +224,16 @@ public sealed class ChickenEgg : MonoBehaviour
 
         float followAmount = 1f - Mathf.Exp(-followSpeed * Time.fixedDeltaTime);
         eggBody.MovePosition(Vector3.Lerp(eggBody.position, target, followAmount));
+    }
+
+    public void SnapWhileHeld(Vector3 position)
+    {
+        if (!IsHeld || IsCollected)
+        {
+            return;
+        }
+
+        eggBody.position = position;
     }
 
     public void Release(Vector3 position)
@@ -201,6 +249,7 @@ public sealed class ChickenEgg : MonoBehaviour
         eggBody.linearVelocity = Vector3.zero;
         eggBody.angularVelocity = Vector3.zero;
         IsHeld = false;
+        groundContacts.Clear();
         eggBody.WakeUp();
         SetGrassInteractionEnabled(true);
     }
@@ -257,15 +306,19 @@ public sealed class ChickenEgg : MonoBehaviour
 
         if (eggBody != null)
         {
-            eggBody.linearVelocity = Vector3.zero;
-            eggBody.angularVelocity = Vector3.zero;
+            if (!eggBody.isKinematic)
+            {
+                eggBody.linearVelocity = Vector3.zero;
+                eggBody.angularVelocity = Vector3.zero;
+            }
+
             eggBody.isKinematic = true;
             eggBody.useGravity = false;
         }
 
         transform.SetParent(null, true);
         gameObject.SetActive(false);
-        EggPool.Push(this);
+        (cosmicVisualPrefab ? CosmicEggPool : CommonEggPool).Push(this);
     }
 
     public static void ClearAllActive()
@@ -297,7 +350,8 @@ public sealed class ChickenEgg : MonoBehaviour
         isPooled = false;
         IsHeld = false;
         IsCollected = false;
-        Type = EggType.Standard;
+        groundContacts.Clear();
+        Type = EggType.Common;
         ValueCents = 100;
         transform.localScale = baseLocalScale
             * Random.Range(minimumScale, maximumScale);
@@ -328,8 +382,57 @@ public sealed class ChickenEgg : MonoBehaviour
             eggBody.WakeUp();
         }
 
-        ApplyTypeVisual(gameObject, EggType.Standard);
+        ApplyTypeVisual(gameObject, EggType.Common);
         SetGrassInteractionEnabled(true);
+    }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        UpdateGroundContact(collision);
+    }
+
+    private void OnCollisionStay(Collision collision)
+    {
+        UpdateGroundContact(collision);
+    }
+
+    private void OnCollisionExit(Collision collision)
+    {
+        if (collision != null && collision.collider != null)
+        {
+            groundContacts.Remove(collision.collider);
+        }
+    }
+
+    private void UpdateGroundContact(Collision collision)
+    {
+        if (collision == null || collision.collider == null)
+        {
+            return;
+        }
+
+        bool hasSupportingContact = false;
+
+        for (int index = 0; index < collision.contactCount; index++)
+        {
+            ContactPoint contact = collision.GetContact(index);
+
+            if (Vector3.Dot(contact.normal, Vector3.up)
+                >= GroundContactMinimumUpDot)
+            {
+                hasSupportingContact = true;
+                break;
+            }
+        }
+
+        if (hasSupportingContact)
+        {
+            groundContacts.Add(collision.collider);
+        }
+        else
+        {
+            groundContacts.Remove(collision.collider);
+        }
     }
 
     private void SetGrassInteractionEnabled(bool enabled)

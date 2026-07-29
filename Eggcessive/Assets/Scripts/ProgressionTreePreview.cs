@@ -231,15 +231,21 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             ProgressionSystem.UpgradeId.FeedSpeed =>
                 "Unlocks stronger feed so fed chickens lay eggs more frequently.",
             ProgressionSystem.UpgradeId.RareEggChance =>
-                "Increases the chance of silver, gold, and galaxy eggs being laid.",
+                "Increases the chance of rare, epic, legendary, and cosmic eggs being laid.",
             ProgressionSystem.UpgradeId.EggValue =>
-                "Multiplies the sale value of every egg type.",
+                "Heavier eggs sell for more, multiplying every egg type's value.",
             ProgressionSystem.UpgradeId.IncubatorInstall =>
                 "Installs the incubator so deposited eggs can hatch new chickens.",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
                 "Adds more simultaneous egg slots to the incubator.",
             ProgressionSystem.UpgradeId.IncubatorSpeed =>
                 "Reduces the time needed to hatch each chicken.",
+            ProgressionSystem.UpgradeId.CrosshatcherInstall =>
+                "Installs the machine that combines two chickens into an equal or stronger breed.",
+            ProgressionSystem.UpgradeId.CrosshatcherSpeed =>
+                "Reduces the crosshatcher processing time.",
+            ProgressionSystem.UpgradeId.CrosshatcherQuality =>
+                "Raises the chance that mixed breeds produce the next stronger chicken.",
             ProgressionSystem.UpgradeId.BasketCapacity =>
                 "Unlocks and expands the cursor-following egg basket.",
             ProgressionSystem.UpgradeId.VacuumPower =>

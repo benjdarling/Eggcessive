@@ -13,6 +13,9 @@ public sealed class ProgressionSystem : MonoBehaviour
         IncubatorInstall,
         IncubatorCapacity,
         IncubatorSpeed,
+        CrosshatcherInstall,
+        CrosshatcherSpeed,
+        CrosshatcherQuality,
         BasketCapacity,
         VacuumPower,
         VacuumRange,
@@ -61,22 +64,50 @@ public sealed class ProgressionSystem : MonoBehaviour
         1200, 3500, 9000, 22000, 55000, 140000, 350000, 900000
     };
 
-    private static readonly float[] SilverChanceByLevel =
+    private static readonly float[] RareChanceByLevel =
     {
         0f, 0.00025f, 0.00075f, 0.002f, 0.005f,
         0.0125f, 0.03f, 0.065f, 0.12f
     };
 
-    private static readonly float[] GoldChanceByLevel =
+    private static readonly float[] EpicChanceByLevel =
+    {
+        0f, 0f, 0.0001f, 0.0005f, 0.0015f,
+        0.004f, 0.01f, 0.025f, 0.055f
+    };
+
+    private static readonly float[] LegendaryChanceByLevel =
     {
         0f, 0f, 0.00005f, 0.0002f, 0.0005f,
         0.0015f, 0.004f, 0.012f, 0.03f
     };
 
-    private static readonly float[] GalaxyChanceByLevel =
+    private static readonly float[] CosmicChanceByLevel =
     {
         0f, 0f, 0f, 0f, 0.00002f,
         0.0001f, 0.0005f, 0.002f, 0.0075f
+    };
+
+    // Individual breed odds are added to the supplies-shop premium egg
+    // upgrades. Values are ordered White through Cosmic.
+    private static readonly float[] BreedRareChance =
+    {
+        0.0005f, 0.005f, 0.015f, 0.04f, 0.08f, 0.14f, 0.2f
+    };
+
+    private static readonly float[] BreedEpicChance =
+    {
+        0f, 0.001f, 0.005f, 0.015f, 0.035f, 0.07f, 0.12f
+    };
+
+    private static readonly float[] BreedLegendaryChance =
+    {
+        0f, 0.0002f, 0.001f, 0.005f, 0.015f, 0.04f, 0.1f
+    };
+
+    private static readonly float[] BreedCosmicChance =
+    {
+        0f, 0f, 0.00002f, 0.0002f, 0.001f, 0.005f, 0.02f
     };
 
     private static readonly int[] EggValueCosts =
@@ -132,9 +163,12 @@ public sealed class ProgressionSystem : MonoBehaviour
     {
         FoodShopController food = FoodShopController.Instance;
         IncubatorShopController incubator = IncubatorShopController.Instance;
+        CrosshatcherShopController crosshatcher = CrosshatcherShopController.Instance;
         EggCarryController collection = EggCarryController.Instance;
         int feedLevel = food != null ? food.UnlockedFeedTier : 1;
         bool installed = incubator != null && incubator.IsInstalled;
+        bool crosshatcherInstalled =
+            crosshatcher != null && crosshatcher.IsInstalled;
         int basketLevel = collection != null ? collection.BasketUpgradeLevel : 0;
         int vacuumPower = collection != null ? collection.VacuumPowerLevel : 0;
         int vacuumRange = collection != null ? collection.VacuumRangeLevel : 0;
@@ -184,9 +218,9 @@ public sealed class ProgressionSystem : MonoBehaviour
 
             case UpgradeId.EggValue:
                 return new NodeState(
-                    "Egg Value",
+                    "Egg Weight",
                     "$",
-                    $"All eggs worth {GetEggValueMultiplier(eggValueLevel + 1):0.##}x",
+                    $"Heavier eggs sell for {GetEggValueMultiplier(eggValueLevel + 1):0.##}x",
                     eggValueLevel,
                     EggValueCosts.Length,
                     GetArrayCost(EggValueCosts, eggValueLevel),
@@ -230,6 +264,45 @@ public sealed class ProgressionSystem : MonoBehaviour
                     installed,
                     installed);
 
+            case UpgradeId.CrosshatcherInstall:
+                return new NodeState(
+                    "Crosshatcher",
+                    "X",
+                    crosshatcherInstalled
+                        ? "Installed and operational"
+                        : "Combine two chickens into a stronger breed",
+                    crosshatcherInstalled ? 1 : 0,
+                    1,
+                    crosshatcher != null ? crosshatcher.InstallCost : 0,
+                    true,
+                    crosshatcher != null);
+
+            case UpgradeId.CrosshatcherSpeed:
+                return new NodeState(
+                    "Crosshatch Speed",
+                    ">>",
+                    crosshatcher != null
+                        ? $"Next: {crosshatcher.NextProcessingTime:0.##} sec"
+                        : "Crosshatcher unavailable",
+                    crosshatcher != null ? crosshatcher.SpeedLevel : 0,
+                    CrosshatcherController.MaximumLevel,
+                    crosshatcher != null ? crosshatcher.NextSpeedCost : 0,
+                    crosshatcherInstalled,
+                    crosshatcherInstalled);
+
+            case UpgradeId.CrosshatcherQuality:
+                return new NodeState(
+                    "Breed Quality",
+                    "+",
+                    crosshatcher != null
+                        ? $"Next: {crosshatcher.NextImprovementChance * 100f:0}% upgrade chance"
+                        : "Crosshatcher unavailable",
+                    crosshatcher != null ? crosshatcher.QualityLevel : 0,
+                    CrosshatcherController.MaximumLevel,
+                    crosshatcher != null ? crosshatcher.NextQualityCost : 0,
+                    crosshatcherInstalled,
+                    crosshatcherInstalled);
+
             case UpgradeId.BasketCapacity:
                 return new NodeState(
                     "Egg Basket",
@@ -241,18 +314,20 @@ public sealed class ProgressionSystem : MonoBehaviour
                     3,
                     GetArrayCost(BasketCosts, basketLevel),
                     true,
-                    collection != null);
+                    collection != null && !collection.HasVacuum);
 
             case UpgradeId.VacuumPower:
                 return new NodeState(
                     "Vacuum Power",
                     "V",
-                    vacuumPower == 0 ? "Unlock click-hold suction" : "Faster egg suction",
+                    vacuumPower == 0
+                        ? "Replace the full basket with click-hold suction"
+                        : "Faster egg suction",
                     vacuumPower,
                     3,
                     GetArrayCost(VacuumPowerCosts, vacuumPower),
-                    basketLevel >= 1,
-                    collection != null && basketLevel >= 1);
+                    basketLevel >= 3,
+                    collection != null && basketLevel >= 3);
 
             case UpgradeId.VacuumRange:
                 return new NodeState(
@@ -325,8 +400,11 @@ public sealed class ProgressionSystem : MonoBehaviour
 
         FoodShopController food = FoodShopController.Instance;
         IncubatorShopController incubator = IncubatorShopController.Instance;
+        CrosshatcherShopController crosshatcher = CrosshatcherShopController.Instance;
         EggCarryController collection = EggCarryController.Instance;
         bool installed = incubator != null && incubator.IsInstalled;
+        bool crosshatcherInstalled =
+            crosshatcher != null && crosshatcher.IsInstalled;
 
         switch (id)
         {
@@ -363,9 +441,9 @@ public sealed class ProgressionSystem : MonoBehaviour
             {
                 int target = Mathf.Clamp(targetLevel, 1, EggValueCosts.Length);
                 return new NodeState(
-                    $"Egg Value Tier {target}",
+                    $"Egg Weight Tier {target}",
                     "$",
-                    $"All eggs worth {GetEggValueMultiplier(target):0.##}x",
+                    $"Heavier eggs sell for {GetEggValueMultiplier(target):0.##}x",
                     eggValueLevel,
                     target,
                     GetArrayCost(EggValueCosts, target - 1),
@@ -400,6 +478,44 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     installed && current >= target - 1);
             }
+            case UpgradeId.CrosshatcherSpeed:
+            {
+                int current = crosshatcher != null ? crosshatcher.SpeedLevel : 0;
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    2,
+                    CrosshatcherController.MaximumLevel);
+                return new NodeState(
+                    $"Crosshatch Speed Tier {target}",
+                    "X>",
+                    $"{CrosshatcherController.GetProcessingTime(target):0.##} seconds per chicken",
+                    current,
+                    target,
+                    crosshatcher != null
+                        ? crosshatcher.GetSpeedUpgradeCost(target)
+                        : 0,
+                    true,
+                    crosshatcherInstalled && current >= target - 1);
+            }
+            case UpgradeId.CrosshatcherQuality:
+            {
+                int current = crosshatcher != null ? crosshatcher.QualityLevel : 0;
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    2,
+                    CrosshatcherController.MaximumLevel);
+                return new NodeState(
+                    $"Breed Quality Tier {target}",
+                    "X+",
+                    $"{CrosshatcherController.GetImprovementChance(target) * 100f:0}% chance of the next breed when mixing",
+                    current,
+                    target,
+                    crosshatcher != null
+                        ? crosshatcher.GetQualityUpgradeCost(target)
+                        : 0,
+                    true,
+                    crosshatcherInstalled && current >= target - 1);
+            }
             case UpgradeId.BasketCapacity:
             {
                 int current = collection != null ? collection.BasketUpgradeLevel : 0;
@@ -413,7 +529,9 @@ public sealed class ProgressionSystem : MonoBehaviour
                     target,
                     GetArrayCost(BasketCosts, target - 1),
                     true,
-                    collection != null && current >= target - 1);
+                    collection != null
+                        && !collection.HasVacuum
+                        && current >= target - 1);
             }
             case UpgradeId.VacuumPower:
             {
@@ -422,13 +540,15 @@ public sealed class ProgressionSystem : MonoBehaviour
                 return new NodeState(
                     $"Vacuum Power {target}",
                     "V",
-                    target == 1 ? "Unlock click-hold suction" : "Faster egg suction",
+                    target == 1
+                        ? "Replace the full basket with click-hold suction"
+                        : "Faster egg suction",
                     current,
                     target,
                     GetArrayCost(VacuumPowerCosts, target - 1),
                     true,
                     collection != null
-                        && collection.BasketUpgradeLevel >= 1
+                        && collection.BasketUpgradeLevel >= 3
                         && current >= target - 1);
             }
             case UpgradeId.VacuumRange:
@@ -577,38 +697,74 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     public ChickenEgg.EggType RollEggType()
     {
-        GetRareChances(
-            rareEggChanceLevel,
-            out float silver,
-            out float gold,
-            out float galaxy);
+        return RollEggType(ChickenController.ChickenBreed.White);
+    }
+
+    public ChickenEgg.EggType RollEggType(
+        ChickenController.ChickenBreed breed)
+    {
+        GetCombinedRareChances(
+            breed,
+            out float rare,
+            out float epic,
+            out float legendary,
+            out float cosmic);
         float roll = UnityEngine.Random.value;
 
-        if (roll < galaxy)
+        if (roll < cosmic)
         {
-            return ChickenEgg.EggType.Galaxy;
+            return ChickenEgg.EggType.Cosmic;
         }
 
-        if (roll < galaxy + gold)
+        if (roll < cosmic + legendary)
         {
-            return ChickenEgg.EggType.Gold;
+            return ChickenEgg.EggType.Legendary;
         }
 
-        if (roll < galaxy + gold + silver)
+        if (roll < cosmic + legendary + epic)
         {
-            return ChickenEgg.EggType.Silver;
+            return ChickenEgg.EggType.Epic;
         }
 
-        return ChickenEgg.EggType.Standard;
+        if (roll < cosmic + legendary + epic + rare)
+        {
+            return ChickenEgg.EggType.Rare;
+        }
+
+        return ChickenEgg.EggType.Common;
+    }
+
+    public void GetCombinedRareChances(
+        ChickenController.ChickenBreed breed,
+        out float rare,
+        out float epic,
+        out float legendary,
+        out float cosmic)
+    {
+        GetRareChances(
+            rareEggChanceLevel,
+            out float upgradeRare,
+            out float upgradeEpic,
+            out float upgradeLegendary,
+            out float upgradeCosmic);
+        int breedIndex = Mathf.Clamp(
+            (int)breed,
+            0,
+            BreedRareChance.Length - 1);
+        rare = BreedRareChance[breedIndex] + upgradeRare;
+        epic = BreedEpicChance[breedIndex] + upgradeEpic;
+        legendary = BreedLegendaryChance[breedIndex] + upgradeLegendary;
+        cosmic = BreedCosmicChance[breedIndex] + upgradeCosmic;
     }
 
     public int GetEggValueCents(ChickenEgg.EggType type)
     {
         int baseValue = type switch
         {
-            ChickenEgg.EggType.Silver => 800,
-            ChickenEgg.EggType.Gold => 3500,
-            ChickenEgg.EggType.Galaxy => 15000,
+            ChickenEgg.EggType.Rare => 400,
+            ChickenEgg.EggType.Epic => 1200,
+            ChickenEgg.EggType.Legendary => 3500,
+            ChickenEgg.EggType.Cosmic => 15000,
             _ => 100
         };
         return Mathf.RoundToInt(baseValue * EggValueMultiplier);
@@ -626,7 +782,7 @@ public sealed class ProgressionSystem : MonoBehaviour
                 return true;
             case UpgradeId.EggValue:
                 eggValueLevel++;
-                message = $"Egg values increased to {EggValueMultiplier:0.##}x";
+                message = $"Egg weight increased to {EggValueMultiplier:0.##}x";
                 return true;
             case UpgradeId.IncubatorInstall:
                 return IncubatorShopController.Instance.TryInstall(out message, false);
@@ -634,6 +790,12 @@ public sealed class ProgressionSystem : MonoBehaviour
                 return IncubatorShopController.Instance.TryUpgradeCapacity(out message, false);
             case UpgradeId.IncubatorSpeed:
                 return IncubatorShopController.Instance.TryUpgradeSpeed(out message, false);
+            case UpgradeId.CrosshatcherInstall:
+                return CrosshatcherShopController.Instance.TryInstall(out message, false);
+            case UpgradeId.CrosshatcherSpeed:
+                return CrosshatcherShopController.Instance.TryUpgradeSpeed(out message, false);
+            case UpgradeId.CrosshatcherQuality:
+                return CrosshatcherShopController.Instance.TryUpgradeQuality(out message, false);
             case UpgradeId.BasketCapacity:
                 EggCarryController.Instance.UpgradeBasket();
                 message = $"Basket capacity level {EggCarryController.Instance.BasketUpgradeLevel}";
@@ -681,23 +843,31 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     private static string GetRareChanceDescription(int level)
     {
-        GetRareChances(level, out float silver, out float gold, out float galaxy);
+        GetRareChances(
+            level,
+            out float rare,
+            out float epic,
+            out float legendary,
+            out float cosmic);
         return
-            $"Silver {silver * 100f:0.###}% • " +
-            $"Gold {gold * 100f:0.###}% • " +
-            $"Galaxy {galaxy * 100f:0.####}%";
+            $"Rare {rare * 100f:0.###}% • " +
+            $"Epic {epic * 100f:0.###}% • " +
+            $"Legendary {legendary * 100f:0.###}% • " +
+            $"Cosmic {cosmic * 100f:0.####}%";
     }
 
     private static void GetRareChances(
         int level,
-        out float silver,
-        out float gold,
-        out float galaxy)
+        out float rare,
+        out float epic,
+        out float legendary,
+        out float cosmic)
     {
-        int index = Mathf.Clamp(level, 0, SilverChanceByLevel.Length - 1);
-        silver = SilverChanceByLevel[index];
-        gold = GoldChanceByLevel[index];
-        galaxy = GalaxyChanceByLevel[index];
+        int index = Mathf.Clamp(level, 0, RareChanceByLevel.Length - 1);
+        rare = RareChanceByLevel[index];
+        epic = EpicChanceByLevel[index];
+        legendary = LegendaryChanceByLevel[index];
+        cosmic = CosmicChanceByLevel[index];
     }
 
     private static string FormatMoney(int cents)

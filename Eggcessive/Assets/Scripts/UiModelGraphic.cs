@@ -37,6 +37,17 @@ public sealed class UiModelGraphic : MaskableGraphic
         SetVerticesDirty();
     }
 
+    protected override void OnEnable()
+    {
+        base.OnEnable();
+
+        if (canvas != null)
+        {
+            canvas.additionalShaderChannels |=
+                AdditionalCanvasShaderChannels.Normal;
+        }
+    }
+
     protected override void OnPopulateMesh(VertexHelper vertexHelper)
     {
         vertexHelper.Clear();

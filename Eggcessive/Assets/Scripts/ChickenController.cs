@@ -8,6 +8,17 @@ using UnityEngine.AI;
 [RequireComponent(typeof(CapsuleCollider))]
 public sealed class ChickenController : MonoBehaviour
 {
+    public enum ChickenBreed
+    {
+        White,
+        Brown,
+        Black,
+        Blue,
+        Purple,
+        Rainbow,
+        Cosmic
+    }
+
     public const int MaximumChickenCount = 100;
     public static event Action EggLaid;
 
@@ -27,11 +38,18 @@ public sealed class ChickenController : MonoBehaviour
     private static readonly int BlinkSpeedParameter = Animator.StringToHash("BlinkSpeed");
     private static readonly int TurnLeanParameter = Animator.StringToHash("TurnLean");
     private static readonly int LayEggParameter = Animator.StringToHash("LayEgg");
+    private static readonly int IdleState = Animator.StringToHash("Base Layer.Idle");
     private static readonly int LayEggState = Animator.StringToHash("Base Layer.Lay Egg");
+    private static readonly int HeldState = Animator.StringToHash("Base Layer.Held");
+    private static readonly int BaseMapTransform = Shader.PropertyToID("_BaseMap_ST");
+    private static readonly int MainTextureTransform = Shader.PropertyToID("_MainTex_ST");
     private const float EggSpawnFrame = 9f;
     private const float DefaultLayEggFrameCount = 22f;
     private const string WingFlutterLayerName = "Wing Flutter Layer";
     private static bool hasWarnedAboutMissingNavMesh;
+
+    [Header("Breed")]
+    [SerializeField] private ChickenBreed breed = ChickenBreed.White;
 
     [Header("Size Variation")]
     [SerializeField, Range(0f, 0.2f)] private float scaleVariation = 0.05f;
@@ -66,6 +84,20 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float leanSmoothTime = 0.08f;
     [SerializeField, Range(0f, 1f)] private float leanStrength = 1f;
 
+    [Header("Hand Carry")]
+    [Tooltip(
+        "Chicken bone aligned directly to the UI hand's Bone_Attach. Blender axis suffixes are matched automatically.")]
+    [SerializeField] private string heldAttachBoneName = "c_skull_01";
+    [SerializeField, Min(0f)] private float heldAnimationTransitionDuration =
+        0.08f;
+    [SerializeField, Range(0f, 10f)] private float heldDragMaximumAngle = 3f;
+    [SerializeField, Min(0.01f)] private float heldDragSpeedForMaximumAngle =
+        2f;
+    [SerializeField, Range(0.1f, 10f)] private float heldDragSpringFrequency =
+        3.25f;
+    [SerializeField, Range(0.05f, 2f)] private float heldDragSpringDamping =
+        0.72f;
+
     [Header("Wing Flutter")]
     [SerializeField, Min(0.01f)] private float minWingFlutterInterval = 6f;
     [SerializeField, Min(0.01f)] private float maxWingFlutterInterval = 14f;
@@ -96,6 +128,7 @@ public sealed class ChickenController : MonoBehaviour
 
     [Header("Egg Laying")]
     [SerializeField] private GameObject eggPrefab = null;
+    [SerializeField] private GameObject cosmicEggPrefab = null;
     [SerializeField, Min(0f)] private float minInitialEggLayTime = 1.5f;
     [SerializeField, Min(0f)] private float maxInitialEggLayTime = 3.5f;
     [SerializeField, Min(0f)] private float minEggLayTime = 6f;
@@ -124,6 +157,11 @@ public sealed class ChickenController : MonoBehaviour
     private float nextFoodSearchTime;
     private float nextBiteTime;
     private float eggTimerRemaining;
+    private float eggTimerBeforeMachineControl;
+    private float stateTimeBeforeMachineControl;
+    private ChickenState stateBeforeMachineControl;
+    private bool eggSpawnedBeforeMachineControl;
+    private bool hasMachineControlSnapshot;
     private float foodScore;
     private float activeFoodProductionSpeed = 1f;
     private float nextBlinkTime;
@@ -146,17 +184,100 @@ public sealed class ChickenController : MonoBehaviour
     private Vector3 previousPlanarForward;
     private bool navigationReady;
     private Transform eggSpawnBone;
+    private Transform heldAttachBone;
     private bool eggSpawnedDuringLay;
     private float eggSpawnNormalizedTime = EggSpawnFrame / DefaultLayEggFrameCount;
     private bool hasIncubatorExitDestination;
     private bool isTraversingIncubatorExit;
     private Vector3 incubatorExitDestination;
     private int eggCollisionMask;
+    private bool isMachineControlled;
+    private bool isHeldByHand;
+    private Quaternion heldBaseRotation;
+    private Vector3 heldDragAngles;
+    private Vector3 heldDragAngularVelocity;
+    private Vector3 previousHeldAttachPosition;
+    private bool hasPreviousHeldAttachPosition;
+    private MaterialPropertyBlock breedPropertyBlock;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
     public float FoodScoreNormalized => maximumFoodScore > 0f ? foodScore / maximumFoodScore : 0f;
     public static IReadOnlyList<ChickenController> ActiveInstances => ActiveChickens;
+    public ChickenBreed Breed => breed;
+    public bool IsMachineControlled => isMachineControlled;
+    public bool CanBePickedUp =>
+        !isMachineControlled
+        && !isTraversingIncubatorExit
+        && state != ChickenState.EggLaying;
+
+    public void AlignHeldBoneTo(Vector3 attachPosition)
+    {
+        if (heldAttachBone == null)
+        {
+            heldAttachBone = FindHeldAttachBone();
+        }
+
+        if (heldAttachBone == null)
+        {
+            transform.position = attachPosition;
+            return;
+        }
+
+        transform.position += attachPosition - heldAttachBone.position;
+    }
+
+    public void UpdateHeldCarryPose(
+        Vector3 attachPosition,
+        float deltaTime)
+    {
+        if (!isHeldByHand)
+        {
+            AlignHeldBoneTo(attachPosition);
+            return;
+        }
+
+        float frameDeltaTime = Mathf.Max(0f, deltaTime);
+
+        if (!hasPreviousHeldAttachPosition
+            || frameDeltaTime <= 0.00001f)
+        {
+            previousHeldAttachPosition = attachPosition;
+            hasPreviousHeldAttachPosition = true;
+            transform.rotation = heldBaseRotation;
+            AlignHeldBoneTo(attachPosition);
+            return;
+        }
+
+        Vector3 attachVelocity =
+            (attachPosition - previousHeldAttachPosition)
+            / frameDeltaTime;
+        previousHeldAttachPosition = attachPosition;
+        Vector3 planarVelocity = Vector3.ProjectOnPlane(
+            attachVelocity,
+            Vector3.up);
+        Vector3 desiredDragAngles =
+            Vector3.Cross(Vector3.up, planarVelocity)
+            * (heldDragMaximumAngle
+                / heldDragSpeedForMaximumAngle);
+        desiredDragAngles = Vector3.ClampMagnitude(
+            desiredDragAngles,
+            heldDragMaximumAngle);
+        StepHeldDragSpring(
+            desiredDragAngles,
+            Mathf.Min(frameDeltaTime, 1f / 30f));
+        float dragAngle = heldDragAngles.magnitude;
+        Quaternion dragRotation = dragAngle > 0.0001f
+            ? Quaternion.AngleAxis(
+                dragAngle,
+                heldDragAngles / dragAngle)
+            : Quaternion.identity;
+        transform.rotation = dragRotation * heldBaseRotation;
+
+        // Re-aligning the skull after rotating the root makes Bone_Attach the
+        // effective pivot, so only the chicken's lower body swings.
+        AlignHeldBoneTo(attachPosition);
+    }
 
     private void Awake()
     {
@@ -191,8 +312,10 @@ public sealed class ChickenController : MonoBehaviour
 
         CacheLayEggAnimationTiming();
         eggSpawnBone = FindEggSpawnBone();
+        heldAttachBone = FindHeldAttachBone();
 
         CacheWingFlutterLayer();
+        ApplyBreedVisual();
 
         foodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
         previousPlanarForward = GetPlanarForward();
@@ -238,6 +361,10 @@ public sealed class ChickenController : MonoBehaviour
         }
         wingFlutterActive = false;
         wingMicroTwitchActive = false;
+        isHeldByHand = false;
+        hasPreviousHeldAttachPosition = false;
+        heldDragAngles = Vector3.zero;
+        heldDragAngularVelocity = Vector3.zero;
         targetFood = null;
     }
 
@@ -247,6 +374,12 @@ public sealed class ChickenController : MonoBehaviour
         // evaluation has not. Update the parameter now so the visible turn and
         // its additive lean use the same frame's direction.
         UpdateTurnLean();
+
+        if (isMachineControlled)
+        {
+            return;
+        }
+
         UpdateFoodAndEggTimers();
         UpdateBlink();
         UpdateWingFlutter();
@@ -398,6 +531,216 @@ public sealed class ChickenController : MonoBehaviour
         {
             TryBeginIncubatorExit();
         }
+    }
+
+    public void ConfigureBreed(ChickenBreed newBreed)
+    {
+        breed = newBreed;
+        ApplyBreedVisual();
+        gameObject.name = newBreed == ChickenBreed.White
+            ? "prefab_chicken"
+            : $"chicken_{newBreed.ToString().ToLowerInvariant()}";
+    }
+
+    public void SetMachineControlled(bool controlled)
+    {
+        if (isMachineControlled == controlled)
+        {
+            return;
+        }
+
+        isMachineControlled = controlled;
+        targetFood = null;
+        SetEatingAnimation(false);
+
+        if (controlled)
+        {
+            stateBeforeMachineControl = state;
+            stateTimeBeforeMachineControl =
+                Mathf.Max(0f, stateEndTime - Time.time);
+            eggTimerBeforeMachineControl = eggTimerRemaining;
+            eggSpawnedBeforeMachineControl = eggSpawnedDuringLay;
+            hasMachineControlSnapshot = true;
+
+            if (agent != null && agent.enabled)
+            {
+                if (agent.isOnNavMesh)
+                {
+                    agent.ResetPath();
+                }
+
+                agent.enabled = false;
+            }
+
+            navigationReady = false;
+            state = ChickenState.Idle;
+            return;
+        }
+
+        if (agent != null && !agent.enabled)
+        {
+            agent.enabled = true;
+        }
+
+        if (hasMachineControlSnapshot)
+        {
+            eggTimerRemaining = eggTimerBeforeMachineControl;
+        }
+
+        TryInitializeNavigation();
+
+        if (hasMachineControlSnapshot
+            && stateBeforeMachineControl == ChickenState.EggLaying)
+        {
+            state = ChickenState.EggLaying;
+            stateEndTime = Time.time + stateTimeBeforeMachineControl;
+            eggSpawnedDuringLay = eggSpawnedBeforeMachineControl;
+
+            if (!eggSpawnedDuringLay
+                && animator != null
+                && animator.runtimeAnimatorController != null)
+            {
+                animator.ResetTrigger(LayEggParameter);
+                animator.SetTrigger(LayEggParameter);
+            }
+        }
+        else
+        {
+            BeginIdle();
+        }
+
+        hasMachineControlSnapshot = false;
+    }
+
+    public void SetHeldByHand(bool held)
+    {
+        if (isHeldByHand == held)
+        {
+            return;
+        }
+
+        isHeldByHand = held;
+
+        if (held)
+        {
+            heldBaseRotation = transform.rotation;
+            heldDragAngles = Vector3.zero;
+            heldDragAngularVelocity = Vector3.zero;
+            hasPreviousHeldAttachPosition = false;
+        }
+        else
+        {
+            bool hadAttachPosition =
+                hasPreviousHeldAttachPosition;
+            Vector3 releaseAttachPosition =
+                previousHeldAttachPosition;
+            transform.rotation = heldBaseRotation;
+
+            if (hadAttachPosition)
+            {
+                AlignHeldBoneTo(releaseAttachPosition);
+            }
+
+            heldDragAngles = Vector3.zero;
+            heldDragAngularVelocity = Vector3.zero;
+            hasPreviousHeldAttachPosition = false;
+        }
+
+        if (animator == null || animator.runtimeAnimatorController == null)
+        {
+            return;
+        }
+
+        if (held)
+        {
+            SetWingFlutterWeight(0f);
+
+            if (animator.HasState(0, HeldState))
+            {
+                animator.CrossFadeInFixedTime(
+                    HeldState,
+                    heldAnimationTransitionDuration,
+                    0,
+                    0f);
+            }
+
+            return;
+        }
+
+        if (animator.HasState(0, IdleState))
+        {
+            animator.CrossFadeInFixedTime(
+                IdleState,
+                heldAnimationTransitionDuration,
+                0,
+                0f);
+        }
+    }
+
+    private void StepHeldDragSpring(
+        Vector3 desiredAngles,
+        float deltaTime)
+    {
+        if (deltaTime <= 0f)
+        {
+            return;
+        }
+
+        if (!IsFinite(desiredAngles)
+            || !IsFinite(heldDragAngles)
+            || !IsFinite(heldDragAngularVelocity))
+        {
+            desiredAngles = Vector3.zero;
+            heldDragAngles = Vector3.zero;
+            heldDragAngularVelocity = Vector3.zero;
+        }
+
+        const float Tau = Mathf.PI * 2f;
+        float angularFrequency =
+            Tau * heldDragSpringFrequency;
+        float frequencySquared =
+            angularFrequency * angularFrequency;
+        float dampingTerm = 1f
+            + 2f
+            * deltaTime
+            * heldDragSpringDamping
+            * angularFrequency;
+        float velocityToPosition =
+            deltaTime * frequencySquared;
+        float positionToPosition =
+            deltaTime * velocityToPosition;
+        float inverseDeterminant = 1f
+            / (dampingTerm + positionToPosition);
+        Vector3 previousAngles = heldDragAngles;
+        Vector3 previousVelocity = heldDragAngularVelocity;
+        heldDragAngles = (
+            previousAngles * dampingTerm
+            + previousVelocity * deltaTime
+            + desiredAngles * positionToPosition)
+            * inverseDeterminant;
+        heldDragAngularVelocity = (
+            previousVelocity
+            + (desiredAngles - previousAngles)
+            * velocityToPosition)
+            * inverseDeterminant;
+        heldDragAngles = Vector3.ClampMagnitude(
+            heldDragAngles,
+            heldDragMaximumAngle);
+        heldDragAngularVelocity = Vector3.ClampMagnitude(
+            heldDragAngularVelocity,
+            heldDragMaximumAngle
+            * angularFrequency
+            * 2f);
+    }
+
+    private static bool IsFinite(Vector3 value)
+    {
+        return !float.IsNaN(value.x)
+            && !float.IsInfinity(value.x)
+            && !float.IsNaN(value.y)
+            && !float.IsInfinity(value.y)
+            && !float.IsNaN(value.z)
+            && !float.IsInfinity(value.z);
     }
 
     private bool TryBeginIncubatorExit()
@@ -914,17 +1257,21 @@ public sealed class ChickenController : MonoBehaviour
                 + Vector3.up * eggSpawnHeight
                 - GetPlanarForward() * eggSpawnBehindDistance;
         Quaternion eggRotation = Quaternion.Euler(0f, Random.Range(-180f, 180f), 0f);
+        ProgressionSystem progression = ProgressionSystem.Instance;
+        ChickenEgg.EggType eggType = progression != null
+            ? progression.RollEggType(breed)
+            : ChickenEgg.EggType.Common;
+        GameObject selectedEggPrefab =
+            eggType == ChickenEgg.EggType.Cosmic && cosmicEggPrefab != null
+                ? cosmicEggPrefab
+                : eggPrefab;
         ChickenEgg chickenEgg = ChickenEgg.Spawn(
-            eggPrefab,
+            selectedEggPrefab,
             eggPosition,
             eggRotation);
         GameObject egg = chickenEgg.gameObject;
         EggLaid?.Invoke();
 
-        ProgressionSystem progression = ProgressionSystem.Instance;
-        ChickenEgg.EggType eggType = progression != null
-            ? progression.RollEggType()
-            : ChickenEgg.EggType.Standard;
         int eggValue = progression != null
             ? progression.GetEggValueCents(eggType)
             : 100;
@@ -1012,6 +1359,46 @@ public sealed class ChickenController : MonoBehaviour
 
         Debug.LogWarning(
             $"{nameof(ChickenController)} could not find egg spawn bone '{eggSpawnBoneName}' below '{animator.name}'. Using the fallback position.",
+            this);
+        return null;
+    }
+
+    private Transform FindHeldAttachBone()
+    {
+        if (animator == null
+            || string.IsNullOrWhiteSpace(heldAttachBoneName))
+        {
+            return null;
+        }
+
+        Transform[] bones =
+            animator.GetComponentsInChildren<Transform>(true);
+
+        for (int index = 0; index < bones.Length; index++)
+        {
+            if (string.Equals(
+                    bones[index].name,
+                    heldAttachBoneName,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return bones[index];
+            }
+        }
+
+        string blenderAxisPrefix = heldAttachBoneName + ".";
+
+        for (int index = 0; index < bones.Length; index++)
+        {
+            if (bones[index].name.StartsWith(
+                    blenderAxisPrefix,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return bones[index];
+            }
+        }
+
+        Debug.LogWarning(
+            $"{nameof(ChickenController)} could not find held attachment bone '{heldAttachBoneName}' below '{animator.name}'. The chicken root will be used instead.",
             this);
         return null;
     }
@@ -1233,6 +1620,36 @@ public sealed class ChickenController : MonoBehaviour
         return planarForward.sqrMagnitude > 0.0001f ? planarForward.normalized : Vector3.forward;
     }
 
+    private void ApplyBreedVisual()
+    {
+        // The chicken mesh UVs are already authored over the top-left white
+        // tile of the 2x4 atlas. Keep their original scale and translate that
+        // tile to the selected row/column. White therefore uses the material's
+        // untouched identity transform.
+        int atlasIndex = Mathf.Clamp((int)breed, 0, 6);
+        const float tileWidth = 0.5f;
+        const float tileHeight = 0.25f;
+        float offsetX = atlasIndex % 2 * tileWidth;
+        float offsetY = -(atlasIndex / 2) * tileHeight;
+        Vector4 textureTransform = new Vector4(
+            1f,
+            1f,
+            offsetX,
+            offsetY);
+
+        breedPropertyBlock ??= new MaterialPropertyBlock();
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+
+        for (int index = 0; index < renderers.Length; index++)
+        {
+            Renderer chickenRenderer = renderers[index];
+            chickenRenderer.GetPropertyBlock(breedPropertyBlock);
+            breedPropertyBlock.SetVector(BaseMapTransform, textureTransform);
+            breedPropertyBlock.SetVector(MainTextureTransform, textureTransform);
+            chickenRenderer.SetPropertyBlock(breedPropertyBlock);
+        }
+    }
+
     private void OnValidate()
     {
         minIdleTime = Mathf.Max(0f, minIdleTime);
@@ -1272,6 +1689,24 @@ public sealed class ChickenController : MonoBehaviour
         fullLeanTurnRate = Mathf.Max(1f, fullLeanTurnRate);
         leanSmoothTime = Mathf.Max(0.01f, leanSmoothTime);
         leanStrength = Mathf.Clamp01(leanStrength);
+        heldAnimationTransitionDuration = Mathf.Max(
+            0f,
+            heldAnimationTransitionDuration);
+        heldDragMaximumAngle = Mathf.Clamp(
+            heldDragMaximumAngle,
+            0f,
+            10f);
+        heldDragSpeedForMaximumAngle = Mathf.Max(
+            0.01f,
+            heldDragSpeedForMaximumAngle);
+        heldDragSpringFrequency = Mathf.Clamp(
+            heldDragSpringFrequency,
+            0.1f,
+            10f);
+        heldDragSpringDamping = Mathf.Clamp(
+            heldDragSpringDamping,
+            0.05f,
+            2f);
         maximumFoodScore = Mathf.Max(0.01f, maximumFoodScore);
         startingFoodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
         foodScoreDrainPerSecond = Mathf.Max(0f, foodScoreDrainPerSecond);
@@ -1306,5 +1741,6 @@ public sealed class ChickenController : MonoBehaviour
         eggLaunchSpin = Mathf.Max(0f, eggLaunchSpin);
         eggSpawnHeight = Mathf.Max(0f, eggSpawnHeight);
         eggSpawnBehindDistance = Mathf.Max(0f, eggSpawnBehindDistance);
+        ApplyBreedVisual();
     }
 }

@@ -1093,11 +1093,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   pickupDistance: 100
+  handPickupRadius: 0.08
   pickupLayers:
     serializedVersion: 2
     m_Bits: 4294967295
   carryHeight: 0.3
   followSpeed: 25
+  selectedTool: 0
   collectionLevel: 0
   basketUpgradeLevel: 0
   vacuumPowerLevel: 0
@@ -9639,6 +9641,83 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &1865045225
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 1922861420}
+    m_Modifications:
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6350128384607568121, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_Name
+      value: prefab_Crosshatcher
+      objectReference: {fileID: 0}
+    - target: {fileID: 6350128384607568121, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+--- !u!4 &1865045226 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 1039643912089500993, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+  m_PrefabInstance: {fileID: 1865045225}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1865045227 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 7026902438758000968, guid: 6950b6f4e5da7624e8af03d395bcffed, type: 3}
+  m_PrefabInstance: {fileID: 1865045225}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 36aff14332e3fdd4fae37209907d8b11, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CrosshatcherController
 --- !u!1 &1894698962
 GameObject:
   m_ObjectHideFlags: 0
@@ -9735,6 +9814,38 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 90, z: 0}
+--- !u!1 &1922861419
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1922861420}
+  m_Layer: 0
+  m_Name: Location_Crosshatcher
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1922861420
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1922861419}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0.70710677, z: -0, w: 0.7071068}
+  m_LocalPosition: {x: 1.4, y: 0, z: 1.75}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 1865045226}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &1967750123
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -9795,6 +9906,10 @@ PrefabInstance:
       propertyPath: m_TextStyleHashCode
       value: -1183493901
       objectReference: {fileID: 0}
+    - target: {fileID: 1231751256871349514, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
+      propertyPath: crosshatcher
+      value: 
+      objectReference: {fileID: 1865045227}
     - target: {fileID: 1423651499211240341, guid: d1e4f2a9c6b3483e9fa183ca631d7b20, type: 3}
       propertyPath: m_fontColor32.rgba
       value: 4291952550
@@ -10587,3 +10702,4 @@ SceneRoots:
   - {fileID: 1907798046}
   - {fileID: 1329818903}
   - {fileID: 306622065}
+  - {fileID: 1922861420}

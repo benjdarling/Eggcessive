@@ -5,57 +5,148 @@ using Object = UnityEngine.Object;
 
 public static class EggRarityAssetSetup
 {
-    private const string EggPrefabPath =
+    private const string CommonEggPrefabPath =
         "Assets/Eggs/prefabs/prefab_egg_chicken.prefab";
+    private const string CosmicEggPrefabPath =
+        "Assets/Eggs/prefabs/prefab_egg_cosmic.prefab";
+    private const string CosmicVfxPrefabPath =
+        "Assets/VFX/prefabs/vfx_egg_cosmic.prefab";
+    private const string ChickenPrefabPath =
+        "Assets/Chicken/prefabs/prefab_chicken.prefab";
+    private const string EggTexturePath =
+        "Assets/Eggs/textures/t_eggs.psd";
     private const string MaterialFolder = "Assets/Eggs/materials";
-    private const string StandardMaterialPath =
+    private const string AtlasMaterialPath =
         MaterialFolder + "/mat_egg_atlas.mat";
-    private const string SilverMaterialPath =
-        MaterialFolder + "/mat_egg_silver.mat";
-    private const string GoldMaterialPath =
-        MaterialFolder + "/mat_egg_gold.mat";
-    private const string GalaxyMaterialPath =
-        MaterialFolder + "/mat_egg_galaxy.mat";
-    private const string GalaxyTexturePath =
-        MaterialFolder + "/tex_egg_galaxy_speckles.asset";
+    private const string LegendaryMaterialPath =
+        MaterialFolder + "/mat_egg_legendary.mat";
+    private const string CosmicMaterialPath =
+        MaterialFolder + "/mat_egg_cosmic.mat";
 
-    [MenuItem("Tools/Eggcessive/Rebuild Rare Egg Materials")]
+    [MenuItem("Tools/Eggcessive/Rebuild Egg Rarity Assets")]
     public static void Generate()
     {
-        Material standard = AssetDatabase.LoadAssetAtPath<Material>(
-            StandardMaterialPath);
+        ConfigureAtlasImporter();
 
-        if (standard == null)
+        Material atlas = LoadRequiredAsset<Material>(AtlasMaterialPath);
+        Material legendary = LoadRequiredAsset<Material>(LegendaryMaterialPath);
+        Material cosmic = LoadRequiredAsset<Material>(CosmicMaterialPath);
+        GameObject commonPrefab =
+            LoadRequiredAsset<GameObject>(CommonEggPrefabPath);
+        GameObject cosmicVfx =
+            LoadRequiredAsset<GameObject>(CosmicVfxPrefabPath);
+
+        ConfigureEggPalette(
+            CommonEggPrefabPath,
+            false,
+            atlas,
+            legendary,
+            cosmic);
+        commonPrefab = LoadRequiredAsset<GameObject>(CommonEggPrefabPath);
+        GameObject cosmicPrefab = CreateCosmicEggPrefab(
+            commonPrefab,
+            cosmicVfx,
+            cosmic);
+        ConfigureEggPalette(
+            CosmicEggPrefabPath,
+            true,
+            atlas,
+            legendary,
+            cosmic);
+        WireCosmicEggIntoChicken(cosmicPrefab);
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Validate();
+        Debug.Log(
+            "Common, rare (blue), epic, legendary, and cosmic egg assets rebuilt and assigned.");
+    }
+
+    [MenuItem("Tools/Eggcessive/Validate Egg Rarity Assets")]
+    public static void Validate()
+    {
+        Material atlas = LoadRequiredAsset<Material>(AtlasMaterialPath);
+        Material legendary = LoadRequiredAsset<Material>(LegendaryMaterialPath);
+        Material cosmic = LoadRequiredAsset<Material>(CosmicMaterialPath);
+        GameObject commonPrefab =
+            LoadRequiredAsset<GameObject>(CommonEggPrefabPath);
+        GameObject cosmicPrefab =
+            LoadRequiredAsset<GameObject>(CosmicEggPrefabPath);
+        GameObject cosmicVfx =
+            LoadRequiredAsset<GameObject>(CosmicVfxPrefabPath);
+        ValidateEggPalette(
+            commonPrefab,
+            false,
+            atlas,
+            legendary,
+            cosmic);
+        ValidateEggPalette(
+            cosmicPrefab,
+            true,
+            atlas,
+            legendary,
+            cosmic);
+
+        Transform vfx = cosmicPrefab.transform.Find(cosmicVfx.name);
+        Object vfxSource = vfx != null
+            ? PrefabUtility.GetCorrespondingObjectFromSource(vfx.gameObject)
+            : null;
+
+        if (vfx == null
+            || vfxSource == null
+            || AssetDatabase.GetAssetPath(vfxSource) != CosmicVfxPrefabPath)
         {
-            throw new MissingReferenceException(
-                $"Missing standard egg material at {StandardMaterialPath}.");
+            throw new InvalidOperationException(
+                "The cosmic egg prefab does not contain the authored cosmic VFX prefab.");
         }
 
-        Material silver = CreateLitMaterial(
-            SilverMaterialPath,
-            "mat_egg_silver",
-            new Color(0.68f, 0.78f, 0.9f),
-            0.92f,
-            0.84f);
-        Material gold = CreateLitMaterial(
-            GoldMaterialPath,
-            "mat_egg_gold",
-            new Color(1f, 0.52f, 0.035f),
-            0.88f,
-            0.78f);
-        Texture2D galaxyTexture = CreateGalaxyTexture();
-        Material galaxy = CreateLitMaterial(
-            GalaxyMaterialPath,
-            "mat_egg_galaxy",
-            new Color(0.13f, 0.018f, 0.24f),
-            0.62f,
-            0.92f);
-        SetTexture(galaxy, "_BaseMap", galaxyTexture);
-        SetTexture(galaxy, "_MainTex", galaxyTexture);
-        galaxy.EnableKeyword("_EMISSION");
-        galaxy.SetColor("_EmissionColor", new Color(0.16f, 0.025f, 0.3f) * 1.4f);
+        GameObject chickenPrefab =
+            LoadRequiredAsset<GameObject>(ChickenPrefabPath);
+        ChickenController chicken =
+            chickenPrefab.GetComponent<ChickenController>();
 
-        GameObject root = PrefabUtility.LoadPrefabContents(EggPrefabPath);
+        if (chicken == null)
+        {
+            throw new MissingComponentException(nameof(ChickenController));
+        }
+
+        SerializedObject serializedChicken = new SerializedObject(chicken);
+
+        if (serializedChicken.FindProperty("cosmicEggPrefab").objectReferenceValue
+            != cosmicPrefab)
+        {
+            throw new MissingReferenceException(
+                "The chicken prefab is not wired to the cosmic egg prefab.");
+        }
+
+        Debug.Log(
+            "Egg rarity validation passed: atlas offsets, special materials, cosmic VFX prefab, and chicken reference are valid.");
+    }
+
+    private static void ConfigureAtlasImporter()
+    {
+        TextureImporter importer =
+            AssetImporter.GetAtPath(EggTexturePath) as TextureImporter;
+
+        if (importer == null)
+        {
+            throw new MissingReferenceException(
+                $"Missing egg atlas texture at {EggTexturePath}.");
+        }
+
+        importer.wrapMode = TextureWrapMode.Clamp;
+        importer.sRGBTexture = true;
+        importer.SaveAndReimport();
+    }
+
+    private static void ConfigureEggPalette(
+        string prefabPath,
+        bool cosmicVisualPrefab,
+        Material atlas,
+        Material legendary,
+        Material cosmic)
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
 
         try
         {
@@ -67,30 +158,98 @@ public static class EggRarityAssetSetup
             }
 
             SerializedObject serializedEgg = new SerializedObject(egg);
-            SerializedProperty materials = serializedEgg.FindProperty("typeMaterials");
-            materials.arraySize = 4;
-            materials.GetArrayElementAtIndex(0).objectReferenceValue = standard;
-            materials.GetArrayElementAtIndex(1).objectReferenceValue = silver;
-            materials.GetArrayElementAtIndex(2).objectReferenceValue = gold;
-            materials.GetArrayElementAtIndex(3).objectReferenceValue = galaxy;
+            SerializedProperty materials =
+                serializedEgg.FindProperty("typeMaterials");
+            materials.arraySize = 5;
+            materials.GetArrayElementAtIndex(0).objectReferenceValue = atlas;
+            materials.GetArrayElementAtIndex(1).objectReferenceValue = atlas;
+            materials.GetArrayElementAtIndex(2).objectReferenceValue = atlas;
+            materials.GetArrayElementAtIndex(3).objectReferenceValue = legendary;
+            materials.GetArrayElementAtIndex(4).objectReferenceValue = cosmic;
+            serializedEgg.FindProperty("cosmicVisualPrefab").boolValue =
+                cosmicVisualPrefab;
             serializedEgg.ApplyModifiedPropertiesWithoutUndo();
-            PrefabUtility.SaveAsPrefabAsset(root, EggPrefabPath);
+            PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
         }
         finally
         {
             PrefabUtility.UnloadPrefabContents(root);
         }
-
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-        Debug.Log("Silver, gold, and galaxy egg materials rebuilt and assigned.");
     }
 
-    [MenuItem("Tools/Eggcessive/Validate Rare Egg Materials")]
-    public static void Validate()
+    private static GameObject CreateCosmicEggPrefab(
+        GameObject commonPrefab,
+        GameObject cosmicVfx,
+        Material cosmicMaterial)
     {
-        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(EggPrefabPath);
-        ChickenEgg egg = prefab != null ? prefab.GetComponent<ChickenEgg>() : null;
+        GameObject root =
+            (GameObject)PrefabUtility.InstantiatePrefab(commonPrefab);
+        root.name = "prefab_egg_cosmic";
+
+        try
+        {
+            GameObject vfx =
+                (GameObject)PrefabUtility.InstantiatePrefab(
+                    cosmicVfx,
+                    root.transform);
+            vfx.name = cosmicVfx.name;
+            vfx.transform.SetLocalPositionAndRotation(
+                Vector3.zero,
+                Quaternion.identity);
+            vfx.transform.localScale = Vector3.one;
+
+            foreach (MeshRenderer renderer
+                in root.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                if (!renderer.transform.IsChildOf(vfx.transform))
+                {
+                    renderer.sharedMaterial = cosmicMaterial;
+                }
+            }
+
+            return PrefabUtility.SaveAsPrefabAsset(
+                root,
+                CosmicEggPrefabPath);
+        }
+        finally
+        {
+            Object.DestroyImmediate(root);
+        }
+    }
+
+    private static void WireCosmicEggIntoChicken(GameObject cosmicPrefab)
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(ChickenPrefabPath);
+
+        try
+        {
+            ChickenController chicken = root.GetComponent<ChickenController>();
+
+            if (chicken == null)
+            {
+                throw new MissingComponentException(nameof(ChickenController));
+            }
+
+            SerializedObject serializedChicken = new SerializedObject(chicken);
+            serializedChicken.FindProperty("cosmicEggPrefab").objectReferenceValue =
+                cosmicPrefab;
+            serializedChicken.ApplyModifiedPropertiesWithoutUndo();
+            PrefabUtility.SaveAsPrefabAsset(root, ChickenPrefabPath);
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    private static void ValidateEggPalette(
+        GameObject prefab,
+        bool expectsCosmicVisual,
+        Material atlas,
+        Material legendary,
+        Material cosmic)
+    {
+        ChickenEgg egg = prefab.GetComponent<ChickenEgg>();
 
         if (egg == null)
         {
@@ -98,131 +257,45 @@ public static class EggRarityAssetSetup
         }
 
         SerializedObject serializedEgg = new SerializedObject(egg);
-        SerializedProperty materials = serializedEgg.FindProperty("typeMaterials");
+        SerializedProperty materials =
+            serializedEgg.FindProperty("typeMaterials");
+        Object[] expected = { atlas, atlas, atlas, legendary, cosmic };
 
-        if (materials == null || materials.arraySize != 4)
+        if (materials == null || materials.arraySize != expected.Length)
         {
             throw new InvalidOperationException(
-                "Egg rarity material palette is not configured.");
+                $"{prefab.name} does not have the five-type egg material palette.");
         }
 
-        for (int index = 0; index < materials.arraySize; index++)
+        for (int index = 0; index < expected.Length; index++)
         {
-            if (materials.GetArrayElementAtIndex(index).objectReferenceValue == null)
+            if (materials.GetArrayElementAtIndex(index).objectReferenceValue
+                != expected[index])
             {
                 throw new MissingReferenceException(
-                    $"Egg rarity material {index} is missing.");
+                    $"{prefab.name} egg material {index} is incorrect.");
             }
         }
 
-        Debug.Log("Rare egg material validation passed.");
-    }
-
-    private static Material CreateLitMaterial(
-        string path,
-        string materialName,
-        Color color,
-        float metallic,
-        float smoothness)
-    {
-        Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
-
-        if (existing != null)
+        if (serializedEgg.FindProperty("cosmicVisualPrefab").boolValue
+            != expectsCosmicVisual)
         {
-            AssetDatabase.DeleteAsset(path);
-        }
-
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit")
-            ?? Shader.Find("Standard");
-        Material material = new Material(shader)
-        {
-            name = materialName,
-            color = color
-        };
-        SetColor(material, "_BaseColor", color);
-        SetColor(material, "_Color", color);
-        SetFloat(material, "_Metallic", metallic);
-        SetFloat(material, "_Smoothness", smoothness);
-        SetFloat(material, "_Glossiness", smoothness);
-        AssetDatabase.CreateAsset(material, path);
-        return material;
-    }
-
-    private static Texture2D CreateGalaxyTexture()
-    {
-        Object existing = AssetDatabase.LoadAssetAtPath<Object>(GalaxyTexturePath);
-
-        if (existing != null)
-        {
-            AssetDatabase.DeleteAsset(GalaxyTexturePath);
-        }
-
-        const int size = 64;
-        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, true)
-        {
-            name = "tex_egg_galaxy_speckles",
-            filterMode = FilterMode.Bilinear,
-            wrapMode = TextureWrapMode.Repeat
-        };
-        var random = new System.Random(78231);
-        Color darkA = new Color(0.055f, 0.004f, 0.12f);
-        Color darkB = new Color(0.18f, 0.018f, 0.3f);
-        Color[] speckles =
-        {
-            new Color(0.15f, 0.9f, 1f),
-            new Color(1f, 0.2f, 0.72f),
-            new Color(1f, 0.82f, 0.18f),
-            new Color(0.52f, 0.25f, 1f)
-        };
-        Color[] pixels = new Color[size * size];
-
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                float wave = Mathf.PerlinNoise(x * 0.09f, y * 0.09f);
-                Color color = Color.Lerp(darkA, darkB, wave);
-
-                if (random.NextDouble() < 0.075)
-                {
-                    color = speckles[random.Next(speckles.Length)]
-                        * UnityEngine.Random.Range(0.8f, 1.4f);
-                }
-
-                pixels[y * size + x] = color;
-            }
-        }
-
-        texture.SetPixels(pixels);
-        texture.Apply(true, false);
-        AssetDatabase.CreateAsset(texture, GalaxyTexturePath);
-        return texture;
-    }
-
-    private static void SetColor(Material material, string property, Color value)
-    {
-        if (material.HasProperty(property))
-        {
-            material.SetColor(property, value);
+            throw new InvalidOperationException(
+                $"{prefab.name} has the wrong cosmic pooling identity.");
         }
     }
 
-    private static void SetFloat(Material material, string property, float value)
+    private static T LoadRequiredAsset<T>(string path)
+        where T : Object
     {
-        if (material.HasProperty(property))
-        {
-            material.SetFloat(property, value);
-        }
-    }
+        T asset = AssetDatabase.LoadAssetAtPath<T>(path);
 
-    private static void SetTexture(
-        Material material,
-        string property,
-        Texture texture)
-    {
-        if (material.HasProperty(property))
+        if (asset == null)
         {
-            material.SetTexture(property, texture);
+            throw new MissingReferenceException(
+                $"Missing required asset at {path}.");
         }
+
+        return asset;
     }
 }

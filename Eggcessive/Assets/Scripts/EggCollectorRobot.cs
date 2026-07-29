@@ -232,7 +232,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
             {
                 if (candidate >= storedEggTypes.Count
                     || storedEggTypes[candidate]
-                        != ChickenEgg.EggType.Standard)
+                        != ChickenEgg.EggType.Common)
                 {
                     continue;
                 }
@@ -269,7 +269,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         int count = 0;
         for (int index = 0; index < storedEggTypes.Count; index++)
         {
-            if (storedEggTypes[index] == ChickenEgg.EggType.Standard)
+            if (storedEggTypes[index] == ChickenEgg.EggType.Common)
             {
                 count++;
             }
@@ -428,7 +428,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
                     visibleEggSlots[index].gameObject,
                     index < storedEggTypes.Count
                         ? storedEggTypes[index]
-                        : ChickenEgg.EggType.Standard);
+                        : ChickenEgg.EggType.Common);
                 visibleEggSlots[index].gameObject.SetActive(index < storedEggs);
             }
         }

@@ -15,6 +15,7 @@ GameObject:
   - component: {fileID: 2951146026349834667}
   - component: {fileID: 3411476716457741119}
   - component: {fileID: 3527491647430913076}
+  - component: {fileID: 1231751256871349514}
   m_Layer: 5
   m_Name: prefab_EggScoreHud
   m_TagString: Untagged
@@ -170,6 +171,19 @@ MonoBehaviour:
   affordabilityProgressFill: {fileID: 6337187846619662147}
   levelOneCostCents: 500
   levelTwoCostCents: 1500
+--- !u!114 &1231751256871349514
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: aa263dad1187584469bfe022bbd44161, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CrosshatcherShopController
+  crosshatcher: {fileID: 0}
 --- !u!1 &2000
 GameObject:
   m_ObjectHideFlags: 0

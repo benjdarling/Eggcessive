@@ -199,9 +199,75 @@ public static class RoundUiPrefabSetup
                 "The authored Ready Button is missing.");
         }
 
+        ValidateProgressionLayout(prefab);
         Debug.Log(
             "Round UI input validation passed: Point, Click, navigation, " +
-            "and the authored Ready Button are valid.");
+            "the authored Ready Button, and progression-tree spacing are valid.");
+    }
+
+    private static void ValidateProgressionLayout(GameObject prefab)
+    {
+        RectTransform treeContent = Array.Find(
+            prefab.GetComponentsInChildren<RectTransform>(true),
+            rect => rect.name == "Tree Content");
+
+        if (treeContent == null)
+        {
+            throw new MissingReferenceException(
+                "The supplies-shop progression tree content is missing.");
+        }
+
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+
+        for (int firstIndex = 0; firstIndex < nodes.Length; firstIndex++)
+        {
+            RectTransform first = nodes[firstIndex].GetComponent<RectTransform>();
+            Rect firstBounds = GetAnchoredRect(first);
+
+            for (int secondIndex = firstIndex + 1;
+                secondIndex < nodes.Length;
+                secondIndex++)
+            {
+                RectTransform second =
+                    nodes[secondIndex].GetComponent<RectTransform>();
+                Rect secondBounds = GetAnchoredRect(second);
+
+                if (firstBounds.Overlaps(secondBounds))
+                {
+                    throw new InvalidOperationException(
+                        $"Progression nodes '{first.name}' and '{second.name}' overlap.");
+                }
+            }
+        }
+
+        ProgressionNodeButton crosshatcher = Array.Find(
+            nodes,
+            node => node.UpgradeId
+                == ProgressionSystem.UpgradeId.CrosshatcherInstall);
+        TMP_Text crosshatcherLabel = crosshatcher != null
+            ? crosshatcher.GetComponentInChildren<TMP_Text>(true)
+            : null;
+
+        if (crosshatcher == null
+            || crosshatcher.GetComponent<RectTransform>().rect.width < 180f
+            || crosshatcherLabel == null
+            || crosshatcherLabel.textWrappingMode != TextWrappingModes.NoWrap)
+        {
+            throw new InvalidOperationException(
+                "The Crosshatcher root node must be at least 180px wide and use no-wrap text.");
+        }
+    }
+
+    private static Rect GetAnchoredRect(RectTransform rectTransform)
+    {
+        Rect rect = rectTransform.rect;
+        Vector2 position = rectTransform.anchoredPosition;
+        return new Rect(
+            position.x + rect.xMin,
+            position.y + rect.yMin,
+            rect.width,
+            rect.height);
     }
 
     private static InputActionAsset CreateUiInputActions()
@@ -353,10 +419,13 @@ public static class RoundUiPrefabSetup
             typeof(CanvasRenderer),
             typeof(TextMeshProUGUI));
         RectTransform rect = root.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(260f, 70f);
+        rect.sizeDelta = new Vector2(1100f, 90f);
         TextMeshProUGUI reward = root.GetComponent<TextMeshProUGUI>();
         reward.font = font;
         reward.fontSize = 34f;
+        reward.enableAutoSizing = false;
+        reward.textWrappingMode = TextWrappingModes.NoWrap;
+        reward.overflowMode = TextOverflowModes.Overflow;
         reward.alignment = TextAlignmentOptions.Center;
         reward.color = new Color(1f, 0.82f, 0.18f);
         reward.fontStyle = FontStyles.Bold;

@@ -65,13 +65,13 @@ public sealed class EggContainer : MonoBehaviour
             return 0;
         }
 
-        int standardValue = ProgressionSystem.Instance != null
-            ? ProgressionSystem.Instance.GetEggValueCents(ChickenEgg.EggType.Standard)
+        int commonValue = ProgressionSystem.Instance != null
+            ? ProgressionSystem.Instance.GetEggValueCents(ChickenEgg.EggType.Common)
             : centsPerEgg;
 
         for (int index = 0; index < eggCount; index++)
         {
-            DepositEggValue(standardValue);
+            DepositEggValue(commonValue);
         }
 
         return eggCount;

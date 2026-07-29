@@ -110,6 +110,7 @@ Transform:
   - {fileID: 8111446795289851950}
   - {fileID: 2071557610573072986}
   - {fileID: 5003357996768625949}
+  - {fileID: 6828175386599946277}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!195 &6481119536847051701
@@ -146,6 +147,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c1b5f4d97a8e4f34a6c2b9d840f6173e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: '::'
+  breed: 0
   scaleVariation: 0.05
   minIdleTime: 1
   maxIdleTime: 3
@@ -171,6 +173,12 @@ MonoBehaviour:
   fullLeanTurnRate: 180
   leanSmoothTime: 0.08
   leanStrength: 1
+  heldAttachBoneName: c_skull_01
+  heldAnimationTransitionDuration: 0.08
+  heldDragMaximumAngle: 3
+  heldDragSpeedForMaximumAngle: 2
+  heldDragSpringFrequency: 3.25
+  heldDragSpringDamping: 0.72
   minWingFlutterInterval: 6
   maxWingFlutterInterval: 14
   minWingFlutterStrength: 0.125
@@ -191,6 +199,9 @@ MonoBehaviour:
   eggPushForce: 3.25
   maximumEggPushSpeed: 0.25
   eggPrefab: {fileID: 50798105233725807, guid: 12c0181fc0ab3cd43b6fcef8c80bd418, type: 3}
+  cosmicEggPrefab: {fileID: 4058677530570053910, guid: a30a5e087130dd64ba215e7575a10d04, type: 3}
+  minInitialEggLayTime: 1.5
+  maxInitialEggLayTime: 3.5
   minEggLayTime: 6
   maxEggLayTime: 12
   emptyFoodEggIntervalMultiplier: 2
@@ -1489,6 +1500,75 @@ Transform:
   m_Children: []
   m_Father: {fileID: 2702350078080526121}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &7408778336578709774
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6828175386599946277}
+  - component: {fileID: 5963451102236120609}
+  - component: {fileID: 4814508857506316771}
+  m_Layer: 8
+  m_Name: Chicken Neck Pickup Target
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6828175386599946277
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7408778336578709774}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.285, z: 0.025}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1965813917592055250}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!136 &5963451102236120609
+CapsuleCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7408778336578709774}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Radius: 0.052
+  m_Height: 0.13
+  m_Direction: 1
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &4814508857506316771
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7408778336578709774}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5e6258b8edff63f4ebb5579d4886a1f3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ChickenPickupTarget
+  chicken: {fileID: 6481129536847051702}
 --- !u!1001 &3690990481551580711
 PrefabInstance:
   m_ObjectHideFlags: 0

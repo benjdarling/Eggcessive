@@ -74,6 +74,12 @@ public sealed class FoodShopController : MonoBehaviour
     private int ignorePlacementUntilFrame;
     private bool hasValidPlacement;
     private bool isPlacementActive;
+    private Button handToolButton;
+    private Button collectionToolButton;
+    private TMP_Text collectionToolLabel;
+    private Image handToolImage;
+    private Image collectionToolImage;
+    private Image foodToolImage;
 
     public const int MaximumFeedTier = 10;
     public static FoodShopController Instance { get; private set; }
@@ -120,6 +126,7 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         previewProperties = new MaterialPropertyBlock();
+        ConfigureCompactHud();
     }
 
     private void OnEnable()
@@ -129,17 +136,27 @@ public sealed class FoodShopController : MonoBehaviour
             foodIconButton.onClick.AddListener(BeginPlacement);
         }
 
+        if (handToolButton != null)
+        {
+            handToolButton.onClick.AddListener(SelectHandTool);
+        }
+
+        if (collectionToolButton != null)
+        {
+            collectionToolButton.onClick.AddListener(SelectCollectionTool);
+        }
+
         if (buyButton != null)
         {
             buyButton.onClick.AddListener(BuyFood);
         }
 
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
+        EggCarryController.ToolSelectionChanged += RefreshToolButtons;
     }
 
     private void Start()
     {
-        ConfigureCompactHud();
         RefreshUi();
     }
 
@@ -150,12 +167,23 @@ public sealed class FoodShopController : MonoBehaviour
             foodIconButton.onClick.RemoveListener(BeginPlacement);
         }
 
+        if (handToolButton != null)
+        {
+            handToolButton.onClick.RemoveListener(SelectHandTool);
+        }
+
+        if (collectionToolButton != null)
+        {
+            collectionToolButton.onClick.RemoveListener(SelectCollectionTool);
+        }
+
         if (buyButton != null)
         {
             buyButton.onClick.RemoveListener(BuyFood);
         }
 
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
+        EggCarryController.ToolSelectionChanged -= RefreshToolButtons;
         CancelPlacement();
     }
 
@@ -169,9 +197,33 @@ public sealed class FoodShopController : MonoBehaviour
 
     private void Update()
     {
-        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
+        Keyboard keyboard = Keyboard.current;
+        bool roundActive = RoundSystem.Instance == null
+            || RoundSystem.Instance.IsRoundInProgress;
+
+        if (roundActive && keyboard != null)
         {
-            CancelPlacement();
+            if (keyboard.digit1Key.wasPressedThisFrame)
+            {
+                SelectHandTool();
+            }
+            else if (keyboard.digit2Key.wasPressedThisFrame)
+            {
+                SelectCollectionTool();
+            }
+            else if (keyboard.digit3Key.wasPressedThisFrame)
+            {
+                BeginPlacement();
+            }
+        }
+
+        if (!roundActive)
+        {
+            if (isPlacementActive)
+            {
+                CancelPlacement();
+            }
+
             return;
         }
 
@@ -288,6 +340,7 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         CancelPlacement();
+        EggCarryController.Instance?.CancelPointerInteraction();
         isPlacementActive = true;
         IsPlacementActive = true;
         ignorePlacementUntilFrame = Time.frameCount + 1;
@@ -314,6 +367,7 @@ public sealed class FoodShopController : MonoBehaviour
         placementPreview.SetActive(false);
         SetStatus("Click in the pen to place");
         RoundSystem.Instance?.PlayFoodPickupSfx();
+        RefreshToolButtons();
     }
 
     private void UpdatePlacementPreview(Vector2 pointerPosition)
@@ -413,6 +467,7 @@ public sealed class FoodShopController : MonoBehaviour
 
     private void CancelPlacement()
     {
+        bool wasActive = isPlacementActive;
         isPlacementActive = false;
         IsPlacementActive = false;
         hasValidPlacement = false;
@@ -424,6 +479,33 @@ public sealed class FoodShopController : MonoBehaviour
 
         placementPreview = null;
         previewRenderers = null;
+
+        if (wasActive)
+        {
+            RefreshToolButtons();
+        }
+    }
+
+    private void SelectHandTool()
+    {
+        CancelPlacement();
+        EggCarryController.Instance?.SelectHandTool();
+        RefreshToolButtons();
+    }
+
+    private void SelectCollectionTool()
+    {
+        EggCarryController collection = EggCarryController.Instance;
+
+        if (collection == null || !collection.IsCollectionToolUnlocked)
+        {
+            SetStatus("Unlock the basket first");
+            return;
+        }
+
+        CancelPlacement();
+        collection.SelectCollectionTool();
+        RefreshToolButtons();
     }
 
     private void HandleBalanceChanged(int _)
@@ -461,6 +543,8 @@ public sealed class FoodShopController : MonoBehaviour
             affordabilityProgressFill.fillAmount = Mathf.Clamp01(
                 EggScoreHud.CurrentCents / (float)CurrentFeedBagCost);
         }
+
+        RefreshToolButtons();
     }
 
     private void ConfigureCompactHud()
@@ -483,20 +567,41 @@ public sealed class FoodShopController : MonoBehaviour
         iconRect.anchorMin = new Vector2(0.5f, 1f);
         iconRect.anchorMax = new Vector2(0.5f, 1f);
         iconRect.pivot = new Vector2(0.5f, 1f);
-        iconRect.anchoredPosition = new Vector2(0f, -190f);
+        iconRect.anchoredPosition = new Vector2(0f, -358f);
         iconRect.sizeDelta = new Vector2(54f, 54f);
+        foodToolImage = foodIconButton.GetComponent<Image>();
 
         if (ownedCountText != null)
         {
             ownedCountText.transform.SetParent(foodIconButton.transform, false);
             RectTransform countRect = ownedCountText.rectTransform;
-            countRect.anchorMin = new Vector2(1f, 0f);
-            countRect.anchorMax = new Vector2(1f, 0f);
+            countRect.anchorMin = new Vector2(1f, 1f);
+            countRect.anchorMax = new Vector2(1f, 1f);
             countRect.pivot = new Vector2(0.5f, 0.5f);
-            countRect.anchoredPosition = new Vector2(4f, -2f);
-            countRect.sizeDelta = new Vector2(76f, 34f);
-            ownedCountText.fontSize = 18f;
+            countRect.anchoredPosition = new Vector2(4f, -10f);
+            countRect.sizeDelta = new Vector2(76f, 24f);
+            ownedCountText.fontSize = 15f;
         }
+
+        handToolButton = CreateToolButton(
+            rightHudPanel,
+            "Hand Tool Button",
+            new Vector2(0f, -230f),
+            "HAND",
+            "1",
+            new Color(0.18f, 0.48f, 0.34f, 1f),
+            out handToolImage,
+            out _);
+        collectionToolButton = CreateToolButton(
+            rightHudPanel,
+            "Collection Tool Button",
+            new Vector2(0f, -294f),
+            "BASKET",
+            "2",
+            new Color(0.15f, 0.39f, 0.63f, 1f),
+            out collectionToolImage,
+            out collectionToolLabel);
+        EnsureShortcutBadge(foodIconButton.transform, "3");
 
         oldFoodPanel.gameObject.SetActive(false);
         Image rightHudBackground = rightHudPanel.GetComponent<Image>();
@@ -519,6 +624,173 @@ public sealed class FoodShopController : MonoBehaviour
         {
             oldIncubatorPanel.gameObject.SetActive(false);
         }
+    }
+
+    private Button CreateToolButton(
+        Transform parent,
+        string objectName,
+        Vector2 position,
+        string label,
+        string shortcut,
+        Color color,
+        out Image image,
+        out TMP_Text labelText)
+    {
+        GameObject buttonObject = new GameObject(
+            objectName,
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image),
+            typeof(Button));
+        buttonObject.transform.SetParent(parent, false);
+        RectTransform rect = buttonObject.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 1f);
+        rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = new Vector2(54f, 54f);
+        image = buttonObject.GetComponent<Image>();
+        image.color = color;
+
+        Button button = buttonObject.GetComponent<Button>();
+        button.targetGraphic = image;
+
+        GameObject labelObject = new GameObject(
+            "Label",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(TextMeshProUGUI));
+        labelObject.transform.SetParent(buttonObject.transform, false);
+        RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = new Vector2(3f, 10f);
+        labelRect.offsetMax = new Vector2(-3f, -3f);
+        labelText = labelObject.GetComponent<TextMeshProUGUI>();
+        labelText.text = label;
+        labelText.font = GetHudFont();
+        labelText.fontSize = 10f;
+        labelText.fontStyle = FontStyles.Bold;
+        labelText.alignment = TextAlignmentOptions.Center;
+        labelText.color = Color.white;
+        labelText.raycastTarget = false;
+        EnsureShortcutBadge(buttonObject.transform, shortcut);
+        return button;
+    }
+
+    private void EnsureShortcutBadge(Transform parent, string shortcut)
+    {
+        if (parent.Find("Shortcut Badge") != null)
+        {
+            return;
+        }
+
+        GameObject badgeObject = new GameObject(
+            "Shortcut Badge",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image));
+        badgeObject.transform.SetParent(parent, false);
+        RectTransform badgeRect = badgeObject.GetComponent<RectTransform>();
+        badgeRect.anchorMin = new Vector2(1f, 0f);
+        badgeRect.anchorMax = new Vector2(1f, 0f);
+        badgeRect.pivot = new Vector2(1f, 0f);
+        badgeRect.anchoredPosition = new Vector2(-2f, 2f);
+        badgeRect.sizeDelta = new Vector2(18f, 18f);
+        Image badgeImage = badgeObject.GetComponent<Image>();
+        badgeImage.color = new Color(0.04f, 0.04f, 0.04f, 0.94f);
+        badgeImage.raycastTarget = false;
+
+        GameObject textObject = new GameObject(
+            "Number",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(TextMeshProUGUI));
+        textObject.transform.SetParent(badgeObject.transform, false);
+        RectTransform textRect = textObject.GetComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+        TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
+        text.text = shortcut;
+        text.font = GetHudFont();
+        text.fontSize = 12f;
+        text.fontStyle = FontStyles.Bold;
+        text.alignment = TextAlignmentOptions.Center;
+        text.color = Color.white;
+        text.raycastTarget = false;
+    }
+
+    private TMP_FontAsset GetHudFont()
+    {
+        if (ownedCountText != null && ownedCountText.font != null)
+        {
+            return ownedCountText.font;
+        }
+
+        return placementStatusText != null ? placementStatusText.font : null;
+    }
+
+    private void RefreshToolButtons()
+    {
+        EggCarryController collection = EggCarryController.Instance;
+        bool foodSelected = isPlacementActive;
+        bool collectionSelected = !foodSelected
+            && collection != null
+            && collection.SelectedTool == EggCarryController.PlayerTool.Collection;
+        bool handSelected = !foodSelected && !collectionSelected;
+        SetToolButtonVisual(
+            handToolButton,
+            handToolImage,
+            new Color(0.18f, 0.48f, 0.34f, 1f),
+            handSelected);
+        SetToolButtonVisual(
+            collectionToolButton,
+            collectionToolImage,
+            new Color(0.15f, 0.39f, 0.63f, 1f),
+            collectionSelected);
+        SetToolButtonVisual(
+            foodIconButton,
+            foodToolImage,
+            new Color(0.54f, 0.27f, 0.08f, 1f),
+            foodSelected);
+
+        if (collectionToolButton != null)
+        {
+            collectionToolButton.interactable =
+                collection != null && collection.IsCollectionToolUnlocked;
+        }
+
+        if (collectionToolLabel != null)
+        {
+            collectionToolLabel.text = collection != null
+                ? collection.CollectionToolName
+                : "BASKET";
+        }
+    }
+
+    private static void SetToolButtonVisual(
+        Button button,
+        Image image,
+        Color baseColor,
+        bool selected)
+    {
+        if (button == null || image == null)
+        {
+            return;
+        }
+
+        Color shownColor = selected
+            ? Color.Lerp(baseColor, Color.white, 0.28f)
+            : baseColor;
+        image.color = shownColor;
+        ColorBlock colors = button.colors;
+        colors.normalColor = shownColor;
+        colors.selectedColor = shownColor;
+        colors.highlightedColor = Color.Lerp(shownColor, Color.white, 0.18f);
+        colors.pressedColor = Color.Lerp(shownColor, Color.black, 0.16f);
+        button.colors = colors;
     }
 
     private static string FormatMoney(int cents)

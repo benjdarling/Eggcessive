@@ -280,12 +280,30 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         collection.SetAutomationRareEggProtection(true);
+        CrosshatcherController crosshatcher = FindCrosshatcher();
+
+        if (TryFindCrosshatcherChicken(
+                crosshatcher,
+                out ChickenController crosshatchChicken,
+                out ChickenPickupTarget pickupTarget))
+        {
+            collection.SelectHandTool();
+            yield return LoadCrosshatcherChicken(
+                collection,
+                crosshatcher,
+                crosshatchChicken,
+                pickupTarget);
+            yield break;
+        }
+
         if (collection.HasVacuum)
         {
+            collection.SelectCollectionTool();
             yield return UseVacuum();
         }
         else if (collection.BasketUpgradeLevel > 0)
         {
+            collection.SelectCollectionTool();
             yield return UseBasket(collection);
         }
         else if (collection.HasRobot)
@@ -295,8 +313,86 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
         else
         {
+            collection.SelectHandTool();
             yield return UseHand();
         }
+    }
+
+    private IEnumerator LoadCrosshatcherChicken(
+        EggCarryController collection,
+        CrosshatcherController crosshatcher,
+        ChickenController chicken,
+        ChickenPickupTarget pickupTarget)
+    {
+        if (collection == null
+            || crosshatcher == null
+            || chicken == null
+            || pickupTarget == null)
+        {
+            yield break;
+        }
+
+        int occupiedBefore = crosshatcher.OccupiedSlots;
+        SetStatus(
+            $"CROSSHATCHER {occupiedBefore}/2  •  LOADING {chicken.Breed.ToString().ToUpperInvariant()}");
+        yield return MovePointerToChickenPickup(chicken, pickupTarget);
+
+        if (!IsPointerOverChickenPickup(chicken, pickupTarget))
+        {
+            yield return new WaitForSecondsRealtime(0.06f);
+            yield break;
+        }
+
+        QueueMouseButton(MouseButton.Left, true);
+        float pickupWait = 0f;
+
+        while (collection.HeldChicken != chicken && pickupWait < 0.4f)
+        {
+            if (!TryGetChickenPickupScreenPoint(
+                    chicken,
+                    pickupTarget,
+                    out Vector2 livePoint))
+            {
+                break;
+            }
+
+            MovePointerSpring(livePoint, MouseButton.Left);
+            pickupWait += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        if (collection.HeldChicken != chicken
+            || !TryGetWorldScreenPoint(
+                crosshatcher,
+                out Vector2 machinePoint))
+        {
+            QueueMouseButton(MouseButton.Left, false);
+            yield return new WaitForSecondsRealtime(actionPause);
+            yield break;
+        }
+
+        yield return MovePointer(machinePoint, MouseButton.Left);
+        yield return new WaitForSecondsRealtime(pointerDwellTime);
+        QueueMouseButton(MouseButton.Left, false);
+
+        float acceptanceWait = 0f;
+        while (crosshatcher != null
+            && crosshatcher.OccupiedSlots <= occupiedBefore
+            && acceptanceWait < 0.5f)
+        {
+            acceptanceWait += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        if (crosshatcher != null
+            && crosshatcher.OccupiedSlots > occupiedBefore)
+        {
+            completedActions++;
+            collectionActionCount++;
+        }
+
+        yield return new WaitForSecondsRealtime(
+            Mathf.Max(actionPause, 0.3f));
     }
 
     private IEnumerator UseHand()
@@ -589,7 +685,8 @@ public sealed class GameplayTestBot : MonoBehaviour
         IncubatorShopController incubatorShop =
             IncubatorShopController.Instance;
         bool needsIncubator = incubatorShop != null
-            && !incubatorShop.IsInstalled;
+            && !incubatorShop.IsInstalled
+            && !IsChickenCapReached();
         if (totalFoodSupply > 0 && needsIncubator)
         {
             ProgressionNodeButton incubatorPriorityNode =
@@ -621,8 +718,44 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
+        ProgressionNodeButton crosshatcherPriorityNode =
+            FindCrosshatcherPriorityNode(nodes);
+        if (crosshatcherPriorityNode != null
+            && shopPurchaseCount < maximumShopPurchasesPerVisit)
+        {
+            Button crosshatcherUpgrade =
+                crosshatcherPriorityNode.GetComponent<Button>();
+
+            if (CanPurchaseProgressionNode(crosshatcherUpgrade))
+            {
+                yield return ClickButton(
+                    crosshatcherUpgrade,
+                    $"SHOP  •  PRIORITISING {crosshatcherUpgrade.name.ToUpperInvariant()}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        $"SHOP  •  BUYING {crosshatcherUpgrade.name.ToUpperInvariant()}");
+                    yield break;
+                }
+            }
+        }
+
         ProgressionNodeButton vacuumPriorityNode =
             FindVacuumPriorityNode(nodes);
+        if (crosshatcherPriorityNode != null
+            && (CrosshatcherShopController.Instance == null
+                || !CrosshatcherShopController.Instance.IsInstalled))
+        {
+            yield return ClickNamedButton(
+                "Done Shopping",
+                "SHOP  •  SAVING FOR CROSSHATCHER");
+            yield break;
+        }
+
         if (vacuumPriorityNode != null)
         {
             Button priorityUpgrade = vacuumPriorityNode.GetComponent<Button>();
@@ -706,6 +839,19 @@ public sealed class GameplayTestBot : MonoBehaviour
                     continue;
                 }
 
+                if (IsChickenCapReached()
+                    && IsIncubatorUpgrade(node.UpgradeId))
+                {
+                    continue;
+                }
+
+                if (EggCarryController.Instance != null
+                    && EggCarryController.Instance.HasVacuum
+                    && node.UpgradeId == ProgressionSystem.UpgradeId.BasketCapacity)
+                {
+                    continue;
+                }
+
                 Button upgrade = node.GetComponent<Button>();
                 if (!CanPurchaseProgressionNode(upgrade))
                 {
@@ -736,7 +882,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     private bool ShouldUseIncubator(ChickenEgg egg)
     {
         return egg != null
-            && egg.Type == ChickenEgg.EggType.Standard
+            && egg.Type == ChickenEgg.EggType.Common
             && CanUseIncubator();
     }
 
@@ -756,13 +902,69 @@ public sealed class GameplayTestBot : MonoBehaviour
             ChickenEgg egg = eggs[index];
             if (egg != null
                 && !egg.IsCollected
-                && egg.Type != ChickenEgg.EggType.Standard)
+                && egg.Type != ChickenEgg.EggType.Common)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static ProgressionNodeButton FindCrosshatcherPriorityNode(
+        ProgressionNodeButton[] nodes)
+    {
+        CrosshatcherShopController shop =
+            CrosshatcherShopController.Instance;
+
+        if (shop == null || nodes == null)
+        {
+            return null;
+        }
+
+        ProgressionSystem.UpgradeId priorityId;
+        int targetLevel = 0;
+
+        if (!shop.IsInstalled)
+        {
+            priorityId =
+                ProgressionSystem.UpgradeId.CrosshatcherInstall;
+        }
+        else if (shop.SpeedLevel < CrosshatcherController.MaximumLevel
+            && (shop.SpeedLevel <= shop.QualityLevel
+                || shop.QualityLevel
+                    >= CrosshatcherController.MaximumLevel))
+        {
+            priorityId =
+                ProgressionSystem.UpgradeId.CrosshatcherSpeed;
+            targetLevel = shop.SpeedLevel + 1;
+        }
+        else if (shop.QualityLevel
+            < CrosshatcherController.MaximumLevel)
+        {
+            priorityId =
+                ProgressionSystem.UpgradeId.CrosshatcherQuality;
+            targetLevel = shop.QualityLevel + 1;
+        }
+        else
+        {
+            return null;
+        }
+
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+
+            if (node != null
+                && node.UpgradeId == priorityId
+                && (targetLevel <= 0
+                    || node.TargetLevel == targetLevel))
+            {
+                return node;
+            }
+        }
+
+        return null;
     }
 
     private static ProgressionNodeButton FindVacuumPriorityNode(
@@ -775,7 +977,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         ProgressionSystem.UpgradeId priorityId =
-            collection.BasketUpgradeLevel < 1
+            collection.BasketUpgradeLevel < 3
                 ? ProgressionSystem.UpgradeId.BasketCapacity
                 : ProgressionSystem.UpgradeId.VacuumPower;
 
@@ -784,7 +986,10 @@ public sealed class GameplayTestBot : MonoBehaviour
             ProgressionNodeButton node = nodes[index];
             if (node != null
                 && node.UpgradeId == priorityId
-                && node.TargetLevel == 1)
+                && (priorityId != ProgressionSystem.UpgradeId.BasketCapacity
+                    || node.TargetLevel == collection.BasketUpgradeLevel + 1)
+                && (priorityId != ProgressionSystem.UpgradeId.VacuumPower
+                    || node.TargetLevel == 1))
             {
                 return node;
             }
@@ -834,6 +1039,25 @@ public sealed class GameplayTestBot : MonoBehaviour
     private static IncubatorController FindIncubator()
     {
         return Object.FindFirstObjectByType<IncubatorController>();
+    }
+
+    private static CrosshatcherController FindCrosshatcher()
+    {
+        return Object.FindFirstObjectByType<CrosshatcherController>();
+    }
+
+    private static bool IsChickenCapReached()
+    {
+        return ChickenController.ActiveInstances.Count
+            >= ChickenController.MaximumChickenCount;
+    }
+
+    private static bool IsIncubatorUpgrade(
+        ProgressionSystem.UpgradeId upgradeId)
+    {
+        return upgradeId == ProgressionSystem.UpgradeId.IncubatorInstall
+            || upgradeId == ProgressionSystem.UpgradeId.IncubatorCapacity
+            || upgradeId == ProgressionSystem.UpgradeId.IncubatorSpeed;
     }
 
     private void UpdateFeedStrategy(RoundSystem round)
@@ -896,6 +1120,200 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         return available;
+    }
+
+    private bool TryFindCrosshatcherChicken(
+        CrosshatcherController crosshatcher,
+        out ChickenController selectedChicken,
+        out ChickenPickupTarget selectedTarget)
+    {
+        selectedChicken = null;
+        selectedTarget = null;
+
+        if (crosshatcher == null
+            || !crosshatcher.isActiveAndEnabled
+            || crosshatcher.IsProcessing
+            || crosshatcher.OccupiedSlots >= 2)
+        {
+            return false;
+        }
+
+        Camera camera = GetGameplayCamera();
+
+        if (camera == null)
+        {
+            return false;
+        }
+
+        ChickenPickupTarget[] targets =
+            Object.FindObjectsByType<ChickenPickupTarget>(
+                FindObjectsInactive.Exclude,
+                FindObjectsSortMode.None);
+        int availableChickenCount = 0;
+        int bestBreed = int.MaxValue;
+        float bestDistance = float.PositiveInfinity;
+        Vector2 screenCenter = new Vector2(
+            Screen.width * 0.5f,
+            Screen.height * 0.5f);
+
+        for (int index = 0; index < targets.Length; index++)
+        {
+            ChickenPickupTarget target = targets[index];
+            ChickenController chicken = target != null
+                ? target.Chicken
+                : null;
+
+            if (target == null
+                || !target.CanPickUp
+                || chicken == null
+                || chicken.Breed
+                    == ChickenController.ChickenBreed.Cosmic
+                || !TryGetChickenPickupScreenPoint(
+                    chicken,
+                    target,
+                    out Vector2 point)
+                || !RayHitsChickenPickup(
+                    camera,
+                    point,
+                    chicken,
+                    target))
+            {
+                continue;
+            }
+
+            availableChickenCount++;
+            int breed = (int)chicken.Breed;
+            float distance = Vector2.SqrMagnitude(
+                point - screenCenter);
+
+            if (breed > bestBreed
+                || breed == bestBreed
+                    && distance >= bestDistance)
+            {
+                continue;
+            }
+
+            selectedChicken = chicken;
+            selectedTarget = target;
+            bestBreed = breed;
+            bestDistance = distance;
+        }
+
+        int requiredAvailable = crosshatcher.OccupiedSlots > 0
+            ? 1
+            : 2;
+        bool preservesWorkingFlock =
+            crosshatcher.OccupiedSlots > 0
+            || ChickenController.ActiveInstances.Count >= 4;
+        return selectedChicken != null
+            && availableChickenCount >= requiredAvailable
+            && preservesWorkingFlock;
+    }
+
+    private bool TryGetChickenPickupScreenPoint(
+        ChickenController chicken,
+        ChickenPickupTarget pickupTarget,
+        out Vector2 point)
+    {
+        point = default;
+        Camera camera = GetGameplayCamera();
+
+        if (camera == null
+            || chicken == null
+            || pickupTarget == null
+            || !pickupTarget.CanPickUp)
+        {
+            return false;
+        }
+
+        Collider pickupCollider =
+            pickupTarget.GetComponent<Collider>();
+        Vector3 worldPoint = pickupCollider != null
+            ? pickupCollider.bounds.center
+            : pickupTarget.transform.position;
+        Vector3 projected = camera.WorldToScreenPoint(worldPoint);
+
+        if (projected.z <= 0f
+            || projected.x < 2f
+            || projected.y < 2f
+            || projected.x > Screen.width - 2f
+            || projected.y > Screen.height - 2f)
+        {
+            return false;
+        }
+
+        point = projected;
+        return true;
+    }
+
+    private static bool RayHitsChickenPickup(
+        Camera camera,
+        Vector2 screenPoint,
+        ChickenController chicken,
+        ChickenPickupTarget pickupTarget)
+    {
+        RaycastHit[] hits = Physics.RaycastAll(
+            camera.ScreenPointToRay(screenPoint),
+            100f,
+            ~0,
+            QueryTriggerInteraction.Collide);
+
+        for (int index = 0; index < hits.Length; index++)
+        {
+            ChickenPickupTarget hitTarget =
+                hits[index].collider.GetComponent<ChickenPickupTarget>();
+
+            if (hitTarget == pickupTarget
+                && hitTarget.Chicken == chicken)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsPointerOverChickenPickup(
+        ChickenController chicken,
+        ChickenPickupTarget pickupTarget)
+    {
+        Mouse mouse = automationInputMouse;
+        Camera camera = GetGameplayCamera();
+        return mouse != null
+            && camera != null
+            && chicken != null
+            && pickupTarget != null
+            && pickupTarget.CanPickUp
+            && RayHitsChickenPickup(
+                camera,
+                mouse.position.ReadValue(),
+                chicken,
+                pickupTarget);
+    }
+
+    private IEnumerator MovePointerToChickenPickup(
+        ChickenController chicken,
+        ChickenPickupTarget pickupTarget)
+    {
+        float elapsed = 0f;
+
+        while (elapsed < 1.5f
+            && TryGetChickenPickupScreenPoint(
+                chicken,
+                pickupTarget,
+                out Vector2 livePoint))
+        {
+            MovePointerSpring(livePoint);
+            elapsed += Time.unscaledDeltaTime;
+            yield return null;
+
+            if (IsPointerOverChickenPickup(
+                    chicken,
+                    pickupTarget))
+            {
+                yield break;
+            }
+        }
     }
 
     private bool TryFindClickableEgg(

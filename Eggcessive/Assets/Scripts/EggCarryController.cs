@@ -9,6 +9,12 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(Camera))]
 public sealed class EggCarryController : MonoBehaviour
 {
+    public enum PlayerTool
+    {
+        Hand,
+        Collection
+    }
+
     private static readonly int[] UpgradeCosts =
     {
         800, 1800, 3500, 6500, 11000, 17500, 27500, 45000, 75000
@@ -37,11 +43,15 @@ public sealed class EggCarryController : MonoBehaviour
 
     [Header("Pickup")]
     [SerializeField, Min(0.1f)] private float pickupDistance = 100f;
+    [Tooltip(
+        "World-space radius around the pointer ray used when the exact ray does not hit a hand pickup target.")]
+    [SerializeField, Min(0f)] private float handPickupRadius = 0.08f;
     [SerializeField] private LayerMask pickupLayers = ~0;
 
     [Header("Hand Carrying")]
     [SerializeField, Min(0f)] private float carryHeight = 0.3f;
     [SerializeField, Min(0.01f)] private float followSpeed = 25f;
+    [SerializeField] private PlayerTool selectedTool = PlayerTool.Hand;
 
     [Header("Collection Progression")]
     [SerializeField, Range(0, 9)] private int collectionLevel;
@@ -64,6 +74,11 @@ public sealed class EggCarryController : MonoBehaviour
 
     private Camera viewCamera;
     private ChickenEgg heldEgg;
+    private ChickenEgg hoveredHandEgg;
+    private ChickenController hoveredHandChicken;
+    private ChickenController heldChicken;
+    private readonly PickupOutlinePreview pickupOutline =
+        new PickupOutlinePreview();
     private Vector3 carryTarget;
     private Vector3 cursorGroundPosition;
     private Vector3 toolVelocity;
@@ -86,6 +101,7 @@ public sealed class EggCarryController : MonoBehaviour
     public const int MaximumCollectionLevel = 9;
     public static EggCarryController Instance { get; private set; }
     public static event Action CollectionLevelChanged;
+    public static event Action ToolSelectionChanged;
 
     public int CurrentCollectionLevel => GetLegacyCollectionLevel();
     public string CurrentCollectionName => HasRobot && HasVacuum
@@ -102,15 +118,27 @@ public sealed class EggCarryController : MonoBehaviour
     public bool HasPendingCollection => vacuumInFlight.Count > 0;
     public int BasketEggCount => basketEggCount;
     public bool BasketContainsRareEggs =>
-        basketEggTypes.Exists(type => type != ChickenEgg.EggType.Standard);
+        basketEggTypes.Exists(type => type != ChickenEgg.EggType.Common);
     public int CurrentBasketCapacity => BasketCapacity;
     public ChickenEgg HeldEgg => heldEgg;
+    public bool IsHoveringGrabbableEgg =>
+        hoveredHandEgg != null
+        && !hoveredHandEgg.IsHeld
+        && !hoveredHandEgg.IsCollected
+        && hoveredHandEgg.IsGroundedForPickupPreview;
+    public bool IsHoveringGrabbableChicken =>
+        hoveredHandChicken != null
+        && hoveredHandChicken.CanBePickedUp;
+    public ChickenController HeldChicken => heldChicken;
     public float HandCarryHeight => carryHeight;
     public int BasketUpgradeLevel => basketUpgradeLevel;
     public int VacuumPowerLevel => vacuumPowerLevel;
     public int VacuumRangeLevel => vacuumRangeLevel;
     public bool HasVacuum => vacuumPowerLevel > 0;
     public bool HasRobot => robotUnlocked;
+    public PlayerTool SelectedTool => selectedTool;
+    public bool IsCollectionToolUnlocked => IsBasketMode || IsVacuumMode;
+    public string CollectionToolName => HasVacuum ? "VACUUM" : "BASKET";
     public int RobotSpeedLevel => robotSpeedLevel;
     public int RobotCapacityLevel => robotCapacityLevel;
     public int RobotSmartnessLevel => robotSmartnessLevel;
@@ -145,13 +173,18 @@ public sealed class EggCarryController : MonoBehaviour
 
     private void OnDisable()
     {
+        hoveredHandEgg = null;
+        hoveredHandChicken = null;
         RoundSystem.PhaseChanged -= HandleRoundPhaseChanged;
         RoundSystem.Instance?.SetVacuumSfxActive(false);
-        ReleaseEgg();
+        pickupOutline.Clear();
+        ReleaseHandItems();
     }
 
     private void OnDestroy()
     {
+        pickupOutline.Dispose();
+
         if (Instance == this)
         {
             Instance = null;
@@ -160,21 +193,30 @@ public sealed class EggCarryController : MonoBehaviour
 
     private void Update()
     {
+        hoveredHandEgg = null;
+        hoveredHandChicken = null;
         bool roundActive = RoundSystem.Instance == null
             || RoundSystem.Instance.IsRoundInProgress;
-        SetCursorToolVisible(roundActive && !FoodShopController.IsPlacementActive);
+        bool collectionSelected = selectedTool == PlayerTool.Collection
+            && IsCollectionToolUnlocked;
+        SetCursorToolVisible(
+            roundActive
+            && !FoodShopController.IsPlacementActive
+            && collectionSelected);
 
         if (!roundActive)
         {
             RoundSystem.Instance?.SetVacuumSfxActive(false);
-            ReleaseEgg();
+            pickupOutline.Clear();
+            ReleaseHandItems();
             return;
         }
 
         if (FoodShopController.IsPlacementActive)
         {
             RoundSystem.Instance?.SetVacuumSfxActive(false);
-            ReleaseEgg();
+            pickupOutline.Clear();
+            ReleaseHandItems();
             return;
         }
 
@@ -183,6 +225,7 @@ public sealed class EggCarryController : MonoBehaviour
         if (mouse == null)
         {
             RoundSystem.Instance?.SetVacuumSfxActive(false);
+            pickupOutline.Clear();
             return;
         }
 
@@ -192,35 +235,72 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (EventSystem.current != null
             && EventSystem.current.IsPointerOverGameObject()
-            && heldEgg == null)
+            && heldEgg == null
+            && heldChicken == null)
         {
             RoundSystem.Instance?.SetVacuumSfxActive(false);
+            pickupOutline.Clear();
             return;
         }
 
-        if (IsBasketMode)
+        if (selectedTool == PlayerTool.Hand || !IsCollectionToolUnlocked)
         {
             RoundSystem.Instance?.SetVacuumSfxActive(false);
+            UpdateHand(pointerPosition, mouse);
+        }
+        else if (IsBasketMode)
+        {
+            RoundSystem.Instance?.SetVacuumSfxActive(false);
+            pickupOutline.Clear();
             UpdateBasket(pointerPosition, mouse);
         }
         else if (IsVacuumMode)
         {
+            pickupOutline.Clear();
             RoundSystem.Instance?.SetVacuumSfxActive(
                 mouse.leftButton.isPressed || mouse.rightButton.isPressed);
             UpdateVacuum(mouse);
-        }
-        else
-        {
-            RoundSystem.Instance?.SetVacuumSfxActive(false);
-            UpdateHand(pointerPosition, mouse);
         }
     }
 
     private void FixedUpdate()
     {
-        if (heldEgg != null)
+        bool hasHandAttachPosition =
+            WorldHandCursorController.TryGetHeldItemAttachPosition(out _);
+
+        if (!hasHandAttachPosition && heldEgg != null)
         {
             heldEgg.MoveWhileHeld(carryTarget, followSpeed);
+        }
+
+        if (!hasHandAttachPosition && heldChicken != null)
+        {
+            float follow = 1f - Mathf.Exp(-followSpeed * Time.fixedDeltaTime);
+            heldChicken.transform.position = Vector3.Lerp(
+                heldChicken.transform.position,
+                carryTarget,
+                follow);
+        }
+    }
+
+    private void LateUpdate()
+    {
+        if (!WorldHandCursorController.TryGetHeldItemAttachPosition(
+                out Vector3 attachPosition))
+        {
+            return;
+        }
+
+        if (heldEgg != null)
+        {
+            heldEgg.SnapWhileHeld(attachPosition);
+        }
+
+        if (heldChicken != null)
+        {
+            heldChicken.UpdateHeldCarryPose(
+                attachPosition,
+                Time.unscaledDeltaTime);
         }
     }
 
@@ -266,7 +346,46 @@ public sealed class EggCarryController : MonoBehaviour
     public void CancelPointerInteraction()
     {
         RoundSystem.Instance?.SetVacuumSfxActive(false);
-        ReleaseEgg();
+        pickupOutline.Clear();
+        ReleaseHandItems();
+    }
+
+    public void SelectHandTool()
+    {
+        if (selectedTool == PlayerTool.Hand)
+        {
+            return;
+        }
+
+        RoundSystem.Instance?.SetVacuumSfxActive(false);
+        pickupOutline.Clear();
+        ReleaseHandItems();
+        selectedTool = PlayerTool.Hand;
+        SetCursorToolVisible(false);
+        ToolSelectionChanged?.Invoke();
+    }
+
+    public bool SelectCollectionTool()
+    {
+        if (!IsCollectionToolUnlocked)
+        {
+            return false;
+        }
+
+        if (selectedTool == PlayerTool.Collection)
+        {
+            return true;
+        }
+
+        ReleaseHandItems();
+        pickupOutline.Clear();
+        selectedTool = PlayerTool.Collection;
+        bool shouldShow = RoundSystem.Instance != null
+            && RoundSystem.Instance.IsRoundInProgress
+            && !FoodShopController.IsPlacementActive;
+        SetCursorToolVisible(shouldShow);
+        ToolSelectionChanged?.Invoke();
+        return true;
     }
 
     public void SetAutomationRareEggProtection(bool enabled)
@@ -276,12 +395,44 @@ public sealed class EggCarryController : MonoBehaviour
 
     private void UpdateHand(Vector2 pointerPosition, Mouse mouse)
     {
-        if (heldEgg == null && mouse.leftButton.wasPressedThisFrame)
+        bool canPreviewPickup = heldEgg == null
+            && heldChicken == null
+            && !mouse.leftButton.isPressed;
+
+        if (canPreviewPickup)
         {
-            TryPickUpEgg(pointerPosition);
+            ResolveHandPickup(
+                pointerPosition,
+                out ChickenEgg previewEgg,
+                out ChickenController previewChicken);
+            bool eggCanShowPreview = previewEgg != null
+                && previewEgg.IsGroundedForPickupPreview;
+            hoveredHandEgg = eggCanShowPreview
+                ? previewEgg
+                : null;
+            hoveredHandChicken = previewEgg == null
+                ? previewChicken
+                : null;
+            pickupOutline.SetTarget(
+                eggCanShowPreview
+                    ? (Component)previewEgg
+                    : previewEgg == null
+                        ? previewChicken
+                        : null);
+        }
+        else
+        {
+            pickupOutline.Clear();
         }
 
-        if (heldEgg == null)
+        if (heldEgg == null
+            && heldChicken == null
+            && mouse.leftButton.wasPressedThisFrame)
+        {
+            TryPickUpHandItem(pointerPosition);
+        }
+
+        if (heldEgg == null && heldChicken == null)
         {
             return;
         }
@@ -290,7 +441,7 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (mouse.leftButton.wasReleasedThisFrame)
         {
-            ReleaseEgg();
+            ReleaseHandItem(pointerPosition);
         }
     }
 
@@ -430,7 +581,7 @@ public sealed class EggCarryController : MonoBehaviour
                 activeToolEggSlots[slotIndex].gameObject,
                 slotIndex < basketEggTypes.Count
                     ? basketEggTypes[slotIndex]
-                    : ChickenEgg.EggType.Standard);
+                    : ChickenEgg.EggType.Common);
             activeToolEggSlots[slotIndex].gameObject.SetActive(true);
         }
     }
@@ -508,7 +659,7 @@ public sealed class EggCarryController : MonoBehaviour
 
             bool eggRoutesToIncubator = routeToIncubator
                 && (!automationPreservesRareEggs
-                    || egg.Type == ChickenEgg.EggType.Standard);
+                    || egg.Type == ChickenEgg.EggType.Common);
             if (eggRoutesToIncubator
                 && (incubator == null
                     || !incubator.isActiveAndEnabled
@@ -628,7 +779,7 @@ public sealed class EggCarryController : MonoBehaviour
 
     private void ApplyCollectionLevel()
     {
-        ReleaseEgg();
+        ReleaseHandItems();
         basketAnimationGeneration++;
 
         if (activeCursorTool != null)
@@ -672,8 +823,11 @@ public sealed class EggCarryController : MonoBehaviour
         }
 
         bool shouldShow = RoundSystem.Instance != null
-            && RoundSystem.Instance.IsRoundInProgress;
+            && RoundSystem.Instance.IsRoundInProgress
+            && selectedTool == PlayerTool.Collection
+            && !FoodShopController.IsPlacementActive;
         SetCursorToolVisible(shouldShow);
+        ToolSelectionChanged?.Invoke();
     }
 
     private GameObject InstantiateTierPrefab(
@@ -784,19 +938,125 @@ public sealed class EggCarryController : MonoBehaviour
         }
     }
 
-    private void TryPickUpEgg(Vector2 pointerPosition)
+    private void TryPickUpHandItem(Vector2 pointerPosition)
     {
-        ChickenEgg nearestEgg = FindEggUnderPointer(pointerPosition);
-
-        if (nearestEgg == null || !nearestEgg.BeginCarry())
+        if (!ResolveHandPickup(
+                pointerPosition,
+                out ChickenEgg egg,
+                out ChickenController chicken))
         {
             return;
         }
 
-        heldEgg = nearestEgg;
-        RoundSystem.Instance?.PlayGrabSfx();
-        carryTarget = heldEgg.transform.position;
+        pickupOutline.Clear();
+
+        if (egg != null)
+        {
+            if (egg.BeginCarry())
+            {
+                heldEgg = egg;
+                carryTarget = egg.transform.position;
+                UpdateCarryTarget(pointerPosition);
+                RoundSystem.Instance?.PlayGrabSfx();
+            }
+
+            return;
+        }
+
+        heldChicken = chicken;
+        heldChicken.SetMachineControlled(true);
+        heldChicken.SetHeldByHand(true);
+        carryTarget = heldChicken.transform.position;
         UpdateCarryTarget(pointerPosition);
+        RoundSystem.Instance?.PlayGrabSfx();
+    }
+
+    private bool ResolveHandPickup(
+        Vector2 pointerPosition,
+        out ChickenEgg targetEgg,
+        out ChickenController targetChicken)
+    {
+        targetEgg = null;
+        targetChicken = null;
+        Ray ray = viewCamera.ScreenPointToRay(pointerPosition);
+        RaycastHit[] directHits = Physics.RaycastAll(
+            ray,
+            pickupDistance,
+            pickupLayers,
+            QueryTriggerInteraction.Collide);
+        Array.Sort(
+            directHits,
+            (left, right) => left.distance.CompareTo(right.distance));
+
+        if (ResolveHandPickupHits(
+                directHits,
+                out targetEgg,
+                out targetChicken))
+        {
+            return true;
+        }
+
+        if (handPickupRadius <= 0f)
+        {
+            return false;
+        }
+
+        RaycastHit[] radiusHits = Physics.SphereCastAll(
+            ray,
+            handPickupRadius,
+            pickupDistance,
+            pickupLayers,
+            QueryTriggerInteraction.Collide);
+        Array.Sort(
+            radiusHits,
+            (left, right) => left.distance.CompareTo(right.distance));
+        return ResolveHandPickupHits(
+            radiusHits,
+            out targetEgg,
+            out targetChicken);
+    }
+
+    private static bool ResolveHandPickupHits(
+        RaycastHit[] hits,
+        out ChickenEgg targetEgg,
+        out ChickenController targetChicken)
+    {
+        targetEgg = null;
+        targetChicken = null;
+
+        // Eggs always win the click, even when a chicken is standing over one.
+        foreach (RaycastHit hit in hits)
+        {
+            ChickenEgg egg = hit.collider.GetComponentInParent<ChickenEgg>();
+
+            if (egg != null && !egg.IsHeld && !egg.IsCollected)
+            {
+                targetEgg = egg;
+                return true;
+            }
+        }
+
+        // Chickens are draggable only through the small authored neck capsule.
+        foreach (RaycastHit hit in hits)
+        {
+            ChickenPickupTarget pickupTarget =
+                hit.collider.GetComponent<ChickenPickupTarget>();
+            ChickenController chicken = pickupTarget != null
+                ? pickupTarget.Chicken
+                : null;
+
+            if (pickupTarget == null
+                || !pickupTarget.CanPickUp
+                || chicken == null)
+            {
+                continue;
+            }
+
+            targetChicken = chicken;
+            return true;
+        }
+
+        return false;
     }
 
     private ChickenEgg FindEggUnderPointer(Vector2 pointerPosition)
@@ -886,6 +1146,36 @@ public sealed class EggCarryController : MonoBehaviour
         return targetIncubator != null;
     }
 
+    private bool TryGetCrosshatcherUnderPointer(
+        Vector2 pointerPosition,
+        out CrosshatcherController targetCrosshatcher)
+    {
+        Ray ray = viewCamera.ScreenPointToRay(pointerPosition);
+        RaycastHit[] hits = Physics.RaycastAll(
+            ray,
+            pickupDistance,
+            pickupLayers,
+            QueryTriggerInteraction.Collide);
+        targetCrosshatcher = null;
+        float nearestDistance = float.PositiveInfinity;
+
+        foreach (RaycastHit hit in hits)
+        {
+            CrosshatcherController candidate =
+                hit.collider.GetComponentInParent<CrosshatcherController>();
+
+            if (candidate != null
+                && candidate.isActiveAndEnabled
+                && hit.distance < nearestDistance)
+            {
+                targetCrosshatcher = candidate;
+                nearestDistance = hit.distance;
+            }
+        }
+
+        return targetCrosshatcher != null;
+    }
+
     private void UpdateCarryTarget(Vector2 pointerPosition)
     {
         Ray ray = viewCamera.ScreenPointToRay(pointerPosition);
@@ -904,8 +1194,49 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
-        heldEgg.Release(carryTarget);
+        heldEgg.Release(heldEgg.transform.position);
         heldEgg = null;
+    }
+
+    private void ReleaseHandItem(Vector2 pointerPosition)
+    {
+        if (heldChicken != null)
+        {
+            ChickenController chicken = heldChicken;
+
+            if (TryGetCrosshatcherUnderPointer(
+                    pointerPosition,
+                    out CrosshatcherController crosshatcher)
+                && crosshatcher.TryAcceptCarriedChicken(chicken))
+            {
+                heldChicken = null;
+                return;
+            }
+
+            ReleaseChicken();
+            return;
+        }
+
+        ReleaseEgg();
+    }
+
+    private void ReleaseChicken()
+    {
+        if (heldChicken == null)
+        {
+            return;
+        }
+
+        ChickenController chicken = heldChicken;
+        heldChicken = null;
+        chicken.SetHeldByHand(false);
+        chicken.SetMachineControlled(false);
+    }
+
+    private void ReleaseHandItems()
+    {
+        ReleaseEgg();
+        ReleaseChicken();
     }
 
     private void HandleRoundPhaseChanged(RoundSystem.RoundPhase phase)
@@ -915,7 +1246,7 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
-        ReleaseEgg();
+        ReleaseHandItems();
 
         if (basketEggCount > 0)
         {
@@ -966,7 +1297,7 @@ public sealed class EggCarryController : MonoBehaviour
                 activeToolEggSlots[index].gameObject,
                 index < basketEggTypes.Count
                     ? basketEggTypes[index]
-                    : ChickenEgg.EggType.Standard);
+                    : ChickenEgg.EggType.Common);
             activeToolEggSlots[index].gameObject.SetActive(index < basketEggCount);
         }
     }
@@ -974,6 +1305,7 @@ public sealed class EggCarryController : MonoBehaviour
     public void UpgradeBasket()
     {
         basketUpgradeLevel = Mathf.Min(3, basketUpgradeLevel + 1);
+        selectedTool = PlayerTool.Collection;
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
@@ -982,6 +1314,7 @@ public sealed class EggCarryController : MonoBehaviour
     {
         vacuumPowerLevel = Mathf.Min(3, vacuumPowerLevel + 1);
         vacuumRangeLevel = Mathf.Max(1, vacuumRangeLevel);
+        selectedTool = PlayerTool.Collection;
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
@@ -1111,6 +1444,7 @@ public sealed class EggCarryController : MonoBehaviour
     private void OnValidate()
     {
         pickupDistance = Mathf.Max(0.1f, pickupDistance);
+        handPickupRadius = Mathf.Max(0f, handPickupRadius);
         carryHeight = Mathf.Max(0f, carryHeight);
         followSpeed = Mathf.Max(0.01f, followSpeed);
         collectionLevel = Mathf.Clamp(collectionLevel, 0, MaximumCollectionLevel);

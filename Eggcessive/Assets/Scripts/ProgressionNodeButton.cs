@@ -209,11 +209,15 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         {
             ProgressionSystem.UpgradeId.FeedSpeed => "FEED\nSPEED",
             ProgressionSystem.UpgradeId.RareEggChance => "PREMIUM\nEGGS",
-            ProgressionSystem.UpgradeId.EggValue => "EGG\nVALUE",
+            ProgressionSystem.UpgradeId.EggValue => "EGG\nWEIGHT",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
                 $"CAPACITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorSpeed =>
                 $"HATCH RATE\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.CrosshatcherSpeed =>
+                $"SPEED\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.CrosshatcherQuality =>
+                $"BREED QUALITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.BasketCapacity => "BASKET\nCAPACITY",
             ProgressionSystem.UpgradeId.VacuumPower => "VACUUM\nPOWER",
             ProgressionSystem.UpgradeId.VacuumRange => "VACUUM\nRANGE",
