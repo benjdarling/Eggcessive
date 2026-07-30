@@ -184,7 +184,7 @@ public sealed class ProgressionSystem : MonoBehaviour
                     "Feed Bag",
                     "F",
                     food != null
-                        ? $"{food.CurrentFeedName} • {food.CurrentFeedSpeedMultiplier:0.##}x production"
+                        ? $"{food.CurrentFeedName} . {food.CurrentFeedSpeedMultiplier:0.##}x production"
                         : "Feed system unavailable",
                     food != null ? food.OwnedFoodCount : 0,
                     0,
@@ -197,7 +197,7 @@ public sealed class ProgressionSystem : MonoBehaviour
                     "Feed Speed",
                     ">>",
                     food != null && food.HasFeedTierUpgrade
-                        ? $"Next feed: {food.NextFeedName} • {food.NextFeedSpeedMultiplier:0.##}x"
+                        ? $"Next feed: {food.NextFeedName} . {food.NextFeedSpeedMultiplier:0.##}x"
                         : "Maximum production feed",
                     feedLevel,
                     FoodShopController.MaximumFeedTier,
@@ -850,9 +850,9 @@ public sealed class ProgressionSystem : MonoBehaviour
             out float legendary,
             out float cosmic);
         return
-            $"Rare {rare * 100f:0.###}% • " +
-            $"Epic {epic * 100f:0.###}% • " +
-            $"Legendary {legendary * 100f:0.###}% • " +
+            $"Rare {rare * 100f:0.###}% . " +
+            $"Epic {epic * 100f:0.###}% . " +
+            $"Legendary {legendary * 100f:0.###}% . " +
             $"Cosmic {cosmic * 100f:0.####}%";
     }
 

@@ -74,7 +74,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private void Awake()
     {
-        SetStatus("OFF  •  F8 TO START");
+        SetStatus("OFF  .  F8 TO START");
     }
 
     private void Start()
@@ -171,7 +171,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             cursorStateCaptured = false;
         }
 
-        SetStatus("OFF  •  F8 TO START");
+        SetStatus("OFF  .  F8 TO START");
     }
 
     private IEnumerator AutomationLoop()
@@ -196,7 +196,7 @@ public sealed class GameplayTestBot : MonoBehaviour
                     break;
 
                 case RoundSystem.RoundPhase.Countdown:
-                    SetStatus("COUNTDOWN  •  STANDING BY");
+                    SetStatus("COUNTDOWN  .  STANDING BY");
                     yield return new WaitForSecondsRealtime(0.15f);
                     break;
 
@@ -213,7 +213,7 @@ public sealed class GameplayTestBot : MonoBehaviour
                     break;
 
                 default:
-                    SetStatus($"{round.Phase.ToString().ToUpperInvariant()}  •  WAITING");
+                    SetStatus($"{round.Phase.ToString().ToUpperInvariant()}  .  WAITING");
                     yield return new WaitForSecondsRealtime(0.15f);
                     break;
             }
@@ -274,7 +274,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (collection == null)
         {
-            SetStatus("ROUND  •  WAITING FOR COLLECTION TOOL");
+            SetStatus("ROUND  .  WAITING FOR COLLECTION TOOL");
             yield return new WaitForSecondsRealtime(0.2f);
             yield break;
         }
@@ -308,7 +308,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
         else if (collection.HasRobot)
         {
-            SetStatus($"ROUND  •  SUPERVISING {collection.CurrentCollectionName.ToUpperInvariant()}");
+            SetStatus($"ROUND  .  SUPERVISING {collection.CurrentCollectionName.ToUpperInvariant()}");
             yield return new WaitForSecondsRealtime(0.25f);
         }
         else
@@ -334,7 +334,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         int occupiedBefore = crosshatcher.OccupiedSlots;
         SetStatus(
-            $"CROSSHATCHER {occupiedBefore}/2  •  LOADING {chicken.Breed.ToString().ToUpperInvariant()}");
+            $"CROSSHATCHER {occupiedBefore}/2  .  LOADING {chicken.Breed.ToString().ToUpperInvariant()}");
         yield return MovePointerToChickenPickup(chicken, pickupTarget);
 
         if (!IsPointerOverChickenPickup(chicken, pickupTarget))
@@ -399,7 +399,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     {
         if (!TryFindClickableEgg(out ChickenEgg egg, out _))
         {
-            SetStatus("ROUND  •  WAITING FOR EGGS");
+            SetStatus("ROUND  .  WAITING FOR EGGS");
             yield return new WaitForSecondsRealtime(0.18f);
             yield break;
         }
@@ -422,7 +422,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        SetStatus($"HAND  •  {(incubate ? "TO INCUBATOR" : "TO CONTAINER")}");
+        SetStatus($"HAND  .  {(incubate ? "TO INCUBATOR" : "TO CONTAINER")}");
         yield return MovePointerToEgg(egg);
         if (!IsPointerOverEgg(egg))
         {
@@ -490,14 +490,14 @@ public sealed class GameplayTestBot : MonoBehaviour
             && !collection.BasketContainsRareEggs
             && CanUseIncubator())
         {
-            SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  INCUBATING ONE");
+            SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  .  INCUBATING ONE");
             IncubatorController incubator = FindIncubator();
             int transferCount = Mathf.Min(
                 collection.BasketEggCount,
                 incubator.AvailableCapacity);
             SetStatus(
                 $"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}" +
-                $"  •  INCUBATING {transferCount}");
+                $"  .  INCUBATING {transferCount}");
 
             for (int index = 0; index < transferCount; index++)
             {
@@ -515,19 +515,19 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (collection.BasketEggCount > 0 && basketLoaded)
         {
-            SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  CASHING IN");
+            SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  .  CASHING IN");
             yield return ClickWorldComponent(EggContainer.Instance);
             yield break;
         }
 
         if (!hasCollectibleEgg)
         {
-            SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  WAITING");
+            SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  .  WAITING");
             yield return new WaitForSecondsRealtime(0.18f);
             yield break;
         }
 
-        SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  •  COLLECTING");
+        SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  .  COLLECTING");
         yield return ClickMovingEgg(egg);
     }
 
@@ -535,14 +535,14 @@ public sealed class GameplayTestBot : MonoBehaviour
     {
         if (!TryFindClickableEgg(out ChickenEgg egg, out _))
         {
-            SetStatus("VACUUM  •  WAITING FOR EGGS");
+            SetStatus("VACUUM  .  WAITING FOR EGGS");
             yield return new WaitForSecondsRealtime(0.16f);
             yield break;
         }
 
         bool incubate = ShouldUseIncubator(egg)
             && !HasUncollectedRareEggs();
-        SetStatus($"VACUUM  •  {(incubate ? "RIGHT SUCK TO INCUBATOR" : "CASH SUCK")}");
+        SetStatus($"VACUUM  .  {(incubate ? "RIGHT SUCK TO INCUBATOR" : "CASH SUCK")}");
         yield return MovePointerToEgg(egg);
         if (!IsPointerOverEgg(egg))
         {
@@ -593,7 +593,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         Vector2 screenPoint = new Vector2(
             viewport.x * Screen.width,
             viewport.y * Screen.height);
-        SetStatus($"FEED  •  PLACING IN PEN ({foodPlacementAttempt})");
+        SetStatus($"FEED  .  PLACING IN PEN ({foodPlacementAttempt})");
         yield return ClickScreen(screenPoint);
     }
 
@@ -603,19 +603,19 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (IsUsable(shopButton))
         {
-            yield return ClickButton(shopButton, "RESULTS  •  OPENING SHOP");
+            yield return ClickButton(shopButton, "RESULTS  .  OPENING SHOP");
             yield break;
         }
 
         if (!resultsSkipSent)
         {
             resultsSkipSent = true;
-            SetStatus("RESULTS  •  SKIPPING COUNT-UP");
+            SetStatus("RESULTS  .  SKIPPING COUNT-UP");
             yield return ClickScreen(new Vector2(Screen.width * 0.12f, Screen.height * 0.18f));
             yield break;
         }
 
-        SetStatus("RESULTS  •  WAITING FOR BUTTONS");
+        SetStatus("RESULTS  .  WAITING FOR BUTTONS");
         yield return new WaitForSecondsRealtime(0.12f);
     }
 
@@ -625,7 +625,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             Object.FindFirstObjectByType<ProgressionTreePreview>();
         if (preview != null && preview.IsOpen)
         {
-            SetStatus("SHOP  •  CLOSING DETAILS");
+            SetStatus("SHOP  .  CLOSING DETAILS");
             RectTransform emptySpace = FindNamedRectTransform("Shop Title");
             if (emptySpace != null)
             {
@@ -730,7 +730,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             {
                 yield return ClickButton(
                     crosshatcherUpgrade,
-                    $"SHOP  •  PRIORITISING {crosshatcherUpgrade.name.ToUpperInvariant()}");
+                    $"SHOP  .  PRIORITISING {crosshatcherUpgrade.name.ToUpperInvariant()}");
                 Button previewBuy = FindNamedButton("Preview Buy");
 
                 if (IsUsable(previewBuy))
@@ -738,7 +738,7 @@ public sealed class GameplayTestBot : MonoBehaviour
                     shopPurchaseCount++;
                     yield return ClickButton(
                         previewBuy,
-                        $"SHOP  •  BUYING {crosshatcherUpgrade.name.ToUpperInvariant()}");
+                        $"SHOP  .  BUYING {crosshatcherUpgrade.name.ToUpperInvariant()}");
                     yield break;
                 }
             }
@@ -752,7 +752,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         {
             yield return ClickNamedButton(
                 "Done Shopping",
-                "SHOP  •  SAVING FOR CROSSHATCHER");
+                "SHOP  .  SAVING FOR CROSSHATCHER");
             yield break;
         }
 
@@ -807,14 +807,14 @@ public sealed class GameplayTestBot : MonoBehaviour
 
             if (CanPurchaseProgressionNode(buyFeed))
             {
-                yield return ClickButton(buyFeed, "SHOP  •  SELECTING FEED BAG");
+                yield return ClickButton(buyFeed, "SHOP  .  SELECTING FEED BAG");
                 Button previewBuy = FindNamedButton("Preview Buy");
                 if (IsUsable(previewBuy))
                 {
                     shopPurchaseCount++;
                     yield return ClickButton(
                         previewBuy,
-                        "SHOP  •  BUYING FEED BAG");
+                        "SHOP  .  BUYING FEED BAG");
                     yield break;
                 }
             }
@@ -860,7 +860,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
                 yield return ClickButton(
                     upgrade,
-                    $"SHOP  •  SELECTING {upgrade.name.ToUpperInvariant()}");
+                    $"SHOP  .  SELECTING {upgrade.name.ToUpperInvariant()}");
                 Button previewBuy = FindNamedButton("Preview Buy");
                 if (!IsUsable(previewBuy))
                 {
@@ -871,12 +871,12 @@ public sealed class GameplayTestBot : MonoBehaviour
                 shopPurchaseCount++;
                 yield return ClickButton(
                     previewBuy,
-                    $"SHOP  •  BUYING {upgrade.name.ToUpperInvariant()}");
+                    $"SHOP  .  BUYING {upgrade.name.ToUpperInvariant()}");
                 yield break;
             }
         }
 
-        yield return ClickNamedButton("Done Shopping", "SHOP  •  DONE");
+        yield return ClickNamedButton("Done Shopping", "SHOP  .  DONE");
     }
 
     private bool ShouldUseIncubator(ChickenEgg egg)
@@ -1585,7 +1585,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (!IsUsable(button))
         {
-            SetStatus($"{activity}  •  WAITING");
+            SetStatus($"{activity}  .  WAITING");
             yield return new WaitForSecondsRealtime(0.15f);
             yield break;
         }
@@ -1928,7 +1928,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         statusText.text = IsRunning
-            ? $"TEST BOT  •  F8 STOP  •  ACTIONS {completedActions}\n{activity}"
+            ? $"TEST BOT  .  F8 STOP  .  ACTIONS {completedActions}\n{activity}"
             : $"TEST BOT\n{activity}";
     }
 

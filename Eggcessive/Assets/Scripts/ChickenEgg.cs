@@ -68,6 +68,13 @@ public sealed class ChickenEgg : MonoBehaviour
         int eggLayer = LayerMask.NameToLayer(EggLayerName);
         if (chickenLayer >= 0 && eggLayer >= 0)
         {
+            // Chicken movement and egg pushing are handled explicitly. Their
+            // trigger colliders do not need PhysX to build chicken/chicken or
+            // chicken/egg contact pairs.
+            Physics.IgnoreLayerCollision(
+                chickenLayer,
+                chickenLayer,
+                true);
             Physics.IgnoreLayerCollision(chickenLayer, eggLayer, true);
         }
     }

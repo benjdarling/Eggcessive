@@ -1154,7 +1154,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 2
+  m_Intensity: 3
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -2296,11 +2296,11 @@ MonoBehaviour:
   domainWarpStrength: 0.42
   clumpScale: 2.4
   clumpVariation: 0.45
-  minimumEdgeHeightScale: 0.4
-  minimumEdgeWidthScale: 0.5
+  minimumEdgeHeightScale: 0.3
+  minimumEdgeWidthScale: 0.7
   edgeTaperPower: 0.85
-  minimumHeight: 0.02
-  maximumHeight: 0.07
+  minimumHeight: 0.03
+  maximumHeight: 0.06
   minimumWidthScale: 1.2
   maximumWidthScale: 1.6
   interactionBendDistance: 0.8
@@ -2309,14 +2309,14 @@ MonoBehaviour:
   bendResponseTime: 0.06
   bendRecoveryTime: 0.55
   interactionGridCellSize: 0.5
-  steadyWindBend: 0.08
-  turbulentWindBend: 0.8
-  turbulenceDeadZone: 0.012
-  maximumWindBend: 0.6
-  minimumWindResponse: 0.7
-  maximumWindResponse: 1
-  windNoiseOffsetDistance: 0.2
-  windSampleCellSize: 0.3
+  steadyWindBend: 0.4
+  turbulentWindBend: 3
+  turbulenceDeadZone: 0.01
+  maximumWindBend: 50
+  minimumWindResponse: 0.6
+  maximumWindResponse: 1.5
+  windNoiseOffsetDistance: 0.1
+  windSampleCellSize: 0.1
 --- !u!1 &759980837
 GameObject:
   m_ObjectHideFlags: 0

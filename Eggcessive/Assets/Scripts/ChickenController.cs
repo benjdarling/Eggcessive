@@ -6,6 +6,7 @@ using UnityEngine.AI;
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CapsuleCollider))]
+[RequireComponent(typeof(Rigidbody))]
 public sealed class ChickenController : MonoBehaviour
 {
     public enum ChickenBreed
@@ -150,6 +151,7 @@ public sealed class ChickenController : MonoBehaviour
 
     private NavMeshAgent agent;
     private CapsuleCollider bodyCollider;
+    private Rigidbody physicsBody;
     private NavMeshQueryFilter navMeshQueryFilter;
     private ChickenState state;
     private FoodPile targetFood;
@@ -199,6 +201,8 @@ public sealed class ChickenController : MonoBehaviour
     private Vector3 previousHeldAttachPosition;
     private bool hasPreviousHeldAttachPosition;
     private MaterialPropertyBlock breedPropertyBlock;
+    private Vector3 cachedSeparation;
+    private int separationUpdateOffset;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
@@ -290,14 +294,28 @@ public sealed class ChickenController : MonoBehaviour
         path = new NavMeshPath();
         agent = GetComponent<NavMeshAgent>();
         bodyCollider = GetComponent<CapsuleCollider>();
+        physicsBody = GetComponent<Rigidbody>();
+        if (physicsBody == null)
+        {
+            physicsBody = gameObject.AddComponent<Rigidbody>();
+        }
+        physicsBody.isKinematic = true;
+        physicsBody.useGravity = false;
+        physicsBody.interpolation = RigidbodyInterpolation.None;
+        physicsBody.collisionDetectionMode =
+            CollisionDetectionMode.Discrete;
         agent.speed = moveSpeed;
         agent.acceleration = acceleration;
         agent.angularSpeed = angularSpeed;
         agent.stoppingDistance = 0.03f;
         agent.autoBraking = true;
         agent.autoRepath = true;
-        agent.obstacleAvoidanceType = ObstacleAvoidanceType.GoodQualityObstacleAvoidance;
+        // Custom separation already keeps the flock apart. Low-quality local
+        // avoidance avoids duplicating expensive dense-crowd work.
+        agent.obstacleAvoidanceType =
+            ObstacleAvoidanceType.LowQualityObstacleAvoidance;
         agent.avoidancePriority = Random.Range(20, 81);
+        separationUpdateOffset = Mathf.Abs(GetInstanceID());
 
         navMeshQueryFilter = new NavMeshQueryFilter
         {
@@ -365,6 +383,7 @@ public sealed class ChickenController : MonoBehaviour
         hasPreviousHeldAttachPosition = false;
         heldDragAngles = Vector3.zero;
         heldDragAngularVelocity = Vector3.zero;
+        cachedSeparation = Vector3.zero;
         targetFood = null;
     }
 
@@ -1093,6 +1112,22 @@ public sealed class ChickenController : MonoBehaviour
     {
         if (separationRadius <= 0f || separationStrength <= 0f || !agent.isOnNavMesh)
         {
+            cachedSeparation = Vector3.zero;
+            return;
+        }
+
+        int updateInterval = ActiveChickens.Count >= 80
+            ? 4
+            : ActiveChickens.Count >= 40
+                ? 2
+                : 1;
+
+        if ((Time.frameCount + separationUpdateOffset)
+            % updateInterval != 0)
+        {
+            agent.Move(
+                cachedSeparation
+                * (separationStrength * Time.deltaTime));
             return;
         }
 
@@ -1130,7 +1165,10 @@ public sealed class ChickenController : MonoBehaviour
             separation.Normalize();
         }
 
-        agent.Move(separation * (separationStrength * Time.deltaTime));
+        cachedSeparation = separation;
+        agent.Move(
+            cachedSeparation
+            * (separationStrength * Time.deltaTime));
     }
 
     private void PushNearbyEggs()

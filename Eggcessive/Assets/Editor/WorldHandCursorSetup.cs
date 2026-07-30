@@ -9,12 +9,15 @@ public static class WorldHandCursorSetup
 {
     private const string ModelPath = "Assets/UI/meshes/ui_hand.fbx";
     private const string AnimationFolder = "Assets/UI/animations";
+    private const string AvatarPath =
+        AnimationFolder + "/ui_hand_avatar.asset";
     private const string ControllerPath =
         AnimationFolder + "/ui_hand_cursor.controller";
     private const string ResourcesUiFolder = "Assets/Resources/UI";
     private const string PrefabPath =
         ResourcesUiFolder + "/prefab_world_hand_cursor.prefab";
-    private const float TargetVisualSize = 0.165f;
+    private const float AuthoredVisualScale = 0.51213443f;
+    private const string FingertipBoneName = "DEF-f_index.03.R";
     private const string PointStateName = "Point";
     private const string EggHoldStateName = "Egg Hold";
     private const string EggReadyStateName = "Egg Ready To Grab";
@@ -32,19 +35,35 @@ public static class WorldHandCursorSetup
     [InitializeOnLoadMethod]
     private static void QueueInitialGeneration()
     {
+        QueueInitialGenerationCheck();
+    }
+
+    private static void QueueInitialGenerationCheck()
+    {
+        EditorApplication.delayCall -= GenerateIfNeeded;
+        EditorApplication.delayCall += GenerateIfNeeded;
+    }
+
+    private static void GenerateIfNeeded()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode
+            || EditorApplication.isCompiling)
+        {
+            return;
+        }
+
+        if (EditorApplication.isUpdating)
+        {
+            QueueInitialGenerationCheck();
+            return;
+        }
+
         GameObject prefab =
             AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
-        Animator animator = prefab != null
-            ? prefab.GetComponentInChildren<Animator>(true)
-            : null;
 
-        if (prefab == null
-            || animator == null
-            || animator.avatar == null
-            || !HasRequiredAnimationStates(
-                animator.runtimeAnimatorController))
+        if (!IsAuthoredPrefabComplete(prefab))
         {
-            EditorApplication.delayCall += Generate;
+            Generate();
         }
     }
 
@@ -83,10 +102,12 @@ public static class WorldHandCursorSetup
         AnimationClip chickenReadyClip =
             FindAnimationClip(ChickenReadyClipName)
             ?? FindStateClip(animatorController, ChickenReadyStateName);
-        Avatar avatar = AssetDatabase
-            .LoadAllAssetsAtPath(ModelPath)
-            .OfType<Avatar>()
-            .FirstOrDefault();
+        Avatar avatar = LoadHandAvatar();
+
+        if (avatar == null && model != null)
+        {
+            avatar = CreateHandAvatar(model);
+        }
 
         if (model == null
             || pointClip == null
@@ -97,7 +118,18 @@ public static class WorldHandCursorSetup
             || avatar == null)
         {
             Debug.LogError(
-                "ui_hand.fbx, its Avatar, or a required hand pose clip could not be loaded.");
+                "World hand cursor could not be rebuilt. Missing: "
+                + string.Join(
+                    ", ",
+                    GetMissingDependencyNames(
+                        model,
+                        avatar,
+                        pointClip,
+                        eggHoldClip,
+                        eggReadyClip,
+                        chickenHoldClip,
+                        chickenReadyClip))
+                + ".");
             return;
         }
 
@@ -133,9 +165,23 @@ public static class WorldHandCursorSetup
         stateMachine.defaultState = pointState;
         EditorUtility.SetDirty(animatorController);
 
+        GameObject existingPrefab =
+            AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
+        WorldHandCursorController existingController =
+            existingPrefab != null
+                ? existingPrefab.GetComponent<WorldHandCursorController>()
+                : null;
         GameObject cursorRoot = new GameObject("World Hand Cursor");
         WorldHandCursorController cursorController =
             cursorRoot.AddComponent<WorldHandCursorController>();
+
+        if (existingController != null)
+        {
+            EditorUtility.CopySerialized(
+                existingController,
+                cursorController);
+        }
+
         GameObject visual = (GameObject)PrefabUtility.InstantiatePrefab(model);
         visual.name = "Visual";
         visual.transform.SetParent(cursorRoot.transform, false);
@@ -150,7 +196,8 @@ public static class WorldHandCursorSetup
         animator.runtimeAnimatorController = animatorController;
         animator.avatar = avatar;
         animator.applyRootMotion = false;
-        NormalizeVisualScale(visual.transform);
+        visual.transform.localScale =
+            Vector3.one * AuthoredVisualScale;
         visual.transform.localRotation = Quaternion.Euler(0f, -30f, 0f);
 
         SerializedObject serializedController =
@@ -163,6 +210,12 @@ public static class WorldHandCursorSetup
             .objectReferenceValue = visual
             .GetComponentsInChildren<Transform>(true)
             .FirstOrDefault(child => child.name == "Bone_Attach");
+        serializedController.FindProperty("cursorHotspotBone")
+            .objectReferenceValue = visual
+            .GetComponentsInChildren<Transform>(true)
+            .FirstOrDefault(child => child.name == FingertipBoneName);
+        serializedController.FindProperty("showCursorDebugMarker").boolValue =
+            false;
         serializedController.ApplyModifiedPropertiesWithoutUndo();
 
         PrefabUtility.SaveAsPrefabAsset(cursorRoot, PrefabPath);
@@ -241,6 +294,112 @@ public static class WorldHandCursorSetup
                 || clip.name.EndsWith(
                     $"|{clipName}",
                     StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static Avatar LoadHandAvatar()
+    {
+        return AssetDatabase.LoadAssetAtPath<Avatar>(AvatarPath)
+            ?? AssetDatabase
+                .LoadAllAssetsAtPath(ModelPath)
+                .OfType<Avatar>()
+                .FirstOrDefault();
+    }
+
+    private static Avatar CreateHandAvatar(GameObject model)
+    {
+        GameObject instance =
+            (GameObject)PrefabUtility.InstantiatePrefab(model);
+
+        if (instance == null)
+        {
+            instance = UnityEngine.Object.Instantiate(model);
+        }
+
+        try
+        {
+            Transform skeletonRoot = instance
+                .GetComponentsInChildren<Transform>(true)
+                .FirstOrDefault(child =>
+                    child.name.Equals(
+                        "root",
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (skeletonRoot == null)
+            {
+                Debug.LogError(
+                    "ui_hand.fbx does not contain its expected root transform.");
+                return null;
+            }
+
+            Avatar avatar = AvatarBuilder.BuildGenericAvatar(
+                instance,
+                skeletonRoot.name);
+
+            if (avatar == null || !avatar.isValid)
+            {
+                if (avatar != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(avatar);
+                }
+
+                Debug.LogError(
+                    "Unity could not build a valid Generic Avatar from ui_hand.fbx.");
+                return null;
+            }
+
+            avatar.name = "ui_hand_avatar";
+            AssetDatabase.CreateAsset(avatar, AvatarPath);
+            return avatar;
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(instance);
+        }
+    }
+
+    private static IEnumerable<string> GetMissingDependencyNames(
+        GameObject model,
+        Avatar avatar,
+        AnimationClip pointClip,
+        AnimationClip eggHoldClip,
+        AnimationClip eggReadyClip,
+        AnimationClip chickenHoldClip,
+        AnimationClip chickenReadyClip)
+    {
+        if (model == null)
+        {
+            yield return ModelPath;
+        }
+
+        if (avatar == null)
+        {
+            yield return "Avatar";
+        }
+
+        if (pointClip == null)
+        {
+            yield return PointClipName;
+        }
+
+        if (eggHoldClip == null)
+        {
+            yield return EggHoldClipName;
+        }
+
+        if (eggReadyClip == null)
+        {
+            yield return EggReadyClipName;
+        }
+
+        if (chickenHoldClip == null)
+        {
+            yield return ChickenHoldClipName;
+        }
+
+        if (chickenReadyClip == null)
+        {
+            yield return ChickenReadyClipName;
+        }
     }
 
     private static AnimationClip FindStateClip(
@@ -391,6 +550,17 @@ public static class WorldHandCursorSetup
             && HasStateMotion(states, ChickenReadyStateName);
     }
 
+    private static bool IsAuthoredPrefabComplete(GameObject prefab)
+    {
+        Animator animator = prefab != null
+            ? prefab.GetComponentInChildren<Animator>(true)
+            : null;
+        return animator != null
+            && animator.avatar != null
+            && HasRequiredAnimationStates(
+                animator.runtimeAnimatorController);
+    }
+
     private static bool HasStateMotion(
         AnimatorState[] states,
         string stateName)
@@ -399,33 +569,6 @@ public static class WorldHandCursorSetup
             state != null
             && state.name == stateName
             && state.motion != null);
-    }
-
-    private static void NormalizeVisualScale(Transform visual)
-    {
-        Renderer[] renderers = visual.GetComponentsInChildren<Renderer>(true);
-
-        if (renderers.Length == 0)
-        {
-            return;
-        }
-
-        Bounds bounds = renderers[0].bounds;
-
-        for (int index = 1; index < renderers.Length; index++)
-        {
-            bounds.Encapsulate(renderers[index].bounds);
-        }
-
-        float largestSize = Mathf.Max(
-            bounds.size.x,
-            Mathf.Max(bounds.size.y, bounds.size.z));
-
-        if (largestSize > 0.0001f)
-        {
-            visual.localScale = Vector3.one
-                * (TargetVisualSize / largestSize);
-        }
     }
 
     private static void EnsureFolder(string parent, string child)

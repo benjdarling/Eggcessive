@@ -5,5 +5,7 @@ TODO:
 notes money
 chicken LODs
 
+truck art
+
 ground rocks
 ground flowers

@@ -11880,7 +11880,22 @@ MonoBehaviour:
   coinEffectLayer: {fileID: 3778511676556455697}
   coinHudTarget: {fileID: 6141976038429337275}
   flyingCoinPrefab: {fileID: 5029729844846779995, guid: ca99090701c09514d840eaa7ee5eea5b, type: 3}
-  flyingCoinSpinDegreesPerSecond: 1440
+  flyingCoinSpinDegreesPerSecond: 2880
+  flyingCashModels:
+  - {fileID: 919132149155446097, guid: 05571bede1c79304d8240bcd67403cd1, type: 3}
+  - {fileID: 919132149155446097, guid: 569d4f1d69c74d94e99e78dba0590909, type: 3}
+  flyingCashMaterial: {fileID: 2100000, guid: 534edf33aa2bd094fb240e43244c937b, type: 2}
+  flyingCashLightingMatCap: {fileID: 2800000, guid: 8ff54edb70f2f4e4d90611387242893b, type: 3}
+  flyingCashMatCapLightStrength: 2
+  rewardParticleShader: {fileID: 4800000, guid: 8e21a10438b74b1daf98bc665470c901, type: 3}
+  cashTransitionStartCents: 50000
+  cashRewardThresholdCents: 300000
+  maximumRewardParticlesPerBurst: 6000
+  rewardParticleTrailDuration: 1
+  maximumRewardParticlesPerSecond: 4000
+  rewardParticleEmissionJitter: 0.35
+  flyingCashMinimumSpinDegreesPerSecond: 2160
+  flyingCashMaximumSpinDegreesPerSecond: 5760
   floatingRewardPrefab: {fileID: 3103224535744667012, guid: d2b78e050a97a9f48932de71fd312e81, type: 3}
   buttonClickSfx: {fileID: 8300000, guid: d480ab8825cb4e5591918d7d8b61a0bc, type: 3}
   cashRegisterSfx: {fileID: 8300000, guid: 86187ad3cbb8f9a4ab032e83cdad9d35, type: 3}
@@ -11901,6 +11916,15 @@ MonoBehaviour:
   - {fileID: 8300000, guid: 27b0b400c3c51c248bb504b0c72761ef, type: 3}
   - {fileID: 8300000, guid: a1edf68a33ce78740915045c10293155, type: 3}
   - {fileID: 8300000, guid: 71b1b3c6703c26442a6bf77b6d3f7ce3, type: 3}
+  cashLandingSfx:
+  - {fileID: 8300000, guid: c249925f15380d840855eac1915caae1, type: 3}
+  - {fileID: 8300000, guid: ab74b34f33e6ba04881a07340272183f, type: 3}
+  - {fileID: 8300000, guid: 2a48dcc21fbad2945bb393169e2d6b04, type: 3}
+  rewardLandingPitchVariation: 0.05
+  rewardLandingVolumeVariation: 0.05
+  cashLandingVolumeScale: 0.5
+  maximumRewardLandingSoundsPerSecond: 24
+  coalescedRewardLandingVolumeBoost: 0.08
   uiSfxVolume: 1
   vacuumSfxVolumeScale: 0.25
   vacuumSfxFadeDuration: 0.08

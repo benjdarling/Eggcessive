@@ -16,6 +16,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
     private const string CursorPrefabResource =
         "UI/prefab_world_hand_cursor";
     private const string HandLayerName = "UIHand";
+    private const string FingertipBoneName = "DEF-f_index.03.R";
     private const string UiShadowMaterialResource =
         "Materials/mat_ui_hand_shadow";
     private static readonly int PointPoseState =
@@ -37,24 +38,35 @@ public sealed class WorldHandCursorController : MonoBehaviour
     [SerializeField] private Transform visualRoot;
     [SerializeField] private Animator handAnimator;
     [SerializeField] private Transform heldItemAttachPoint;
+    [Tooltip(
+        "Distal index-finger bone used to keep the visible fingertip on the " +
+        "true pointer hotspot.")]
+    [SerializeField] private Transform cursorHotspotBone;
+    [Tooltip(
+        "Hotspot position relative to the distal index-finger bone. Adjust " +
+        "this in Play Mode if the mesh fingertip is not exactly on the native cursor.")]
+    [SerializeField] private Vector3 cursorHotspotLocalOffset =
+        new Vector3(0f, 0f, -0.032f);
     [SerializeField, Min(0f)] private float poseTransitionDuration = 0.08f;
 
-    [Header("Camera-relative Placement")]
+    [Header("Pointer Placement")]
     [SerializeField, Min(0f)] private float cursorPlaneHeight = 0.34f;
     [Tooltip(
-        "Offsets the rendered hand in camera space without changing the actual click position. "
-        + "Positive X moves right, positive Y moves up, and positive Z moves forward.")]
-    [SerializeField] private Vector3 cameraRelativeOffset =
-        new Vector3(0.08f, -0.04f, 0.02f);
+        "Optional constant screen-pixel offset from the operating-system " +
+        "cursor. Leave at zero for exact fingertip alignment.")]
+    [SerializeField] private Vector2 cursorHotspotOffsetPixels = Vector2.zero;
     [SerializeField] private Vector3 worldSpaceEuler =
         new Vector3(-30f, 0f, 0f);
-    [SerializeField, Min(0.1f)] private float positionResponse = 42f;
     [SerializeField, Min(0.21f)] private float uiCanvasPlaneDistance = 0.35f;
 
     [Header("Cursor Alignment Guide")]
     [Tooltip(
+        "Keeps the operating-system cursor visible above the rendered hand " +
+        "so the true click hotspot can be compared while tuning the hand offset.")]
+    [SerializeField] private bool showSystemCursorForAlignment = true;
+    [Tooltip(
         "Shows the exact unmodified pointer ray used by gameplay, before the hand offset is applied.")]
-    [SerializeField] private bool showCursorDebugMarker = true;
+    [SerializeField] private bool showCursorDebugMarker = false;
     [SerializeField, Min(0.005f)] private float cursorDebugMarkerDiameter =
         0.05f;
     [SerializeField] private Color cursorDebugMarkerColor =
@@ -126,9 +138,11 @@ public sealed class WorldHandCursorController : MonoBehaviour
     private int handLayer = -1;
     private float nextCanvasRefreshTime;
     private Vector2 previousPointerPosition;
+    private Vector3 desiredCursorHotspotPosition;
     private Vector3 springAngles;
     private Vector3 springAngularVelocity;
     private bool hasPointerPosition;
+    private bool hasCursorHotspotPosition;
     private bool handVisible;
     private bool cursorDebugMarkerHasPosition;
     private int currentPoseState;
@@ -236,6 +250,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
         }
 
         ResolveHeldItemAttachPoint();
+        ResolveCursorHotspotBone();
         SetHandPose(PointPoseState, true);
 
         if (viewCamera != null)
@@ -297,6 +312,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
         if (!shouldShow)
         {
             hasPointerPosition = false;
+            hasCursorHotspotPosition = false;
             RelaxSpring(Time.unscaledDeltaTime);
             return;
         }
@@ -311,29 +327,27 @@ public sealed class WorldHandCursorController : MonoBehaviour
         if (cursorPlane.Raycast(pointerRay, out float distance))
         {
             UpdateCursorDebugMarker(pointerRay, distance);
-            Vector3 targetPosition = pointerRay.GetPoint(distance)
-                + viewCamera.transform.TransformVector(
-                    cameraRelativeOffset);
-
-            if (!hasPointerPosition)
-            {
-                transform.position = targetPosition;
-            }
-            else
-            {
-                float positionBlend = 1f
-                    - Mathf.Exp(
-                        -positionResponse
-                        * Mathf.Min(frameDeltaTime, 0.1f));
-                transform.position = Vector3.Lerp(
-                    transform.position,
-                    targetPosition,
-                    positionBlend);
-            }
         }
         else
         {
             SetCursorDebugMarkerPositionAvailable(false);
+        }
+
+        Vector2 hotspotScreenPosition =
+            pointerPosition + cursorHotspotOffsetPixels;
+        Ray hotspotRay =
+            viewCamera.ScreenPointToRay(hotspotScreenPosition);
+        if (cursorPlane.Raycast(
+                hotspotRay,
+                out float hotspotDistance))
+        {
+            desiredCursorHotspotPosition =
+                hotspotRay.GetPoint(hotspotDistance);
+            hasCursorHotspotPosition = true;
+        }
+        else
+        {
+            hasCursorHotspotPosition = false;
         }
 
         Vector2 pointerVelocity = hasPointerPosition
@@ -362,12 +376,15 @@ public sealed class WorldHandCursorController : MonoBehaviour
             Quaternion.Euler(worldSpaceEuler);
         transform.rotation = worldSpaceRotation
             * Quaternion.Euler(springAngles);
+        PinHandToCursorHotspot();
         UpdateShadowPresentation();
     }
 
     private void LateUpdate()
     {
         UpdateHandWorldDepthSorting();
+        PinHandToCursorHotspot();
+        UpdateShadowPresentation();
         UpdateHeldChickenOffsetGuide();
     }
 
@@ -392,6 +409,51 @@ public sealed class WorldHandCursorController : MonoBehaviour
                 return;
             }
         }
+    }
+
+    private void ResolveCursorHotspotBone()
+    {
+        if (cursorHotspotBone != null)
+        {
+            return;
+        }
+
+        Transform searchRoot = visualRoot != null
+            ? visualRoot
+            : transform;
+        Transform[] descendants =
+            searchRoot.GetComponentsInChildren<Transform>(true);
+
+        foreach (Transform descendant in descendants)
+        {
+            if (descendant.name == FingertipBoneName)
+            {
+                cursorHotspotBone = descendant;
+                return;
+            }
+        }
+    }
+
+    private void PinHandToCursorHotspot()
+    {
+        if (!hasCursorHotspotPosition)
+        {
+            return;
+        }
+
+        ResolveCursorHotspotBone();
+
+        if (cursorHotspotBone == null)
+        {
+            transform.position = desiredCursorHotspotPosition;
+            return;
+        }
+
+        Vector3 currentHotspotPosition =
+            cursorHotspotBone.TransformPoint(
+                cursorHotspotLocalOffset);
+        transform.position +=
+            desiredCursorHotspotPosition - currentHotspotPosition;
     }
 
     private bool ShouldShowHand(Vector2 pointerPosition)
@@ -450,7 +512,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
                 ;
         }
 
-        Cursor.visible = !visible;
+        Cursor.visible = !visible || showSystemCursorForAlignment;
     }
 
     private void UpdateHandWorldDepthSorting()
@@ -1416,7 +1478,6 @@ public sealed class WorldHandCursorController : MonoBehaviour
     private void OnValidate()
     {
         cursorPlaneHeight = Mathf.Max(0f, cursorPlaneHeight);
-        positionResponse = Mathf.Max(0.1f, positionResponse);
         uiCanvasPlaneDistance = Mathf.Max(0.21f, uiCanvasPlaneDistance);
         poseTransitionDuration = Mathf.Max(0f, poseTransitionDuration);
         cursorDebugMarkerDiameter = Mathf.Max(

@@ -3,10 +3,14 @@ using System.Collections.Generic;
 using Unity.AI.Navigation;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(BoxCollider))]
 public class DebugChickenSpawner : MonoBehaviour
 {
+    private const int PerformanceTestChickenCount = 100;
+    private const int PerformanceTestSpawnsPerFrame = 10;
+
     [Header("Spawn Settings")]
     [SerializeField] private GameObject chickenPrefab = null;
     [SerializeField, Min(0)] private int targetCount = 3;
@@ -24,6 +28,7 @@ public class DebugChickenSpawner : MonoBehaviour
 
     private readonly List<Vector3> spawnedPositions = new List<Vector3>();
     private BoxCollider spawnVolume;
+    private Coroutine performanceTestSpawnCoroutine;
 
     private void Awake()
     {
@@ -44,6 +49,49 @@ public class DebugChickenSpawner : MonoBehaviour
         }
 
         StartCoroutine(SpawnChickens());
+    }
+
+    private void Update()
+    {
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard == null || !keyboard.f5Key.wasPressedThisFrame)
+        {
+            return;
+        }
+
+        if (performanceTestSpawnCoroutine != null)
+        {
+            StopCoroutine(performanceTestSpawnCoroutine);
+        }
+
+        performanceTestSpawnCoroutine =
+            StartCoroutine(PopulatePerformanceTestChickens());
+    }
+
+    private IEnumerator PopulatePerformanceTestChickens()
+    {
+        int targetPopulation = Mathf.Min(
+            PerformanceTestChickenCount,
+            ChickenController.MaximumChickenCount);
+        int spawnedThisFrame = 0;
+
+        while (ChickenController.ActiveInstances.Count < targetPopulation)
+        {
+            SpawnChicken();
+            spawnedThisFrame++;
+
+            if (spawnedThisFrame >= PerformanceTestSpawnsPerFrame)
+            {
+                spawnedThisFrame = 0;
+                yield return null;
+            }
+        }
+
+        performanceTestSpawnCoroutine = null;
+        Debug.Log(
+            $"F5 chicken performance test ready: "
+            + $"{ChickenController.ActiveInstances.Count} chickens.",
+            this);
     }
 
     private IEnumerator SpawnChickens()

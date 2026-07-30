@@ -6,6 +6,10 @@ using UnityEngine.AI;
 [RequireComponent(typeof(NavMeshAgent))]
 public sealed class EggCollectorRobot : MonoBehaviour
 {
+    private const int MaximumReachabilityCandidates = 12;
+    private const float DestinationRefreshInterval = 0.1f;
+    private const float DestinationMoveThreshold = 0.05f;
+
     [SerializeField] private Transform[] visibleEggSlots = null;
     [SerializeField, Min(0.01f)] private float pickupDistance = 0.24f;
     [SerializeField, Min(0.01f)] private float deliveryDistance = 0.3f;
@@ -28,6 +32,15 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private float nextTargetRefreshTime;
     private float noTargetTime;
     private NavMeshPath reachabilityPath;
+    private readonly ChickenEgg[] nearestEggCandidates =
+        new ChickenEgg[MaximumReachabilityCandidates];
+    private readonly float[] nearestEggCandidateScores =
+        new float[MaximumReachabilityCandidates];
+    private readonly RaycastHit[] obstructionHits = new RaycastHit[8];
+    private int obstructionMask;
+    private Vector3 lastDestination;
+    private float nextDestinationRefreshTime;
+    private bool hasDestination;
 
     public int StoredEggs => storedEggs;
     public int Capacity => capacity;
@@ -36,6 +49,17 @@ public sealed class EggCollectorRobot : MonoBehaviour
     {
         agent = GetComponent<NavMeshAgent>();
         reachabilityPath = new NavMeshPath();
+        obstructionMask = Physics.DefaultRaycastLayers;
+        int chickenLayer = LayerMask.NameToLayer("Chicken");
+        int eggLayer = LayerMask.NameToLayer("Egg");
+        if (chickenLayer >= 0)
+        {
+            obstructionMask &= ~(1 << chickenLayer);
+        }
+        if (eggLayer >= 0)
+        {
+            obstructionMask &= ~(1 << eggLayer);
+        }
         RefreshVisibleEggs();
     }
 
@@ -280,8 +304,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private ChickenEgg FindNearestAvailableEgg()
     {
-        ChickenEgg nearest = null;
-        float nearestDistance = float.PositiveInfinity;
+        int candidateCount = 0;
         var eggs = ChickenEgg.ActiveInstances;
 
         for (int index = 0; index < eggs.Count; index++)
@@ -290,8 +313,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
             if (egg == null
                 || egg.IsCollected
-                || egg.IsHeld
-                || !CanReachEgg(egg))
+                || egg.IsHeld)
             {
                 continue;
             }
@@ -301,14 +323,48 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 ? distance / Mathf.Max(1f, egg.ValueCents / 100f)
                 : distance;
 
-            if (selectionScore < nearestDistance)
+            int insertionIndex = candidateCount;
+            while (insertionIndex > 0
+                && selectionScore
+                    < nearestEggCandidateScores[insertionIndex - 1])
             {
-                nearestDistance = selectionScore;
-                nearest = egg;
+                insertionIndex--;
+            }
+
+            if (insertionIndex >= MaximumReachabilityCandidates)
+            {
+                continue;
+            }
+
+            int newCandidateCount = Mathf.Min(
+                candidateCount + 1,
+                MaximumReachabilityCandidates);
+            for (int moveIndex = newCandidateCount - 1;
+                 moveIndex > insertionIndex;
+                 moveIndex--)
+            {
+                nearestEggCandidates[moveIndex] =
+                    nearestEggCandidates[moveIndex - 1];
+                nearestEggCandidateScores[moveIndex] =
+                    nearestEggCandidateScores[moveIndex - 1];
+            }
+
+            nearestEggCandidates[insertionIndex] = egg;
+            nearestEggCandidateScores[insertionIndex] = selectionScore;
+            candidateCount = newCandidateCount;
+        }
+
+        for (int index = 0; index < candidateCount; index++)
+        {
+            ChickenEgg candidate = nearestEggCandidates[index];
+            nearestEggCandidates[index] = null;
+            if (CanReachEgg(candidate))
+            {
+                return candidate;
             }
         }
 
-        return nearest;
+        return null;
     }
 
     private bool CanReachEgg(ChickenEgg egg)
@@ -345,26 +401,15 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return true;
         }
 
-        RaycastHit[] hits = Physics.RaycastAll(
+        int hitCount = Physics.RaycastNonAlloc(
             start,
             direction / distance,
+            obstructionHits,
             distance,
-            Physics.DefaultRaycastLayers,
+            obstructionMask,
             QueryTriggerInteraction.Ignore);
 
-        foreach (RaycastHit hit in hits)
-        {
-            if (hit.collider.transform.IsChildOf(transform)
-                || hit.collider.GetComponentInParent<ChickenEgg>() == egg
-                || hit.collider.GetComponentInParent<ChickenController>() != null)
-            {
-                continue;
-            }
-
-            return false;
-        }
-
-        return true;
+        return hitCount == 0;
     }
 
     private bool TryPlaceOnNavMesh()
@@ -393,6 +438,24 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
+        float destinationMoveThresholdSquared =
+            DestinationMoveThreshold * DestinationMoveThreshold;
+        bool destinationMoved = !hasDestination
+            || (target - lastDestination).sqrMagnitude
+                > destinationMoveThresholdSquared;
+        if (!destinationMoved
+            && (agent.hasPath || agent.pathPending))
+        {
+            return;
+        }
+
+        if (Time.time < nextDestinationRefreshTime)
+        {
+            return;
+        }
+
+        nextDestinationRefreshTime =
+            Time.time + DestinationRefreshInterval;
         if (NavMesh.SamplePosition(
                 target,
                 out NavMeshHit hit,
@@ -401,6 +464,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             agent.isStopped = false;
             agent.SetDestination(hit.position);
+            lastDestination = target;
+            hasDestination = true;
         }
     }
 
@@ -410,6 +475,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             agent.isStopped = true;
             agent.ResetPath();
+            hasDestination = false;
         }
     }
 

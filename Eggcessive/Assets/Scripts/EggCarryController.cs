@@ -511,7 +511,10 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
-        int deposited = targetIncubator.TryAcceptStoredEggs(1);
+        ChickenEgg.EggType eggType = basketEggTypes.Count > 0
+            ? basketEggTypes[0]
+            : ChickenEgg.EggType.Common;
+        int deposited = targetIncubator.TryAcceptStoredEgg(eggType);
         basketAnimationGeneration++;
         basketEggCount -= deposited;
 
@@ -754,7 +757,7 @@ public sealed class EggCarryController : MonoBehaviour
                 || RoundSystem.Instance.IsRoundAcceptingEggs))
         {
             int deposited = routeToIncubator && incubator != null
-                ? incubator.TryAcceptStoredEggs(1)
+                ? incubator.TryAcceptStoredEgg(egg.Type)
                 : eggContainer != null
                     ? (eggContainer.DepositEggValue(egg.ValueCents) ? 1 : 0)
                     : 0;

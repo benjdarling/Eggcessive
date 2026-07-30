@@ -108,9 +108,7 @@ public sealed class EggContainer : MonoBehaviour
         }
 
         int value = Mathf.Max(1, valueCents);
-        Vector3 rewardPosition = RewardPosition
-            + UnityEngine.Random.insideUnitSphere * 0.06f;
-        RoundSystem.Instance?.ShowContainerCoinReward(rewardPosition, value);
+        RoundSystem.Instance?.ShowContainerCoinReward(RewardPosition, value);
         EggScoreHud.AddCents(value);
         EggCollected?.Invoke(value);
         return true;

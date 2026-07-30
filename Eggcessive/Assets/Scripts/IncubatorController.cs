@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
@@ -34,6 +35,10 @@ public sealed class IncubatorController : MonoBehaviour
     [Header("Hatching")]
     [SerializeField] private GameObject chickenPrefab = null;
     [SerializeField, Min(0.01f)] private float eggTravelDuration = 0.65f;
+    [Tooltip(
+        "Chance that an incubated egg hatches as the chicken breed one tier " +
+        "above its egg rarity.")]
+    [SerializeField, Range(0f, 1f)] private float nextTierHatchChance = 0.05f;
 
     [Header("Audio")]
     [SerializeField] private AudioClip processingLoopSfx = null;
@@ -41,6 +46,8 @@ public sealed class IncubatorController : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float sfxVolume = 1f;
 
     private int storedEggs;
+    private readonly Queue<ChickenEgg.EggType> storedEggTypes =
+        new Queue<ChickenEgg.EggType>();
     private float processingTimeRemaining;
     private AudioSource processingAudioSource;
     private AudioSource hatchDoneAudioSource;
@@ -140,17 +147,24 @@ public sealed class IncubatorController : MonoBehaviour
             return;
         }
 
-        if (storedEggs == 0)
-        {
-            processingTimeRemaining = SecondsPerEgg;
-        }
-
-        storedEggs++;
-        EggsAccepted?.Invoke(1);
+        QueueAcceptedEgg(egg.Type);
         PrepareAcceptedEgg(egg);
         StartCoroutine(MoveEggIntoIncubator(egg.gameObject));
         UpdateProcessingAudio();
         RefreshDisplays();
+    }
+
+    public int TryAcceptStoredEgg(ChickenEgg.EggType eggType)
+    {
+        if (!isActiveAndEnabled || AvailableCapacity <= 0)
+        {
+            return 0;
+        }
+
+        QueueAcceptedEgg(eggType);
+        UpdateProcessingAudio();
+        RefreshDisplays();
+        return 1;
     }
 
     public int TryAcceptStoredEggs(int eggCount)
@@ -162,16 +176,36 @@ public sealed class IncubatorController : MonoBehaviour
 
         int accepted = Mathf.Min(eggCount, AvailableCapacity);
 
-        if (storedEggs == 0)
+        bool wasEmpty = storedEggs == 0;
+        for (int index = 0; index < accepted; index++)
+        {
+            storedEggTypes.Enqueue(ChickenEgg.EggType.Common);
+        }
+
+        storedEggs = storedEggTypes.Count;
+        if (wasEmpty)
         {
             processingTimeRemaining = SecondsPerEgg;
         }
 
-        storedEggs += accepted;
         EggsAccepted?.Invoke(accepted);
         UpdateProcessingAudio();
         RefreshDisplays();
         return accepted;
+    }
+
+    private void QueueAcceptedEgg(ChickenEgg.EggType eggType)
+    {
+        bool wasEmpty = storedEggs == 0;
+        storedEggTypes.Enqueue(eggType);
+        storedEggs = storedEggTypes.Count;
+
+        if (wasEmpty)
+        {
+            processingTimeRemaining = SecondsPerEgg;
+        }
+
+        EggsAccepted?.Invoke(1);
     }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -255,18 +289,40 @@ public sealed class IncubatorController : MonoBehaviour
             chickenPrefab,
             chickenStart.position,
             chickenStart.rotation);
+        ChickenEgg.EggType eggType = storedEggTypes.Count > 0
+            ? storedEggTypes.Dequeue()
+            : ChickenEgg.EggType.Common;
         PlayHatchDoneSfx();
         ChickenHatched?.Invoke();
 
-        if (chickenEnd != null
-            && chickenObject.TryGetComponent(out ChickenController chicken))
+        if (chickenObject.TryGetComponent(out ChickenController chicken))
         {
-            chicken.BeginIncubatorExit(chickenEnd.position);
+            chicken.ConfigureBreed(RollHatchedBreed(eggType));
+
+            if (chickenEnd != null)
+            {
+                chicken.BeginIncubatorExit(chickenEnd.position);
+            }
         }
 
         // Capacity becomes available when the chicken actually spawns.
-        storedEggs--;
+        storedEggs = storedEggTypes.Count;
         processingTimeRemaining = storedEggs > 0 ? SecondsPerEgg : 0f;
+    }
+
+    private ChickenController.ChickenBreed RollHatchedBreed(
+        ChickenEgg.EggType eggType)
+    {
+        int maximumBreed = (int)ChickenController.ChickenBreed.Cosmic;
+        int breedIndex = Mathf.Clamp((int)eggType, 0, maximumBreed);
+
+        if (breedIndex < maximumBreed
+            && UnityEngine.Random.value < nextTierHatchChance)
+        {
+            breedIndex++;
+        }
+
+        return (ChickenController.ChickenBreed)breedIndex;
     }
 
     private void InitializeAudio()
@@ -377,6 +433,7 @@ public sealed class IncubatorController : MonoBehaviour
         capacityLevel = Mathf.Clamp(capacityLevel, 1, MaximumLevel);
         speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
         eggTravelDuration = Mathf.Max(0.01f, eggTravelDuration);
+        nextTierHatchChance = Mathf.Clamp01(nextTierHatchChance);
 
         if (!Application.isPlaying)
         {

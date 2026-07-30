@@ -8,6 +8,8 @@ public sealed class UiModelGraphic : MaskableGraphic
     [SerializeField] private GameObject sourceModel;
     [SerializeField, Range(0.1f, 1f)] private float rectFill = 0.9f;
 
+    public GameObject SourceModel => sourceModel;
+
     public override Texture mainTexture
     {
         get
@@ -107,13 +109,17 @@ public sealed class UiModelGraphic : MaskableGraphic
         }
 
         Rect targetRect = GetPixelAdjustedRect();
-        float modelSize = Mathf.Max(
-            modelBounds.size.x,
-            modelBounds.size.y);
-        float targetSize = Mathf.Min(targetRect.width, targetRect.height);
-        float scale = modelSize > Mathf.Epsilon
-            ? targetSize * rectFill / modelSize
-            : 1f;
+        GetProjectionAxes(
+            modelBounds.size,
+            out int horizontalAxis,
+            out int verticalAxis,
+            out int depthAxis);
+        float modelWidth = GetAxis(modelBounds.size, horizontalAxis);
+        float modelHeight = GetAxis(modelBounds.size, verticalAxis);
+        float scale = Mathf.Min(
+            targetRect.width / Mathf.Max(Mathf.Epsilon, modelWidth),
+            targetRect.height / Mathf.Max(Mathf.Epsilon, modelHeight))
+            * rectFill;
         Vector3 targetCenter = targetRect.center;
 
         for (int filterIndex = 0;
@@ -142,17 +148,29 @@ public sealed class UiModelGraphic : MaskableGraphic
             {
                 Vector3 position =
                     modelMatrix.MultiplyPoint3x4(positions[vertexIndex]);
-                position = (position - modelBounds.center) * scale
+                Vector3 centeredPosition = position - modelBounds.center;
+                position = new Vector3(
+                    GetAxis(centeredPosition, horizontalAxis),
+                    GetAxis(centeredPosition, verticalAxis),
+                    GetAxis(centeredPosition, depthAxis)) * scale
                     + targetCenter;
 
                 Vector3 normal = vertexIndex < normals.Length
                     ? normalMatrix.MultiplyVector(normals[vertexIndex]).normalized
                     : Vector3.back;
+                normal = new Vector3(
+                    GetAxis(normal, horizontalAxis),
+                    GetAxis(normal, verticalAxis),
+                    GetAxis(normal, depthAxis));
                 Vector4 tangent = vertexIndex < tangents.Length
                     ? tangents[vertexIndex]
                     : new Vector4(1f, 0f, 0f, 1f);
                 Vector3 tangentDirection = normalMatrix.MultiplyVector(
                     new Vector3(tangent.x, tangent.y, tangent.z)).normalized;
+                tangentDirection = new Vector3(
+                    GetAxis(tangentDirection, horizontalAxis),
+                    GetAxis(tangentDirection, verticalAxis),
+                    GetAxis(tangentDirection, depthAxis));
                 Vector4 transformedTangent = new Vector4(
                     tangentDirection.x,
                     tangentDirection.y,
@@ -190,6 +208,47 @@ public sealed class UiModelGraphic : MaskableGraphic
                 }
             }
         }
+    }
+
+    private static void GetProjectionAxes(
+        Vector3 size,
+        out int horizontalAxis,
+        out int verticalAxis,
+        out int depthAxis)
+    {
+        horizontalAxis = 0;
+        if (size.y > size.x && size.y >= size.z)
+        {
+            horizontalAxis = 1;
+        }
+        else if (size.z > size.x && size.z > size.y)
+        {
+            horizontalAxis = 2;
+        }
+
+        if (horizontalAxis == 0)
+        {
+            verticalAxis = size.y >= size.z ? 1 : 2;
+        }
+        else if (horizontalAxis == 1)
+        {
+            verticalAxis = size.x >= size.z ? 0 : 2;
+        }
+        else
+        {
+            verticalAxis = size.x >= size.y ? 0 : 1;
+        }
+
+        depthAxis = 3 - horizontalAxis - verticalAxis;
+    }
+
+    private static float GetAxis(Vector3 vector, int axis)
+    {
+        return axis == 0
+            ? vector.x
+            : axis == 1
+                ? vector.y
+                : vector.z;
     }
 
 #if UNITY_EDITOR

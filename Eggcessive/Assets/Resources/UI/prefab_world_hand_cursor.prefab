@@ -47,12 +47,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldHandCursorController
   visualRoot: {fileID: 7881744677377738721}
   handAnimator: {fileID: 7761160671781171357}
+  heldItemAttachPoint: {fileID: 7839062832868877591}
+  cursorHotspotBone: {fileID: 0}
+  cursorHotspotLocalOffset: {x: 0, y: 0, z: -0.032}
   poseTransitionDuration: 0.08
-  cursorPlaneHeight: 0.34
-  cameraRelativeOffset: {x: 0.07, y: -0.055, z: 0.02}
+  cursorPlaneHeight: 0.35
+  cursorHotspotOffsetPixels: {x: 0, y: 0}
   worldSpaceEuler: {x: -30, y: 0, z: 0}
-  positionResponse: 42
   uiCanvasPlaneDistance: 0.35
+  showSystemCursorForAlignment: 1
   showCursorDebugMarker: 0
   cursorDebugMarkerDiameter: 0.05
   cursorDebugMarkerColor: {r: 0.1, g: 1, b: 0.95, a: 1}
@@ -66,9 +69,9 @@ MonoBehaviour:
   castWorldShadow: 1
   showUiShadow: 1
   uiShadowOffsetPixels: {x: 8, y: -8}
-  uiShadowBlurRadiusPixels: 5
-  uiShadowSampleCount: 8
-  uiShadowOpacity: 0.2
+  uiShadowBlurRadiusPixels: 3
+  uiShadowSampleCount: 5
+  uiShadowOpacity: 0.22
   maximumTilt: 16
   pointerSpeedForMaximumTilt: 1500
   tiltSpringFrequency: 7
@@ -116,7 +119,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}
       propertyPath: m_LocalRotation.y
-      value: -0.258819
+      value: -0.25881907
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}
       propertyPath: m_LocalRotation.z
@@ -128,7 +131,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
-      value: -30
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
@@ -160,7 +163,7 @@ Animator:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7361773140623318363}
   m_Enabled: 1
-  m_Avatar: {fileID: 9000000, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}
+  m_Avatar: {fileID: 9000000, guid: 90b6e87f5bd90844283a917f549fcc4d, type: 2}
   m_Controller: {fileID: 9100000, guid: 0f37148575493e9489d1d315eebec111, type: 2}
   m_CullingMode: 0
   m_UpdateMode: 0
@@ -173,6 +176,11 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!4 &7839062832868877591 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8781211793167121123, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}
+  m_PrefabInstance: {fileID: 7704300495007932426}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &7881744677377738721 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 904b01571b1012a49b303f2fc7129a7a, type: 3}

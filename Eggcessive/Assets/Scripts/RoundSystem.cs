@@ -7,12 +7,24 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.Rendering;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(ProgressionSystem))]
 public sealed class RoundSystem : MonoBehaviour
 {
+    private const float RewardAccumulationWindow = 0.75f;
+    private const float ContainerRewardVisualDelay = 0.06f;
+    private const float RewardFlightDuration = 0.62f;
+    private const int RewardParticleCapacity = 8000;
+    private const string RewardParticleShaderName =
+        "Eggcessive/Particles/Reward Mesh";
+    private const float RewardParticlePlaneDistance = 2f;
+    private const float CoinParticlePixelSize = 40f;
+    private const float CashParticlePixelSize = 82f;
+    private const int MaximumParticleEmissionsPerFrame = 256;
+
     public enum RoundPhase
     {
         Intermission,
@@ -22,6 +34,25 @@ public sealed class RoundSystem : MonoBehaviour
         TruckDeparting,
         Results,
         SuppliesShop
+    }
+
+    private sealed class RewardParticleTrail
+    {
+        public ParticleSystem ParticleSystem;
+        public int RemainingCount;
+        public Vector3 StartWorldPosition;
+        public Vector2 TargetScreenPosition;
+        public float PixelSize;
+        public float EmitterRadiusPixels;
+        public float EmissionInterval;
+        public float NextEmissionTime;
+        public bool IsCashNote;
+    }
+
+    private struct RewardParticleLanding
+    {
+        public float ArrivalTime;
+        public bool IsCashNote;
     }
 
     private const string StartMarkerName = "truck_start";
@@ -36,6 +67,13 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Min(1f)] private float roundDuration = 30f;
     [SerializeField, Min(0.1f)] private float countdownStepDuration = 1f;
     [SerializeField, Min(0.05f)] private float settlementDuration = 0.35f;
+    [SerializeField, Min(1)] private int baseTruckEggTarget = 7;
+    [SerializeField, Range(1f, 1.5f)]
+    private float earlyTruckTargetGrowth = 1.16f;
+    [SerializeField, Min(1)] private int earlyTruckTargetRounds = 10;
+    [SerializeField, Min(0f)]
+    private float lateTruckTargetIncreasePerRound = 3f;
+    [SerializeField, Min(1)] private int maximumTruckEggTarget = 150;
 
     [Header("Truck")]
     [SerializeField, Range(0.1f, 0.5f)] private float truckVisualScale = 0.22f;
@@ -95,7 +133,42 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private RectTransform coinHudTarget;
     [SerializeField] private GameObject flyingCoinPrefab = null;
     [SerializeField, Min(0f)]
-    private float flyingCoinSpinDegreesPerSecond = 1440f;
+    private float flyingCoinSpinDegreesPerSecond = 2880f;
+    [SerializeField] private GameObject[] flyingCashModels = Array.Empty<GameObject>();
+    [SerializeField] private Material flyingCashMaterial = null;
+    [Tooltip(
+        "Optional view-space RGB lighting lookup multiplied over the cash " +
+        "texture. The center represents a surface facing the camera.")]
+    [SerializeField] private Texture2D flyingCashLightingMatCap = null;
+    [Tooltip("Brightness of the directional cash MatCap lighting.")]
+    [SerializeField, Range(0f, 8f)]
+    private float flyingCashMatCapLightStrength = 3f;
+    [SerializeField] private Shader rewardParticleShader = null;
+    [SerializeField, Min(1)] private int cashTransitionStartCents = 50000;
+    [SerializeField, Min(1)] private int cashRewardThresholdCents = 300000;
+    [SerializeField, Range(250, 10000)]
+    private int maximumRewardParticlesPerBurst = 6000;
+    [SerializeField, Range(0.5f, 5f)]
+    private float rewardParticleTrailDuration = 1f;
+    [SerializeField, Range(100f, 5000f)]
+    private float maximumRewardParticlesPerSecond = 4000f;
+    [Tooltip(
+        "Random timing variation applied between consecutive reward particles. "
+        + "This prevents simultaneous trails from locking into visible clumps.")]
+    [SerializeField, Range(0f, 0.75f)]
+    private float rewardParticleEmissionJitter = 0.35f;
+    [Tooltip(
+        "Radius of the circular coin emission area in screen pixels.")]
+    [SerializeField, Range(0f, 100f)]
+    private float coinRewardEmitterRadiusPixels = 12f;
+    [Tooltip(
+        "Radius of the circular cash-note emission area in screen pixels.")]
+    [SerializeField, Range(0f, 100f)]
+    private float cashRewardEmitterRadiusPixels = 18f;
+    [SerializeField, Min(0f)]
+    private float flyingCashMinimumSpinDegreesPerSecond = 2160f;
+    [SerializeField, Min(0f)]
+    private float flyingCashMaximumSpinDegreesPerSecond = 5760f;
     [SerializeField] private GameObject floatingRewardPrefab = null;
 
     [Header("UI Audio")]
@@ -116,6 +189,17 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private AudioClip foodPlaceSfx = null;
     [SerializeField] private AudioClip cursorMovementSfx = null;
     [SerializeField] private AudioClip[] coinLandingSfx = null;
+    [SerializeField] private AudioClip[] cashLandingSfx = null;
+    [SerializeField, Range(0f, 0.25f)]
+    private float rewardLandingPitchVariation = 0.05f;
+    [SerializeField, Range(0f, 0.25f)]
+    private float rewardLandingVolumeVariation = 0.05f;
+    [SerializeField, Range(0f, 1f)]
+    private float cashLandingVolumeScale = 0.5f;
+    [SerializeField, Range(5f, 60f)]
+    private float maximumRewardLandingSoundsPerSecond = 24f;
+    [SerializeField, Range(0f, 0.25f)]
+    private float coalescedRewardLandingVolumeBoost = 0.08f;
     [SerializeField, Range(0f, 1f)] private float uiSfxVolume = 1f;
     [SerializeField, Range(0f, 1f)]
     private float vacuumSfxVolumeScale = 0.25f;
@@ -166,8 +250,27 @@ public sealed class RoundSystem : MonoBehaviour
     private TMP_Text activeRewardText;
     private Vector2 activeRewardStartPosition;
     private float lastRewardAddedTime;
-    private int accumulatedRewardCents;
+    private long accumulatedRewardCents;
+    private Coroutine containerRewardVisualCoroutine;
+    private float lastContainerRewardAddedTime;
+    private long accumulatedContainerRewardCents;
+    private long containerRewardSequenceCents;
+    private float lastContainerRewardSequenceTime;
+    private Vector3 containerRewardStartWorldPosition;
+    private Vector2 containerRewardTargetScreenPosition;
     private int activeCoinAnimations;
+    private ParticleSystem coinRewardParticleSystem;
+    private ParticleSystem cashRewardParticleSystem;
+    private Material coinRewardParticleMaterial;
+    private Material cashRewardParticleMaterial;
+    private readonly List<Mesh> rewardParticleMeshes = new List<Mesh>();
+    private readonly List<RewardParticleTrail> pendingRewardParticleTrails =
+        new List<RewardParticleTrail>();
+    private readonly Queue<RewardParticleLanding>
+        pendingRewardParticleLandings =
+            new Queue<RewardParticleLanding>();
+    private float rewardParticleEmissionAllowance;
+    private bool forceCashNotesForTesting;
     private int shopDisplayedBalanceCents;
     private Tweener shopBalanceTween;
     private bool skipResultsAnimation;
@@ -193,6 +296,10 @@ public sealed class RoundSystem : MonoBehaviour
     private bool hasCursorPosition;
     private int nextCoinAudioSource;
     private int lastCoinLandingClipIndex = -1;
+    private int lastCashLandingClipIndex = -1;
+    private int pendingCoinAudioArrivals;
+    private int pendingCashAudioArrivals;
+    private float nextRewardLandingSoundTime;
 
     public static RoundSystem Instance { get; private set; }
     public RoundPhase Phase { get; private set; } = RoundPhase.Intermission;
@@ -275,6 +382,7 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         coinEffectLayer.SetAsLastSibling();
+        InitializeRewardParticleSystems();
         ApplyWideSuppliesShopLayout();
         BindButtonClickSfx();
         BindUiEvents();
@@ -524,39 +632,62 @@ public sealed class RoundSystem : MonoBehaviour
         roundCueAudioSource.PlayOneShot(clip, uiSfxVolume);
     }
 
-    private void PlayCoinLandingSfx()
+    private void PlayCoinLandingSfx(float arrivalVolumeScale)
+    {
+        PlayRewardLandingSfx(
+            coinLandingSfx,
+            ref lastCoinLandingClipIndex,
+            arrivalVolumeScale);
+    }
+
+    private void PlayCashLandingSfx(float arrivalVolumeScale)
+    {
+        PlayRewardLandingSfx(
+            cashLandingSfx,
+            ref lastCashLandingClipIndex,
+            cashLandingVolumeScale * arrivalVolumeScale);
+    }
+
+    private void PlayRewardLandingSfx(
+        AudioClip[] clips,
+        ref int lastClipIndex,
+        float baseVolumeScale)
     {
         if (coinAudioSources.Length == 0
-            || coinLandingSfx == null
-            || coinLandingSfx.Length == 0)
+            || clips == null
+            || clips.Length == 0)
         {
             return;
         }
 
-        int clipIndex = UnityEngine.Random.Range(0, coinLandingSfx.Length);
-        if (coinLandingSfx.Length > 1
-            && clipIndex == lastCoinLandingClipIndex)
+        int clipIndex = UnityEngine.Random.Range(0, clips.Length);
+        if (clips.Length > 1
+            && clipIndex == lastClipIndex)
         {
             clipIndex = (clipIndex + UnityEngine.Random.Range(
                 1,
-                coinLandingSfx.Length)) % coinLandingSfx.Length;
+                clips.Length)) % clips.Length;
         }
 
-        AudioClip clip = coinLandingSfx[clipIndex];
+        AudioClip clip = clips[clipIndex];
         if (clip == null)
         {
             return;
         }
 
-        lastCoinLandingClipIndex = clipIndex;
+        lastClipIndex = clipIndex;
         AudioSource source = coinAudioSources[nextCoinAudioSource];
         nextCoinAudioSource =
             (nextCoinAudioSource + 1) % coinAudioSources.Length;
-        source.Stop();
-        source.clip = clip;
-        source.pitch = UnityEngine.Random.Range(0.95f, 1.05f);
-        source.volume = uiSfxVolume;
-        source.Play();
+        source.pitch = 1f + UnityEngine.Random.Range(
+            -rewardLandingPitchVariation,
+            rewardLandingPitchVariation);
+        source.volume = 1f;
+        float volumeScale = uiSfxVolume * baseVolumeScale * (
+            1f + UnityEngine.Random.Range(
+                -rewardLandingVolumeVariation,
+                rewardLandingVolumeVariation));
+        source.PlayOneShot(clip, volumeScale);
     }
 
     private bool HasAuthoredUi()
@@ -593,6 +724,19 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void Update()
     {
+        UpdateRewardParticleStatus();
+
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.f9Key.wasPressedThisFrame)
+        {
+            forceCashNotesForTesting = !forceCashNotesForTesting;
+            Debug.Log(
+                $"Cash reward test mode: " +
+                $"{(forceCashNotesForTesting ? "NOTES" : "COINS/AUTO")} " +
+                "(F9 to toggle).",
+                this);
+        }
+
         Mouse pointerMouse = GameplayTestBot.PointerMouse;
         UpdateCursorMovementSfx(pointerMouse);
 
@@ -712,6 +856,8 @@ public sealed class RoundSystem : MonoBehaviour
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
         shopBalanceTween?.Kill();
         ClearRewardPresentation();
+        ClearPendingContainerRewardVisuals();
+        DestroyRewardParticleSystems();
 
         if (Instance == this)
         {
@@ -846,7 +992,9 @@ public sealed class RoundSystem : MonoBehaviour
 
         yield return new WaitForFixedUpdate();
 
-        while (activeCoinAnimations > 0 || rewardDisplayCoroutine != null)
+        while (activeCoinAnimations > 0
+            || rewardDisplayCoroutine != null
+            || containerRewardVisualCoroutine != null)
         {
             yield return null;
         }
@@ -1003,13 +1151,13 @@ public sealed class RoundSystem : MonoBehaviour
 
     private IEnumerator AnimateResults()
     {
-        resultsCashText.text = "—";
-        resultsCollectedText.text = "—";
-        resultsLaidText.text = "—";
-        resultsPerMinuteText.text = "—";
-        resultsHatchedText.text = "—";
-        resultsChickenCountText.text = "—";
-        resultsQuotaText.text = "—";
+        resultsCashText.text = ".";
+        resultsCollectedText.text = ".";
+        resultsLaidText.text = ".";
+        resultsPerMinuteText.text = ".";
+        resultsHatchedText.text = ".";
+        resultsChickenCountText.text = ".";
+        resultsQuotaText.text = ".";
 
         yield return CountResult(
             resultsCashText,
@@ -1239,7 +1387,7 @@ public sealed class RoundSystem : MonoBehaviour
             shopFeedDetailsText.text =
                 $"<color=#FFD95A>{foodShop.CurrentFeedName}</color>  " +
                 $"TIER {foodShop.UnlockedFeedTier}/{FoodShopController.MaximumFeedTier}\n" +
-                $"{foodShop.CurrentFeedSpeedMultiplier:0.##}x SPEED   •   " +
+                $"{foodShop.CurrentFeedSpeedMultiplier:0.##}x SPEED   .   " +
                 bagStatus +
                 (foodShop.HasFeedTierUpgrade
                     ? $"\nNEXT: {foodShop.NextFeedName}  " +
@@ -1276,10 +1424,10 @@ public sealed class RoundSystem : MonoBehaviour
                 $"<color=#FFD95A>LEVEL {currentLevel}/{IncubatorController.MaximumLevel}</color>\n" +
                 (currentLevel == 0
                     ? "NOT INSTALLED"
-                    : $"{IncubatorController.GetCapacity(currentLevel)} CAPACITY   •   " +
+                    : $"{IncubatorController.GetCapacity(currentLevel)} CAPACITY   .   " +
                       $"{IncubatorController.GetProductionTime(currentLevel):0.##} SEC") +
                 (incubatorShop.HasUpgrade
-                    ? $"\nNEXT: {incubatorShop.NextCapacity} CAPACITY   •   " +
+                    ? $"\nNEXT: {incubatorShop.NextCapacity} CAPACITY   .   " +
                       $"{incubatorShop.NextProductionTime:0.##} SEC"
                     : "\nMAX LEVEL");
             upgradeIncubatorButton.GetComponentInChildren<TMP_Text>().text =
@@ -1360,7 +1508,12 @@ public sealed class RoundSystem : MonoBehaviour
 
     private static string FormatMoney(int cents)
     {
-        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
+        return FormatMoney((long)cents);
+    }
+
+    private static string FormatMoney(long cents)
+    {
+        return $"${cents / 100:N0}.{Math.Abs(cents % 100):D2}";
     }
 
     private void SetPhase(RoundPhase phase)
@@ -1433,7 +1586,10 @@ public sealed class RoundSystem : MonoBehaviour
 
         if (truck != null)
         {
-            ShowCoinReward(truck.position + Vector3.up * 0.45f, bonus);
+            ShowTruckBonusReward(
+                truck.position + Vector3.up * 0.45f,
+                bonus,
+                trucksFilled);
         }
 
         pendingTruckReplacements++;
@@ -1479,10 +1635,129 @@ public sealed class RoundSystem : MonoBehaviour
         ShowCoinReward(worldPosition, cents, true);
     }
 
+    private void ShowTruckBonusReward(
+        Vector3 worldPosition,
+        int cents,
+        int multiplier)
+    {
+        if (roundCanvasRect == null
+            || coinEffectLayer == null
+            || coinHudTarget == null)
+        {
+            return;
+        }
+
+        Camera worldCamera = Camera.main;
+        Camera canvasCamera = GetRoundCanvasCamera();
+        if (worldCamera == null)
+        {
+            return;
+        }
+
+        Vector3 screenPosition =
+            worldCamera.WorldToScreenPoint(worldPosition);
+        if (screenPosition.z <= 0f
+            || !RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                roundCanvasRect,
+                screenPosition,
+                canvasCamera,
+                out Vector2 startPosition))
+        {
+            return;
+        }
+
+        ShowTruckBonusText(
+            startPosition,
+            cents,
+            multiplier);
+
+        Vector2 targetScreenPosition =
+            RectTransformUtility.WorldToScreenPoint(
+                canvasCamera,
+                coinHudTarget.position);
+        int particleCount = CalculateRewardParticleCount(cents);
+        bool useCashNotes =
+            forceCashNotesForTesting && CanShowCashNotes();
+        SpawnRewardParticles(
+            worldPosition,
+            targetScreenPosition,
+            useCashNotes ? 0 : particleCount,
+            useCashNotes ? particleCount : 0);
+    }
+
+    private void ShowTruckBonusText(
+        Vector2 startPosition,
+        int cents,
+        int multiplier)
+    {
+        GameObject rewardObject = Instantiate(
+            floatingRewardPrefab,
+            coinEffectLayer);
+        rewardObject.name = "Truck Bonus Reward";
+        TMP_Text rewardText = rewardObject.GetComponent<TMP_Text>();
+        rewardText.enableAutoSizing = false;
+        rewardText.textWrappingMode = TextWrappingModes.NoWrap;
+        rewardText.overflowMode = TextOverflowModes.Overflow;
+        rewardText.alignment = TextAlignmentOptions.Center;
+        rewardText.text =
+            $"x{Mathf.Max(1, multiplier)} TRUCK BONUS!\n" +
+            $"+{FormatMoney(cents)}";
+        rewardText.fontSize = Mathf.Clamp(
+            36f + Mathf.Log10(1f + cents / 100f) * 5f,
+            36f,
+            50f);
+        rewardText.rectTransform.sizeDelta =
+            new Vector2(900f, 150f);
+        rewardText.rectTransform.anchoredPosition = startPosition;
+        rewardText.rectTransform.localScale = Vector3.one;
+        rewardText.rectTransform.DOPunchScale(
+            Vector3.one * 0.24f,
+            0.3f,
+            7,
+            0.55f);
+        StartCoroutine(AnimateTruckBonusText(
+            rewardText,
+            startPosition));
+    }
+
+    private static IEnumerator AnimateTruckBonusText(
+        TMP_Text rewardText,
+        Vector2 startPosition)
+    {
+        const float holdDuration = 0.75f;
+        float elapsed = 0f;
+        while (elapsed < holdDuration && rewardText != null)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        const float fadeDuration = 0.55f;
+        elapsed = 0f;
+        while (elapsed < fadeDuration && rewardText != null)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float progress = Mathf.Clamp01(elapsed / fadeDuration);
+            rewardText.rectTransform.anchoredPosition =
+                startPosition
+                + Vector2.up * Mathf.Lerp(0f, 72f, progress);
+            Color color = rewardText.color;
+            color.a = 1f - Mathf.SmoothStep(0f, 1f, progress);
+            rewardText.color = color;
+            yield return null;
+        }
+
+        if (rewardText != null)
+        {
+            rewardText.rectTransform.DOKill();
+            Destroy(rewardText.gameObject);
+        }
+    }
+
     private void ShowCoinReward(
         Vector3 worldPosition,
         int cents,
-        bool useTenCentCoins)
+        bool isContainerReward)
     {
         if (roundCanvasRect == null || coinEffectLayer == null || coinHudTarget == null)
         {
@@ -1512,26 +1787,26 @@ public sealed class RoundSystem : MonoBehaviour
         Vector2 targetScreenPosition = RectTransformUtility.WorldToScreenPoint(
             canvasCamera,
             coinHudTarget.position);
-        RectTransformUtility.ScreenPointToLocalPointInRectangle(
-            roundCanvasRect,
-            targetScreenPosition,
-            canvasCamera,
-            out Vector2 targetPosition);
 
-        int coinCount = useTenCentCoins
-            ? Mathf.Clamp(Mathf.CeilToInt(cents / 10f), 1, 500)
-            : Mathf.Clamp(Mathf.CeilToInt(cents / 100f), 1, 12);
-        float coinStagger = Mathf.Min(0.055f, 0.65f / coinCount);
-        AccumulateRewardNumber(startPosition, cents, useTenCentCoins);
+        AccumulateRewardNumber(startPosition, cents, isContainerReward);
 
-        for (int index = 0; index < coinCount; index++)
+        if (isContainerReward)
         {
-            activeCoinAnimations++;
-            StartCoroutine(FlyCoinToHud(
-                startPosition + UnityEngine.Random.insideUnitCircle * 18f,
-                targetPosition,
-                index * coinStagger));
+            QueueContainerRewardVisuals(
+                worldPosition,
+                targetScreenPosition,
+                cents);
+            return;
         }
+
+        int coinCount = CalculateRewardParticleCount(cents);
+        bool useCashNotes =
+            forceCashNotesForTesting && CanShowCashNotes();
+        SpawnRewardParticles(
+            worldPosition,
+            targetScreenPosition,
+            useCashNotes ? 0 : coinCount,
+            useCashNotes ? coinCount : 0);
     }
 
     private void AccumulateRewardNumber(
@@ -1539,10 +1814,9 @@ public sealed class RoundSystem : MonoBehaviour
         int cents,
         bool playCashRegisterOnStart)
     {
-        const float accumulationWindow = 0.75f;
         float now = Time.unscaledTime;
         bool joinsCurrentReward = activeRewardText != null
-            && now - lastRewardAddedTime <= accumulationWindow;
+            && now - lastRewardAddedTime <= RewardAccumulationWindow;
         bool playCashRegisterNow =
             playCashRegisterOnStart && !joinsCurrentReward;
 
@@ -1573,8 +1847,8 @@ public sealed class RoundSystem : MonoBehaviour
             0.35f);
         activeRewardText.text = $"+{FormatMoney(accumulatedRewardCents)}";
         activeRewardText.fontSize = Mathf.Clamp(
-            34f + Mathf.Log10(
-                1f + accumulatedRewardCents / 100f) * 12f,
+            34f + (float)Math.Log10(
+                1d + accumulatedRewardCents / 100d) * 12f,
             34f,
             58f);
         activeRewardText.rectTransform.anchoredPosition =
@@ -1594,10 +1868,9 @@ public sealed class RoundSystem : MonoBehaviour
 
     private IEnumerator AnimateRewardNumber()
     {
-        const float accumulationWindow = 0.75f;
-
         while (activeRewardText != null
-            && Time.unscaledTime - lastRewardAddedTime < accumulationWindow)
+            && Time.unscaledTime - lastRewardAddedTime
+                < RewardAccumulationWindow)
         {
             yield return null;
         }
@@ -1647,46 +1920,887 @@ public sealed class RoundSystem : MonoBehaviour
         accumulatedRewardCents = 0;
     }
 
-    private IEnumerator FlyCoinToHud(
-        Vector2 startPosition,
-        Vector2 targetPosition,
-        float delay)
+    private void QueueContainerRewardVisuals(
+        Vector3 startWorldPosition,
+        Vector2 targetScreenPosition,
+        int cents)
     {
-        if (delay > 0f)
+        // Deposits can arrive several times in one frame. Keep the exact latest
+        // world anchor instead of averaging screen/canvas coordinates together.
+        containerRewardStartWorldPosition = startWorldPosition;
+        containerRewardTargetScreenPosition = targetScreenPosition;
+
+        float now = Time.unscaledTime;
+        if (now - lastContainerRewardSequenceTime > RewardAccumulationWindow)
         {
-            yield return new WaitForSeconds(delay);
+            containerRewardSequenceCents = 0;
         }
 
-        GameObject coinObject = Instantiate(flyingCoinPrefab, coinEffectLayer);
-        coinObject.name = "Flying Coin";
-        RectTransform coin = coinObject.GetComponent<RectTransform>();
-        coin.anchoredPosition = startPosition;
-        float spinAngle = UnityEngine.Random.Range(0f, 360f);
-        coin.localRotation = Quaternion.Euler(0f, spinAngle, 0f);
+        containerRewardSequenceCents += cents;
+        lastContainerRewardSequenceTime = now;
+        accumulatedContainerRewardCents += cents;
+        lastContainerRewardAddedTime = now;
 
-        const float duration = 0.62f;
-        float elapsed = 0f;
-
-        while (elapsed < duration && coin != null)
+        if (containerRewardVisualCoroutine == null)
         {
-            elapsed += Time.deltaTime;
-            float progress = Mathf.Clamp01(elapsed / duration);
-            float eased = Mathf.SmoothStep(0f, 1f, progress);
-            Vector2 arc = Vector2.up * Mathf.Sin(progress * Mathf.PI) * 90f;
-            coin.anchoredPosition = Vector2.Lerp(startPosition, targetPosition, eased) + arc;
-            coin.localScale = Vector3.one * Mathf.Lerp(1f, 0.65f, eased);
-            spinAngle += flyingCoinSpinDegreesPerSecond * Time.deltaTime;
-            coin.localRotation = Quaternion.Euler(0f, spinAngle, 0f);
+            containerRewardVisualCoroutine =
+                StartCoroutine(FlushContainerRewardVisuals());
+        }
+    }
+
+    private IEnumerator FlushContainerRewardVisuals()
+    {
+        while (Time.unscaledTime - lastContainerRewardAddedTime
+            < ContainerRewardVisualDelay)
+        {
             yield return null;
         }
 
-        if (coin != null)
+        long rewardCents = accumulatedContainerRewardCents;
+        long denominationCents =
+            Math.Max(rewardCents, containerRewardSequenceCents);
+        Vector3 startWorldPosition = containerRewardStartWorldPosition;
+        Vector2 targetScreenPosition = containerRewardTargetScreenPosition;
+        accumulatedContainerRewardCents = 0;
+        containerRewardVisualCoroutine = null;
+
+        int rewardParticleCount = CalculateRewardParticleCount(rewardCents);
+        bool canShowCashNotes = CanShowCashNotes();
+        float cashBlend = 0f;
+        if (forceCashNotesForTesting && canShowCashNotes)
         {
-            PlayCoinLandingSfx();
-            Destroy(coin.gameObject);
+            cashBlend = 1f;
+        }
+        else if (denominationCents >= cashTransitionStartCents
+            && canShowCashNotes)
+        {
+            cashBlend = denominationCents >= cashRewardThresholdCents
+                ? 1f
+                : Mathf.Lerp(
+                    0.25f,
+                    1f,
+                    Mathf.InverseLerp(
+                    cashTransitionStartCents,
+                    cashRewardThresholdCents,
+                    (float)Math.Min(
+                        denominationCents,
+                        cashRewardThresholdCents)));
         }
 
-        activeCoinAnimations = Mathf.Max(0, activeCoinAnimations - 1);
+        int cashNoteParticleCount = cashBlend > 0f
+            ? Mathf.Clamp(
+                Mathf.RoundToInt(rewardParticleCount * cashBlend),
+                1,
+                rewardParticleCount)
+            : 0;
+        int coinParticleCount =
+            rewardParticleCount - cashNoteParticleCount;
+        SpawnRewardParticles(
+            startWorldPosition,
+            targetScreenPosition,
+            coinParticleCount,
+            cashNoteParticleCount);
+    }
+
+    private int CalculateRewardParticleCount(long rewardCents)
+    {
+        double rewardDollars = Math.Max(
+            1d,
+            rewardCents / 100d);
+        double magnitude = Math.Log10(rewardDollars + 1d);
+        int scaledParticleCount = 50 + Mathf.RoundToInt(
+            (float)(magnitude * magnitude * 60d));
+        return Mathf.Clamp(
+            scaledParticleCount,
+            1,
+            maximumRewardParticlesPerBurst);
+    }
+
+    private void SpawnRewardParticles(
+        Vector3 startWorldPosition,
+        Vector2 targetScreenPosition,
+        int coinCount,
+        int cashNoteCount)
+    {
+        if (coinCount + cashNoteCount <= 0)
+        {
+            return;
+        }
+
+        if (cashNoteCount > 0 && cashRewardParticleMaterial != null)
+        {
+            cashRewardParticleMaterial.SetColor(
+                "_LightingAmbientColor",
+                RenderSettings.ambientLight);
+        }
+
+        Camera worldCamera = Camera.main;
+        if (worldCamera == null)
+        {
+            return;
+        }
+
+        ScheduleRewardParticleTrail(
+            coinRewardParticleSystem,
+            coinCount,
+            startWorldPosition,
+            targetScreenPosition,
+            CoinParticlePixelSize,
+            coinRewardEmitterRadiusPixels,
+            false);
+        ScheduleRewardParticleTrail(
+            cashRewardParticleSystem,
+            cashNoteCount,
+            startWorldPosition,
+            targetScreenPosition,
+            CashParticlePixelSize,
+            cashRewardEmitterRadiusPixels,
+            true);
+
+        activeCoinAnimations = 1;
+    }
+
+    private void ClearPendingContainerRewardVisuals()
+    {
+        if (containerRewardVisualCoroutine != null)
+        {
+            StopCoroutine(containerRewardVisualCoroutine);
+            containerRewardVisualCoroutine = null;
+        }
+
+        accumulatedContainerRewardCents = 0;
+        containerRewardSequenceCents = 0;
+        lastContainerRewardSequenceTime = 0f;
+    }
+
+    private void InitializeRewardParticleSystems()
+    {
+        Camera worldCamera = Camera.main;
+        UiModelGraphic coinGraphic = flyingCoinPrefab != null
+            ? flyingCoinPrefab.GetComponent<UiModelGraphic>()
+            : null;
+        Shader particleShader = rewardParticleShader != null
+            ? rewardParticleShader
+            : Shader.Find(RewardParticleShaderName);
+        if (worldCamera == null
+            || coinGraphic == null
+            || coinGraphic.SourceModel == null
+            || particleShader == null)
+        {
+            Debug.LogError(
+                "Cash reward particles need the main camera, flying coin " +
+                $"prefab, and {RewardParticleShaderName} shader.",
+                this);
+            return;
+        }
+
+        Mesh coinMesh = CreateProjectedParticleMesh(
+            coinGraphic.SourceModel,
+            "Coin Reward Particle Mesh");
+        if (coinMesh == null)
+        {
+            Debug.LogError(
+                "The flying coin source model has no readable mesh.",
+                this);
+            return;
+        }
+
+        rewardParticleMeshes.Add(coinMesh);
+        coinRewardParticleMaterial = CreateRewardParticleMaterial(
+            particleShader,
+            coinGraphic.material,
+            "Coin Reward Particle Material",
+            true,
+            null,
+            Color.black,
+            1f);
+        coinRewardParticleSystem = CreateRewardParticleSystem(
+            "Coin Reward Particles",
+            worldCamera.transform,
+            new[] { coinMesh },
+            coinRewardParticleMaterial,
+            flyingCoinSpinDegreesPerSecond,
+            flyingCoinSpinDegreesPerSecond);
+
+        List<Mesh> cashMeshes = new List<Mesh>();
+        if (flyingCashModels != null)
+        {
+            for (int index = 0; index < flyingCashModels.Length; index++)
+            {
+                Mesh cashMesh = CreateProjectedParticleMesh(
+                    flyingCashModels[index],
+                    $"Cash Reward Particle Mesh {index + 1}");
+                if (cashMesh != null)
+                {
+                    cashMeshes.Add(cashMesh);
+                    rewardParticleMeshes.Add(cashMesh);
+                }
+            }
+        }
+
+        if (cashMeshes.Count == 0 || flyingCashMaterial == null)
+        {
+            Debug.LogWarning(
+                "Cash note particles are unavailable because no readable " +
+                "cash mesh/material is assigned.",
+                this);
+            return;
+        }
+
+        cashRewardParticleMaterial = CreateRewardParticleMaterial(
+            particleShader,
+            flyingCashMaterial,
+            "Cash Reward Particle Material",
+            false,
+            flyingCashLightingMatCap,
+            RenderSettings.ambientLight,
+            flyingCashMatCapLightStrength);
+        cashRewardParticleSystem = CreateRewardParticleSystem(
+            "Cash Note Reward Particles",
+            worldCamera.transform,
+            cashMeshes.ToArray(),
+            cashRewardParticleMaterial,
+            flyingCashMinimumSpinDegreesPerSecond,
+            flyingCashMaximumSpinDegreesPerSecond);
+    }
+
+    private static ParticleSystem CreateRewardParticleSystem(
+        string objectName,
+        Transform cameraTransform,
+        Mesh[] meshes,
+        Material material,
+        float minimumSpinDegreesPerSecond,
+        float maximumSpinDegreesPerSecond)
+    {
+        GameObject particleObject = new GameObject(objectName);
+        particleObject.transform.SetParent(cameraTransform, false);
+        ParticleSystem particleSystem =
+            particleObject.AddComponent<ParticleSystem>();
+        ParticleSystem.MainModule main = particleSystem.main;
+        main.loop = false;
+        main.playOnAwake = false;
+        main.simulationSpace = ParticleSystemSimulationSpace.Local;
+        main.scalingMode = ParticleSystemScalingMode.Local;
+        main.startLifetime = RewardFlightDuration;
+        main.startSpeed = 0f;
+        main.startSize = 1f;
+        main.startRotation3D = true;
+        main.startRotationX = 0f;
+        main.startRotationY = new ParticleSystem.MinMaxCurve(
+            -Mathf.PI,
+            Mathf.PI);
+        main.startRotationZ = 0f;
+        main.maxParticles = RewardParticleCapacity;
+
+        ParticleSystem.EmissionModule emission = particleSystem.emission;
+        emission.enabled = false;
+        ParticleSystem.ShapeModule shape = particleSystem.shape;
+        shape.enabled = false;
+        ParticleSystem.RotationOverLifetimeModule rotation =
+            particleSystem.rotationOverLifetime;
+        rotation.enabled = true;
+        rotation.separateAxes = true;
+        rotation.x = 0f;
+        rotation.y = new ParticleSystem.MinMaxCurve(
+            minimumSpinDegreesPerSecond * Mathf.Deg2Rad,
+            maximumSpinDegreesPerSecond * Mathf.Deg2Rad);
+        rotation.z = 0f;
+
+        ParticleSystemRenderer particleRenderer =
+            particleObject.GetComponent<ParticleSystemRenderer>();
+        particleRenderer.renderMode = ParticleSystemRenderMode.Mesh;
+        particleRenderer.alignment = ParticleSystemRenderSpace.Local;
+        particleRenderer.shadowCastingMode = ShadowCastingMode.Off;
+        particleRenderer.receiveShadows = false;
+        particleRenderer.sortingOrder = 1000;
+        particleRenderer.enableGPUInstancing = true;
+        particleRenderer.sharedMaterial = material;
+        particleRenderer.SetMeshes(meshes, meshes.Length);
+
+        particleSystem.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        return particleSystem;
+    }
+
+    private void ScheduleRewardParticleTrail(
+        ParticleSystem particleSystem,
+        int particleCount,
+        Vector3 startWorldPosition,
+        Vector2 targetScreenPosition,
+        float pixelSize,
+        float emitterRadiusPixels,
+        bool isCashNote)
+    {
+        if (particleSystem == null || particleCount <= 0)
+        {
+            return;
+        }
+
+        particleSystem.Play();
+        float countScale = Mathf.Clamp01(
+            particleCount / (float)maximumRewardParticlesPerBurst);
+        float trailDuration = rewardParticleTrailDuration
+            * Mathf.Lerp(0.75f, 1.15f, countScale);
+        pendingRewardParticleTrails.Add(new RewardParticleTrail
+        {
+            ParticleSystem = particleSystem,
+            RemainingCount = particleCount,
+            StartWorldPosition = startWorldPosition,
+            TargetScreenPosition = targetScreenPosition,
+            PixelSize = pixelSize,
+            EmitterRadiusPixels = emitterRadiusPixels,
+            EmissionInterval = trailDuration
+                / Mathf.Max(1, particleCount - 1),
+            NextEmissionTime = Time.time
+                + UnityEngine.Random.value
+                    * trailDuration
+                    / Mathf.Max(1, particleCount - 1),
+            IsCashNote = isCashNote
+        });
+    }
+
+    private void UpdatePendingRewardParticleTrails()
+    {
+        if (pendingRewardParticleTrails.Count == 0)
+        {
+            rewardParticleEmissionAllowance = 0f;
+            StopCompletedRewardParticleSystem(coinRewardParticleSystem);
+            StopCompletedRewardParticleSystem(cashRewardParticleSystem);
+            return;
+        }
+
+        rewardParticleEmissionAllowance = Mathf.Min(
+            MaximumParticleEmissionsPerFrame,
+            rewardParticleEmissionAllowance
+                + maximumRewardParticlesPerSecond * Time.deltaTime);
+        int emissionBudget = Mathf.Min(
+            MaximumParticleEmissionsPerFrame,
+            Mathf.FloorToInt(rewardParticleEmissionAllowance));
+
+        while (pendingRewardParticleTrails.Count > 0
+            && emissionBudget > 0)
+        {
+            bool emittedInPass = false;
+            for (int trailIndex =
+                    pendingRewardParticleTrails.Count - 1;
+                 trailIndex >= 0 && emissionBudget > 0;
+                 trailIndex--)
+            {
+                RewardParticleTrail trail =
+                    pendingRewardParticleTrails[trailIndex];
+                float scheduledEmissionTime = trail.NextEmissionTime;
+                if (trail.RemainingCount > 0
+                    && scheduledEmissionTime <= Time.time
+                    && EmitRewardParticle(
+                        trail,
+                        scheduledEmissionTime))
+                {
+                    trail.RemainingCount--;
+                    trail.NextEmissionTime += trail.EmissionInterval
+                        * UnityEngine.Random.Range(
+                            1f - rewardParticleEmissionJitter,
+                            1f + rewardParticleEmissionJitter);
+                    emissionBudget--;
+                    rewardParticleEmissionAllowance -= 1f;
+                    emittedInPass = true;
+                }
+
+                if (trail.RemainingCount <= 0)
+                {
+                    pendingRewardParticleTrails.RemoveAt(trailIndex);
+                }
+            }
+
+            if (!emittedInPass)
+            {
+                break;
+            }
+        }
+
+        if (pendingRewardParticleTrails.Count == 0)
+        {
+            rewardParticleEmissionAllowance = 0f;
+        }
+        StopCompletedRewardParticleSystem(coinRewardParticleSystem);
+        StopCompletedRewardParticleSystem(cashRewardParticleSystem);
+    }
+
+    private bool EmitRewardParticle(
+        RewardParticleTrail trail,
+        float scheduledEmissionTime)
+    {
+        ParticleSystem particleSystem = trail.ParticleSystem;
+        if (particleSystem == null
+            || particleSystem.particleCount >= RewardParticleCapacity)
+        {
+            return false;
+        }
+
+        Camera worldCamera = Camera.main;
+        if (worldCamera == null)
+        {
+            return false;
+        }
+
+        Vector3 startScreenPosition =
+            worldCamera.WorldToScreenPoint(trail.StartWorldPosition);
+        if (startScreenPosition.z <= 0f)
+        {
+            return false;
+        }
+
+        float planeDistance = Mathf.Max(
+            worldCamera.nearClipPlane + 0.25f,
+            RewardParticlePlaneDistance);
+        Vector3 targetPosition = ScreenToCameraLocalPoint(
+            worldCamera,
+            trail.TargetScreenPosition,
+            planeDistance);
+        float worldUnitsPerPixel = GetWorldUnitsPerPixel(
+            worldCamera,
+            planeDistance);
+        float arcHeight = 90f * worldUnitsPerPixel;
+        float baseAcceleration =
+            -8f * arcHeight / (RewardFlightDuration * RewardFlightDuration);
+        ParticleSystem.ForceOverLifetimeModule force =
+            particleSystem.forceOverLifetime;
+        force.enabled = true;
+        force.space = ParticleSystemSimulationSpace.Local;
+        force.y = baseAcceleration;
+
+        float lifetime = RewardFlightDuration;
+        Vector3 startPosition = ScreenToCameraLocalPoint(
+            worldCamera,
+            startScreenPosition,
+            planeDistance);
+        Vector2 emitterOffset = UnityEngine.Random.insideUnitCircle
+            * trail.EmitterRadiusPixels
+            * worldUnitsPerPixel;
+        startPosition += new Vector3(
+            emitterOffset.x,
+            emitterOffset.y,
+            0f);
+        Vector3 initialVelocity =
+            (targetPosition - startPosition) / lifetime;
+        initialVelocity.y -= 0.5f * baseAcceleration * lifetime;
+        float emissionAge = Mathf.Max(
+            0f,
+            Time.time - scheduledEmissionTime);
+
+        if (emissionAge >= lifetime)
+        {
+            pendingRewardParticleLandings.Enqueue(
+                new RewardParticleLanding
+                {
+                    ArrivalTime = Time.time,
+                    IsCashNote = trail.IsCashNote
+                });
+            return true;
+        }
+
+        float remainingLifetime = lifetime - emissionAge;
+        Vector3 position = startPosition
+            + initialVelocity * emissionAge;
+        position.y += 0.5f
+            * baseAcceleration
+            * emissionAge
+            * emissionAge;
+        Vector3 velocity = initialVelocity;
+        velocity.y += baseAcceleration * emissionAge;
+
+        ParticleSystem.EmitParams emitParams =
+            new ParticleSystem.EmitParams
+            {
+                position = position,
+                velocity = velocity,
+                startLifetime = remainingLifetime,
+                startSize = trail.PixelSize * worldUnitsPerPixel,
+                startColor = Color.white,
+                rotation3D = trail.IsCashNote
+                    ? new Vector3(
+                        UnityEngine.Random.Range(-180f, 180f),
+                        UnityEngine.Random.Range(-180f, 180f),
+                        UnityEngine.Random.Range(-180f, 180f))
+                    : new Vector3(
+                        0f,
+                        UnityEngine.Random.Range(-180f, 180f),
+                        0f)
+            };
+        particleSystem.Emit(emitParams, 1);
+        pendingRewardParticleLandings.Enqueue(
+            new RewardParticleLanding
+            {
+                ArrivalTime = Time.time + remainingLifetime,
+                IsCashNote = trail.IsCashNote
+            });
+        return true;
+    }
+
+    private void StopCompletedRewardParticleSystem(
+        ParticleSystem particleSystem)
+    {
+        if (particleSystem == null || !particleSystem.isPlaying)
+        {
+            return;
+        }
+
+        for (int index = 0;
+             index < pendingRewardParticleTrails.Count;
+             index++)
+        {
+            if (pendingRewardParticleTrails[index].ParticleSystem
+                == particleSystem)
+            {
+                return;
+            }
+        }
+
+        particleSystem.Stop(
+            true,
+            ParticleSystemStopBehavior.StopEmitting);
+    }
+
+    private void UpdateRewardParticleStatus()
+    {
+        UpdatePendingRewardParticleTrails();
+        UpdatePendingRewardParticleLandings();
+        bool hasPendingParticles =
+            pendingRewardParticleTrails.Count > 0;
+        bool particlesAreAlive =
+            coinRewardParticleSystem != null
+                && coinRewardParticleSystem.IsAlive(true)
+            || cashRewardParticleSystem != null
+                && cashRewardParticleSystem.IsAlive(true);
+        activeCoinAnimations =
+            hasPendingParticles || particlesAreAlive ? 1 : 0;
+    }
+
+    private void UpdatePendingRewardParticleLandings()
+    {
+        while (pendingRewardParticleLandings.Count > 0
+            && pendingRewardParticleLandings.Peek().ArrivalTime
+                <= Time.time)
+        {
+            RewardParticleLanding landing =
+                pendingRewardParticleLandings.Dequeue();
+
+            if (landing.IsCashNote)
+            {
+                pendingCashAudioArrivals++;
+            }
+            else
+            {
+                pendingCoinAudioArrivals++;
+            }
+        }
+
+        int pendingArrivalCount =
+            pendingCoinAudioArrivals + pendingCashAudioArrivals;
+        if (pendingArrivalCount <= 0
+            || Time.time < nextRewardLandingSoundTime)
+        {
+            return;
+        }
+
+        bool playCash = pendingCashAudioArrivals > 0
+            && (pendingCoinAudioArrivals <= 0
+                || UnityEngine.Random.value
+                    < pendingCashAudioArrivals
+                        / (float)pendingArrivalCount);
+        float densityVolumeScale = Mathf.Min(
+            1.25f,
+            1f + Mathf.Log10(Mathf.Max(1, pendingArrivalCount))
+                * coalescedRewardLandingVolumeBoost);
+
+        if (playCash)
+        {
+            PlayCashLandingSfx(densityVolumeScale);
+        }
+        else
+        {
+            PlayCoinLandingSfx(densityVolumeScale);
+        }
+
+        pendingCoinAudioArrivals = 0;
+        pendingCashAudioArrivals = 0;
+        nextRewardLandingSoundTime = Time.time
+            + 1f / Mathf.Max(
+                1f,
+                maximumRewardLandingSoundsPerSecond);
+    }
+
+    private bool CanShowCashNotes()
+    {
+        return cashRewardParticleSystem != null;
+    }
+
+    private static Vector3 ScreenToCameraLocalPoint(
+        Camera worldCamera,
+        Vector2 screenPosition,
+        float planeDistance)
+    {
+        Vector3 worldPosition = worldCamera.ScreenToWorldPoint(
+            new Vector3(
+                screenPosition.x,
+                screenPosition.y,
+                planeDistance));
+        return worldCamera.transform.InverseTransformPoint(worldPosition);
+    }
+
+    private static float GetWorldUnitsPerPixel(
+        Camera worldCamera,
+        float planeDistance)
+    {
+        if (worldCamera.orthographic)
+        {
+            return worldCamera.orthographicSize * 2f
+                / Mathf.Max(1, worldCamera.pixelHeight);
+        }
+
+        float verticalWorldSize = 2f * planeDistance * Mathf.Tan(
+            worldCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        return verticalWorldSize / Mathf.Max(1, worldCamera.pixelHeight);
+    }
+
+    private static Material CreateRewardParticleMaterial(
+        Shader particleShader,
+        Material sourceMaterial,
+        string materialName,
+        bool useMatCap,
+        Texture lightingMatCap,
+        Color lightingAmbientColor,
+        float lightingMatCapStrength)
+    {
+        Material material = new Material(particleShader)
+        {
+            name = materialName,
+            enableInstancing = true
+        };
+        if (sourceMaterial != null)
+        {
+            Texture texture = sourceMaterial.GetTexture("_MainTex");
+            if (texture == null)
+            {
+                texture = sourceMaterial.GetTexture("_BaseMap");
+            }
+            if (texture == null)
+            {
+                texture = sourceMaterial.GetTexture("_MatCap");
+            }
+
+            material.SetTexture("_MainTex", texture);
+            material.SetFloat("_UseMatCap", useMatCap ? 1f : 0f);
+            material.SetFloat(
+                "_UseLightingMatCap",
+                useMatCap ? 0f : 1f);
+            material.SetFloat(
+                "_HasCustomLightingMatCap",
+                lightingMatCap != null ? 1f : 0f);
+            material.SetColor(
+                "_LightingAmbientColor",
+                lightingAmbientColor);
+            material.SetFloat(
+                "_LightingMatCapStrength",
+                lightingMatCapStrength);
+            if (lightingMatCap != null)
+            {
+                material.SetTexture(
+                    "_LightingMatCap",
+                    lightingMatCap);
+            }
+            if (sourceMaterial.HasProperty("_Color"))
+            {
+                material.SetColor(
+                    "_Color",
+                    sourceMaterial.GetColor("_Color"));
+            }
+        }
+
+        return material;
+    }
+
+    private static Mesh CreateProjectedParticleMesh(
+        GameObject sourceModel,
+        string meshName)
+    {
+        if (sourceModel == null)
+        {
+            return null;
+        }
+
+        MeshFilter[] meshFilters =
+            sourceModel.GetComponentsInChildren<MeshFilter>(true);
+        List<CombineInstance> combineInstances =
+            new List<CombineInstance>(meshFilters.Length);
+        Matrix4x4 rootWorldToLocal =
+            sourceModel.transform.worldToLocalMatrix;
+        for (int index = 0; index < meshFilters.Length; index++)
+        {
+            MeshFilter meshFilter = meshFilters[index];
+            Mesh mesh = meshFilter.sharedMesh;
+            if (mesh == null || !mesh.isReadable)
+            {
+                continue;
+            }
+
+            combineInstances.Add(new CombineInstance
+            {
+                mesh = mesh,
+                transform = rootWorldToLocal
+                    * meshFilter.transform.localToWorldMatrix
+            });
+        }
+
+        if (combineInstances.Count == 0)
+        {
+            return null;
+        }
+
+        Mesh particleMesh = new Mesh
+        {
+            name = meshName,
+            indexFormat = IndexFormat.UInt32
+        };
+        particleMesh.CombineMeshes(
+            combineInstances.ToArray(),
+            true,
+            true,
+            false);
+
+        Bounds bounds = particleMesh.bounds;
+        GetProjectionAxes(
+            bounds.size,
+            out int horizontalAxis,
+            out int verticalAxis,
+            out int depthAxis);
+        float maximumProjectedSize = Mathf.Max(
+            GetAxis(bounds.size, horizontalAxis),
+            GetAxis(bounds.size, verticalAxis));
+        float inverseSize = maximumProjectedSize > Mathf.Epsilon
+            ? 1f / maximumProjectedSize
+            : 1f;
+
+        Vector3[] vertices = particleMesh.vertices;
+        for (int index = 0; index < vertices.Length; index++)
+        {
+            Vector3 centered = vertices[index] - bounds.center;
+            vertices[index] = new Vector3(
+                GetAxis(centered, horizontalAxis),
+                GetAxis(centered, verticalAxis),
+                GetAxis(centered, depthAxis)) * inverseSize;
+        }
+        particleMesh.vertices = vertices;
+
+        Vector3[] normals = particleMesh.normals;
+        for (int index = 0; index < normals.Length; index++)
+        {
+            Vector3 normal = normals[index];
+            normals[index] = new Vector3(
+                GetAxis(normal, horizontalAxis),
+                GetAxis(normal, verticalAxis),
+                GetAxis(normal, depthAxis)).normalized;
+        }
+        particleMesh.normals = normals;
+
+        Vector4[] tangents = particleMesh.tangents;
+        for (int index = 0; index < tangents.Length; index++)
+        {
+            Vector4 tangent = tangents[index];
+            Vector3 direction = new Vector3(
+                GetAxis(tangent, horizontalAxis),
+                GetAxis(tangent, verticalAxis),
+                GetAxis(tangent, depthAxis)).normalized;
+            tangents[index] = new Vector4(
+                direction.x,
+                direction.y,
+                direction.z,
+                tangent.w);
+        }
+        particleMesh.tangents = tangents;
+        particleMesh.RecalculateBounds();
+        return particleMesh;
+    }
+
+    private static void GetProjectionAxes(
+        Vector3 size,
+        out int horizontalAxis,
+        out int verticalAxis,
+        out int depthAxis)
+    {
+        horizontalAxis = 0;
+        if (size.y > size.x && size.y >= size.z)
+        {
+            horizontalAxis = 1;
+        }
+        else if (size.z > size.x && size.z > size.y)
+        {
+            horizontalAxis = 2;
+        }
+
+        if (horizontalAxis == 0)
+        {
+            verticalAxis = size.y >= size.z ? 1 : 2;
+        }
+        else if (horizontalAxis == 1)
+        {
+            verticalAxis = size.x >= size.z ? 0 : 2;
+        }
+        else
+        {
+            verticalAxis = size.x >= size.y ? 0 : 1;
+        }
+
+        depthAxis = 3 - horizontalAxis - verticalAxis;
+    }
+
+    private static float GetAxis(Vector3 vector, int axis)
+    {
+        return axis == 0
+            ? vector.x
+            : axis == 1
+                ? vector.y
+                : vector.z;
+    }
+
+    private void DestroyRewardParticleSystems()
+    {
+        pendingRewardParticleTrails.Clear();
+        pendingRewardParticleLandings.Clear();
+        pendingCoinAudioArrivals = 0;
+        pendingCashAudioArrivals = 0;
+        nextRewardLandingSoundTime = 0f;
+        rewardParticleEmissionAllowance = 0f;
+        activeCoinAnimations = 0;
+
+        if (coinRewardParticleSystem != null)
+        {
+            Destroy(coinRewardParticleSystem.gameObject);
+            coinRewardParticleSystem = null;
+        }
+        if (cashRewardParticleSystem != null)
+        {
+            Destroy(cashRewardParticleSystem.gameObject);
+            cashRewardParticleSystem = null;
+        }
+
+        if (coinRewardParticleMaterial != null)
+        {
+            Destroy(coinRewardParticleMaterial);
+            coinRewardParticleMaterial = null;
+        }
+        if (cashRewardParticleMaterial != null)
+        {
+            Destroy(cashRewardParticleMaterial);
+            cashRewardParticleMaterial = null;
+        }
+
+        for (int index = 0; index < rewardParticleMeshes.Count; index++)
+        {
+            if (rewardParticleMeshes[index] != null)
+            {
+                Destroy(rewardParticleMeshes[index]);
+            }
+        }
+        rewardParticleMeshes.Clear();
     }
 
     private Camera GetRoundCanvasCamera()
@@ -1844,11 +2958,26 @@ public sealed class RoundSystem : MonoBehaviour
             $"{trucksFilled}";
     }
 
-    private static int CalculateEggTarget(int round)
+    private int CalculateEggTarget(int round)
     {
-        return Mathf.Max(
-            5,
-            Mathf.CeilToInt(7f * Mathf.Pow(1.16f, Mathf.Max(0, round - 1))));
+        int safeRound = Mathf.Max(1, round);
+        int exponentialRound = Mathf.Min(
+            safeRound,
+            earlyTruckTargetRounds);
+        float target = baseTruckEggTarget * Mathf.Pow(
+            earlyTruckTargetGrowth,
+            exponentialRound - 1);
+
+        if (safeRound > earlyTruckTargetRounds)
+        {
+            target += (safeRound - earlyTruckTargetRounds)
+                * lateTruckTargetIncreasePerRound;
+        }
+
+        return Mathf.Clamp(
+            Mathf.CeilToInt(target),
+            1,
+            maximumTruckEggTarget);
     }
 
     private static int CountChickens()
@@ -3411,6 +4540,18 @@ public sealed class RoundSystem : MonoBehaviour
     {
         roundDuration = Mathf.Max(1f, roundDuration);
         countdownStepDuration = Mathf.Max(0.1f, countdownStepDuration);
+        baseTruckEggTarget = Mathf.Max(1, baseTruckEggTarget);
+        earlyTruckTargetGrowth = Mathf.Clamp(
+            earlyTruckTargetGrowth,
+            1f,
+            1.5f);
+        earlyTruckTargetRounds = Mathf.Max(1, earlyTruckTargetRounds);
+        lateTruckTargetIncreasePerRound = Mathf.Max(
+            0f,
+            lateTruckTargetIncreasePerRound);
+        maximumTruckEggTarget = Mathf.Max(
+            baseTruckEggTarget,
+            maximumTruckEggTarget);
         truckVisualScale = Mathf.Clamp(truckVisualScale, 0.1f, 0.5f);
         truckDepartureDuration = Mathf.Max(0.1f, truckDepartureDuration);
         cursorMovementMaximumPitch = Mathf.Max(
@@ -3427,5 +4568,62 @@ public sealed class RoundSystem : MonoBehaviour
         resultsTickMinimumInterval = Mathf.Max(
             0f,
             resultsTickMinimumInterval);
+        cashRewardThresholdCents = Mathf.Max(1, cashRewardThresholdCents);
+        cashTransitionStartCents = Mathf.Clamp(
+            cashTransitionStartCents,
+            1,
+            cashRewardThresholdCents);
+        maximumRewardParticlesPerBurst = Mathf.Clamp(
+            maximumRewardParticlesPerBurst,
+            250,
+            10000);
+        rewardParticleTrailDuration = Mathf.Clamp(
+            rewardParticleTrailDuration,
+            0.5f,
+            5f);
+        maximumRewardParticlesPerSecond = Mathf.Clamp(
+            maximumRewardParticlesPerSecond,
+            100f,
+            5000f);
+        rewardParticleEmissionJitter = Mathf.Clamp(
+            rewardParticleEmissionJitter,
+            0f,
+            0.75f);
+        coinRewardEmitterRadiusPixels = Mathf.Clamp(
+            coinRewardEmitterRadiusPixels,
+            0f,
+            100f);
+        cashRewardEmitterRadiusPixels = Mathf.Clamp(
+            cashRewardEmitterRadiusPixels,
+            0f,
+            100f);
+        rewardLandingPitchVariation = Mathf.Clamp(
+            rewardLandingPitchVariation,
+            0f,
+            0.25f);
+        rewardLandingVolumeVariation = Mathf.Clamp(
+            rewardLandingVolumeVariation,
+            0f,
+            0.25f);
+        cashLandingVolumeScale = Mathf.Clamp01(
+            cashLandingVolumeScale);
+        maximumRewardLandingSoundsPerSecond = Mathf.Clamp(
+            maximumRewardLandingSoundsPerSecond,
+            5f,
+            60f);
+        coalescedRewardLandingVolumeBoost = Mathf.Clamp(
+            coalescedRewardLandingVolumeBoost,
+            0f,
+            0.25f);
+        flyingCashMatCapLightStrength = Mathf.Clamp(
+            flyingCashMatCapLightStrength,
+            0f,
+            8f);
+        flyingCashMinimumSpinDegreesPerSecond = Mathf.Max(
+            0f,
+            flyingCashMinimumSpinDegreesPerSecond);
+        flyingCashMaximumSpinDegreesPerSecond = Mathf.Max(
+            flyingCashMinimumSpinDegreesPerSecond,
+            flyingCashMaximumSpinDegreesPerSecond);
     }
 }
