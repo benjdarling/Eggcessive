@@ -6,6 +6,9 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class GlobalWind : MonoBehaviour
 {
+    private const int MaximumShaderNoiseLayers = 8;
+    private const int MaximumShaderLocalInfluences = 8;
+
     private sealed class LocalInfluence
     {
         public int sourceId;
@@ -41,6 +44,12 @@ public sealed class GlobalWind : MonoBehaviour
     private static readonly int WindLayerCountId = Shader.PropertyToID("_GlobalWindLayerCount");
     private static readonly int WindLayerSpatialId = Shader.PropertyToID("_GlobalWindLayerSpatial");
     private static readonly int WindLayerAmplitudeId = Shader.PropertyToID("_GlobalWindLayerAmplitude");
+    private static readonly int WindLocalInfluenceCountId =
+        Shader.PropertyToID("_GlobalWindLocalInfluenceCount");
+    private static readonly int WindLocalInfluencePositionId =
+        Shader.PropertyToID("_GlobalWindLocalInfluencePosition");
+    private static readonly int WindLocalInfluenceVectorId =
+        Shader.PropertyToID("_GlobalWindLocalInfluenceVector");
 
     private static GlobalWind instance;
 
@@ -53,6 +62,10 @@ public sealed class GlobalWind : MonoBehaviour
 
     private Vector4[] shaderLayerSpatial;
     private Vector4[] shaderLayerAmplitude;
+    private readonly Vector4[] shaderInfluencePositions =
+        new Vector4[MaximumShaderLocalInfluences];
+    private readonly Vector4[] shaderInfluenceVectors =
+        new Vector4[MaximumShaderLocalInfluences];
     private readonly List<LocalInfluence> localInfluences =
         new List<LocalInfluence>();
 
@@ -154,6 +167,19 @@ public sealed class GlobalWind : MonoBehaviour
         if (instance == this)
         {
             instance = null;
+            Shader.SetGlobalVector(WindDirectionId, Vector4.zero);
+            Shader.SetGlobalInt(WindLayerCountId, 0);
+            Shader.SetGlobalInt(WindLocalInfluenceCountId, 0);
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (instance == this)
+        {
+            Shader.SetGlobalVector(WindDirectionId, Vector4.zero);
+            Shader.SetGlobalInt(WindLayerCountId, 0);
+            Shader.SetGlobalInt(WindLocalInfluenceCountId, 0);
         }
     }
 
@@ -282,8 +308,11 @@ public sealed class GlobalWind : MonoBehaviour
             new Vector4(windAtOrigin.x, windAtOrigin.y, windAtOrigin.z, windAtOrigin.magnitude));
         Shader.SetGlobalFloat(WindTimeId, Time.time);
 
-        int layerCount = noiseLayers != null ? noiseLayers.Length : 0;
-        if (shaderLayerSpatial == null || shaderLayerSpatial.Length != layerCount)
+        int layerCount = Mathf.Min(
+            noiseLayers != null ? noiseLayers.Length : 0,
+            MaximumShaderNoiseLayers);
+        if (shaderLayerSpatial == null
+            || shaderLayerSpatial.Length != MaximumShaderNoiseLayers)
         {
             RefreshShaderLayerData();
         }
@@ -294,13 +323,44 @@ public sealed class GlobalWind : MonoBehaviour
             Shader.SetGlobalVectorArray(WindLayerSpatialId, shaderLayerSpatial);
             Shader.SetGlobalVectorArray(WindLayerAmplitudeId, shaderLayerAmplitude);
         }
+
+        int influenceCount = Mathf.Min(
+            localInfluences.Count,
+            MaximumShaderLocalInfluences);
+        for (int i = 0; i < influenceCount; i++)
+        {
+            LocalInfluence influence = localInfluences[i];
+            shaderInfluencePositions[i] = new Vector4(
+                influence.position.x,
+                influence.position.y,
+                influence.position.z,
+                influence.radius);
+            shaderInfluenceVectors[i] = new Vector4(
+                influence.direction.x,
+                influence.direction.y,
+                influence.direction.z,
+                influence.strength);
+        }
+
+        Shader.SetGlobalInt(WindLocalInfluenceCountId, influenceCount);
+        if (influenceCount > 0)
+        {
+            Shader.SetGlobalVectorArray(
+                WindLocalInfluencePositionId,
+                shaderInfluencePositions);
+            Shader.SetGlobalVectorArray(
+                WindLocalInfluenceVectorId,
+                shaderInfluenceVectors);
+        }
     }
 
     private void RefreshShaderLayerData()
     {
-        int layerCount = noiseLayers != null ? noiseLayers.Length : 0;
-        shaderLayerSpatial = new Vector4[layerCount];
-        shaderLayerAmplitude = new Vector4[layerCount];
+        int layerCount = Mathf.Min(
+            noiseLayers != null ? noiseLayers.Length : 0,
+            MaximumShaderNoiseLayers);
+        shaderLayerSpatial = new Vector4[MaximumShaderNoiseLayers];
+        shaderLayerAmplitude = new Vector4[MaximumShaderNoiseLayers];
 
         for (int i = 0; i < layerCount; i++)
         {

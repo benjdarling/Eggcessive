@@ -2316,7 +2316,6 @@ MonoBehaviour:
   minimumWindResponse: 0.6
   maximumWindResponse: 1.5
   windNoiseOffsetDistance: 0.1
-  windSampleCellSize: 0.1
 --- !u!1 &759980837
 GameObject:
   m_ObjectHideFlags: 0

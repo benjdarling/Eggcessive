@@ -8,6 +8,8 @@ Shader "Eggcessive/Interactive Grass"
         _DryBlend("Dry Variation Strength", Range(0, 1)) = 0.2
         _AlphaMap("Alpha Map", 2D) = "white" {}
         _Cutoff("Alpha Clip Threshold", Range(0, 1)) = 0.5
+        [HideInInspector] _GrassWindParameters0("Grass Wind Parameters 0", Vector) = (0.05, 0.5, 0.012, 0.42)
+        [HideInInspector] _GrassWindParameters1("Grass Wind Parameters 1", Vector) = (0.7, 1, 0, 0)
     }
 
     SubShader
@@ -57,12 +59,137 @@ Shader "Eggcessive/Interactive Grass"
                 half _DryBlend;
                 half _Cutoff;
                 float4 _AlphaMap_ST;
+                float4 _GrassWindParameters0;
+                float4 _GrassWindParameters1;
             CBUFFER_END
+
+            float4 _GlobalWindDirection;
+            float _GlobalWindTime;
+            int _GlobalWindLayerCount;
+            float4 _GlobalWindLayerSpatial[8];
+            float4 _GlobalWindLayerAmplitude[8];
+            int _GlobalWindLocalInfluenceCount;
+            float4 _GlobalWindLocalInfluencePosition[8];
+            float4 _GlobalWindLocalInfluenceVector[8];
 
             UNITY_INSTANCING_BUFFER_START(GrassProperties)
                 UNITY_DEFINE_INSTANCED_PROP(float4, _GrassBend)
                 UNITY_DEFINE_INSTANCED_PROP(float4, _GrassVariation)
             UNITY_INSTANCING_BUFFER_END(GrassProperties)
+
+            float2 GrassWindHash(float2 position)
+            {
+                float3 value = frac(
+                    float3(position.xyx)
+                    * float3(0.1031, 0.1030, 0.0973));
+                value += dot(value, value.yzx + 33.33);
+                return frac((value.xx + value.yz) * value.zy);
+            }
+
+            float2 GrassWindNoise(float2 position)
+            {
+                float2 cell = floor(position);
+                float2 fraction = frac(position);
+                float2 blend = fraction * fraction * fraction
+                    * (fraction * (fraction * 6.0 - 15.0) + 10.0);
+                float2 bottom = lerp(
+                    GrassWindHash(cell),
+                    GrassWindHash(cell + float2(1.0, 0.0)),
+                    blend.x);
+                float2 top = lerp(
+                    GrassWindHash(cell + float2(0.0, 1.0)),
+                    GrassWindHash(cell + float2(1.0, 1.0)),
+                    blend.x);
+                return lerp(bottom, top, blend.y) * 2.0 - 1.0;
+            }
+
+            float2 ClampGrassBend(float2 bend, float maximum)
+            {
+                float magnitudeSquared = dot(bend, bend);
+                float maximumSquared = maximum * maximum;
+                return magnitudeSquared > maximumSquared && magnitudeSquared > 0.000001
+                    ? bend * (maximum * rsqrt(magnitudeSquared))
+                    : bend;
+            }
+
+            float2 EvaluateGrassWind(float3 samplePositionWS, float responseVariation)
+            {
+                float2 windDirection = _GlobalWindDirection.xz;
+                float directionLength = length(windDirection);
+                windDirection = directionLength > 0.0001
+                    ? windDirection / directionLength
+                    : float2(1.0, 0.0);
+                float2 sidewaysDirection =
+                    float2(windDirection.y, -windDirection.x);
+                float baseStrength = _GlobalWindDirection.w;
+                float gustAmount = 0.0;
+                float sidewaysAmount = 0.0;
+
+                [unroll]
+                for (int layerIndex = 0; layerIndex < 8; layerIndex++)
+                {
+                    if (layerIndex >= _GlobalWindLayerCount)
+                    {
+                        break;
+                    }
+
+                    float4 spatial = _GlobalWindLayerSpatial[layerIndex];
+                    float4 amplitude = _GlobalWindLayerAmplitude[layerIndex];
+                    float2 coordinates = samplePositionWS.xz * spatial.x
+                        - windDirection * (_GlobalWindTime * spatial.y);
+                    float2 noise = GrassWindNoise(
+                        coordinates + float2(spatial.z, -spatial.z * 0.31));
+                    gustAmount += noise.x * amplitude.x;
+                    sidewaysAmount += noise.y * amplitude.y;
+                }
+
+                gustAmount = max(-0.95, gustAmount);
+                float2 dynamicWind =
+                    windDirection * (baseStrength * gustAmount)
+                    + sidewaysDirection * (baseStrength * sidewaysAmount);
+
+                [unroll]
+                for (int influenceIndex = 0; influenceIndex < 8; influenceIndex++)
+                {
+                    if (influenceIndex >= _GlobalWindLocalInfluenceCount)
+                    {
+                        break;
+                    }
+
+                    float4 influencePosition =
+                        _GlobalWindLocalInfluencePosition[influenceIndex];
+                    float4 influenceVector =
+                        _GlobalWindLocalInfluenceVector[influenceIndex];
+                    float distanceToInfluence = distance(
+                        samplePositionWS,
+                        influencePosition.xyz);
+                    float falloff = 1.0 - smoothstep(
+                        0.0,
+                        max(influencePosition.w, 0.0001),
+                        distanceToInfluence);
+                    dynamicWind += influenceVector.xz
+                        * (influenceVector.w * falloff);
+                }
+
+                float dynamicMagnitude = length(dynamicWind);
+                float deadZone = _GrassWindParameters0.z;
+                dynamicWind = dynamicMagnitude > deadZone
+                    ? dynamicWind
+                        * ((dynamicMagnitude - deadZone)
+                            / max(dynamicMagnitude, 0.0001))
+                    : float2(0.0, 0.0);
+
+                float2 windBend =
+                    windDirection * (baseStrength * _GrassWindParameters0.x)
+                    + dynamicWind * _GrassWindParameters0.y;
+                float response = lerp(
+                    _GrassWindParameters1.x,
+                    _GrassWindParameters1.y,
+                    responseVariation);
+                return ClampGrassBend(
+                    windBend * response,
+                    _GrassWindParameters0.w);
+            }
 
             struct Attributes
             {
@@ -94,9 +221,25 @@ Shader "Eggcessive/Interactive Grass"
                 float heightWeight = saturate(input.uv.y);
                 float curveWeight = heightWeight * heightWeight;
                 float3 positionOS = input.positionOS.xyz;
+                float3 instancePositionWS =
+                    TransformObjectToWorld(float3(0.0, 0.0, 0.0));
+                float3 windSamplePositionWS = instancePositionWS
+                    + float3(variation.z, 0.0, variation.w);
+                float2 worldBend = bend.xy
+                    + EvaluateGrassWind(windSamplePositionWS, variation.y);
+                worldBend = ClampGrassBend(worldBend, 0.95);
+                float3 worldBendDirection =
+                    float3(worldBend.x, 0.0, worldBend.y);
+                float3 objectRightWS =
+                    TransformObjectToWorldDir(float3(1.0, 0.0, 0.0), true);
+                float3 objectForwardWS =
+                    TransformObjectToWorldDir(float3(0.0, 0.0, 1.0), true);
+                float2 localBend = float2(
+                    dot(objectRightWS, worldBendDirection),
+                    dot(objectForwardWS, worldBendDirection));
                 // The instance matrix supplies uniform clump scale, so authored
                 // width, spread and bend retain the proportions seen in Prefab Mode.
-                positionOS.xz += bend.xy * curveWeight;
+                positionOS.xz += localBend * curveWeight;
                 positionOS.y *= 1.0 - saturate(bend.z) * curveWeight * 0.84;
 
                 VertexPositionInputs positions = GetVertexPositionInputs(positionOS);
