@@ -9,7 +9,8 @@ public sealed class CrosshatcherController : MonoBehaviour
     {
         Waiting,
         Loading,
-        Processing
+        Processing,
+        ReadyToRelease
     }
 
     private static readonly float[] ProcessingTimes =
@@ -62,6 +63,22 @@ public sealed class CrosshatcherController : MonoBehaviour
     public int OccupiedSlots => (chickenOne != null ? 1 : 0) + (chickenTwo != null ? 1 : 0);
     public bool IsProcessing => state == MachineState.Processing;
 
+    public bool TryGetLoadedBreed(
+        out ChickenController.ChickenBreed breed)
+    {
+        ChickenController loadedChicken = chickenOne != null
+            ? chickenOne
+            : chickenTwo;
+        if (loadedChicken == null)
+        {
+            breed = default;
+            return false;
+        }
+
+        breed = loadedChicken.Breed;
+        return true;
+    }
+
     private void Awake()
     {
         state = MachineState.Waiting;
@@ -73,7 +90,8 @@ public sealed class CrosshatcherController : MonoBehaviour
     {
         UpdateProcessingAudio();
 
-        if (state != MachineState.Processing)
+        if (state != MachineState.Processing
+            && state != MachineState.ReadyToRelease)
         {
             return;
         }
@@ -84,7 +102,10 @@ public sealed class CrosshatcherController : MonoBehaviour
             return;
         }
 
-        processingTimeRemaining -= Time.deltaTime;
+        if (state == MachineState.Processing)
+        {
+            processingTimeRemaining -= Time.deltaTime;
+        }
 
         if (processingTimeRemaining <= 0f)
         {
@@ -319,6 +340,17 @@ public sealed class CrosshatcherController : MonoBehaviour
 
     private void CompleteCrosshatch()
     {
+        if (ChickenController.ActiveInstances.Count
+            >= ChickenController.MaximumChickenCount)
+        {
+            // Keep the completed output pending until a slot is available. The
+            // incubator can fill the last slot while this machine is processing.
+            processingTimeRemaining = 0f;
+            state = MachineState.ReadyToRelease;
+            UpdateProcessingAudio();
+            return;
+        }
+
         if (chickenPrefab == null || chickenSpawn == null)
         {
             Debug.LogError(
@@ -482,6 +514,10 @@ public sealed class CrosshatcherController : MonoBehaviour
             case MachineState.Loading:
                 timerText.text = $"LOADING\n{OccupiedSlots}/2";
                 timerText.color = new Color(1f, 0.84f, 0.3f, 1f);
+                break;
+            case MachineState.ReadyToRelease:
+                timerText.text = "OUTPUT READY\nCHICKEN CAP";
+                timerText.color = new Color(1f, 0.62f, 0.2f, 1f);
                 break;
             default:
                 timerText.text = $"STANDBY\n{OccupiedSlots}/2";

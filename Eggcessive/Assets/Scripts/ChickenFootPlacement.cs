@@ -75,6 +75,9 @@ public sealed class ChickenFootPlacement : MonoBehaviour
     {
         SetSolverEnabled(leftFoot, false);
         SetSolverEnabled(rightFoot, false);
+        // Re-cache and replant both feet when the distance LOD enables this
+        // component again. Otherwise one solver can remain disabled.
+        initialized = false;
     }
 
     private void Update()

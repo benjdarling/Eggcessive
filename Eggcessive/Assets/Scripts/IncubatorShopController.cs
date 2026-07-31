@@ -242,7 +242,7 @@ public sealed class IncubatorShopController : MonoBehaviour
         return true;
     }
 
-    private void HandleBalanceChanged(int _)
+    private void HandleBalanceChanged(long _)
     {
         RefreshUi();
     }

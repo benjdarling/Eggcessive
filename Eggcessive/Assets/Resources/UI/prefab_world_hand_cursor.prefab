@@ -55,12 +55,12 @@ MonoBehaviour:
   cursorHotspotOffsetPixels: {x: 0, y: 0}
   worldSpaceEuler: {x: -30, y: 0, z: 0}
   uiCanvasPlaneDistance: 0.35
-  showSystemCursorForAlignment: 1
+  showSystemCursorForAlignment: 0
   showCursorDebugMarker: 0
   cursorDebugMarkerDiameter: 0.05
   cursorDebugMarkerColor: {r: 0.1, g: 1, b: 0.95, a: 1}
   cursorDebugMarkerPullForward: 0.04
-  showHeldChickenOffsetGuide: 1
+  showHeldChickenOffsetGuide: 0
   heldOffsetGuideDiameter: 0.04
   heldOffsetGuideLineWidth: 0.006
   heldOffsetGuideColor: {r: 1, g: 0.12, b: 0.7, a: 1}

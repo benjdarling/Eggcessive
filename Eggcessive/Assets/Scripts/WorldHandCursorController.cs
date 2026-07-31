@@ -77,7 +77,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
     [Header("Held Chicken Alignment Guide")]
     [Tooltip(
         "Shows the Bone_Attach target while a chicken is held.")]
-    [SerializeField] private bool showHeldChickenOffsetGuide = true;
+    [SerializeField] private bool showHeldChickenOffsetGuide = false;
     [SerializeField, Min(0.005f)] private float heldOffsetGuideDiameter =
         0.04f;
     [SerializeField, Min(0.001f)] private float heldOffsetGuideLineWidth =
@@ -261,7 +261,10 @@ public sealed class WorldHandCursorController : MonoBehaviour
         CreateOverlayPresentation(handLayer);
         CreateShadowPresentation();
         CreateCursorDebugMarker();
-        CreateHeldOffsetGuide();
+        if (showHeldChickenOffsetGuide)
+        {
+            CreateHeldOffsetGuide();
+        }
         ConvertOverlayCanvases();
         SetHandVisible(false, false);
 

@@ -216,6 +216,8 @@ public static class WorldHandCursorSetup
             .FirstOrDefault(child => child.name == FingertipBoneName);
         serializedController.FindProperty("showCursorDebugMarker").boolValue =
             false;
+        serializedController.FindProperty("showHeldChickenOffsetGuide").boolValue =
+            false;
         serializedController.ApplyModifiedPropertiesWithoutUndo();
 
         PrefabUtility.SaveAsPrefabAsset(cursorRoot, PrefabPath);

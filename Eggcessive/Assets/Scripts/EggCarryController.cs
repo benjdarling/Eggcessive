@@ -61,7 +61,7 @@ public sealed class EggCarryController : MonoBehaviour
     [SerializeField] private bool robotUnlocked;
     [SerializeField, Range(0, 3)] private int robotSpeedLevel;
     [SerializeField, Range(0, 3)] private int robotCapacityLevel;
-    [SerializeField, Range(0, 2)] private int robotSmartnessLevel;
+    [SerializeField, Range(0, 3)] private int robotSmartnessLevel;
     [SerializeField] private GameObject[] basketPrefabs = null;
     [SerializeField] private GameObject[] vacuumPrefabs = null;
     [SerializeField] private GameObject[] robotPrefabs = null;
@@ -1354,7 +1354,7 @@ public sealed class EggCarryController : MonoBehaviour
 
     public void UpgradeRobotSmartness()
     {
-        robotSmartnessLevel = Mathf.Min(2, robotSmartnessLevel + 1);
+        robotSmartnessLevel = Mathf.Min(3, robotSmartnessLevel + 1);
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
@@ -1456,7 +1456,7 @@ public sealed class EggCarryController : MonoBehaviour
         vacuumRangeLevel = Mathf.Clamp(vacuumRangeLevel, 0, 3);
         robotSpeedLevel = Mathf.Clamp(robotSpeedLevel, 0, 3);
         robotCapacityLevel = Mathf.Clamp(robotCapacityLevel, 0, 3);
-        robotSmartnessLevel = Mathf.Clamp(robotSmartnessLevel, 0, 2);
+        robotSmartnessLevel = Mathf.Clamp(robotSmartnessLevel, 0, 3);
         toolHeight = Mathf.Max(0f, toolHeight);
         toolSmoothTime = Mathf.Max(0.01f, toolSmoothTime);
         toolSideDistance = Mathf.Max(0f, toolSideDistance);

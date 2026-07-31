@@ -75,8 +75,38 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         targetLevel = Mathf.Max(0, purchaseTargetLevel);
     }
 
+    public void SetTargetLevel(int purchaseTargetLevel)
+    {
+        targetLevel = Mathf.Max(0, purchaseTargetLevel);
+        Refresh();
+    }
+
+    public void SetUpgrade(
+        ProgressionSystem.UpgradeId id,
+        int purchaseTargetLevel = 0)
+    {
+        upgradeId = id;
+        targetLevel = Mathf.Max(0, purchaseTargetLevel);
+        Refresh();
+    }
+
     public void Refresh()
     {
+        if (button == null)
+        {
+            button = GetComponent<Button>();
+        }
+
+        if (treePreview == null)
+        {
+            treePreview = GetComponentInParent<ProgressionTreePreview>(true);
+        }
+
+        if (button == null)
+        {
+            return;
+        }
+
         ProgressionSystem progression = ProgressionSystem.Instance;
 
         if (progression == null)
@@ -90,7 +120,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         bool maxed = state.IsMaxed;
         bool affordable = state.Cost <= EggScoreHud.CurrentCents;
         bool unlocked = state.Visible && state.PrerequisiteMet;
-        bool canPurchase = unlocked && !maxed && affordable;
+        bool ownershipOnly = !IsTierNode && state.MaximumLevel == 1;
         bool selected = treePreview != null && treePreview.IsSelected(this);
         button.interactable = true;
         Image background = button.targetGraphic as Image;
@@ -166,8 +196,9 @@ public sealed class ProgressionNodeButton : MonoBehaviour
 
         if (costText != null)
         {
+            costText.gameObject.SetActive(!ownershipOnly || !maxed);
             costText.text = maxed
-                ? IsTierNode ? "OWNED" : "MAX"
+                ? IsTierNode ? "OWNED" : string.Empty
                 : $"{FormatMoney(state.Cost)}";
             costText.color = !unlocked && !maxed
                 ? new Color(0.5f, 0.52f, 0.5f)
@@ -176,6 +207,13 @@ public sealed class ProgressionNodeButton : MonoBehaviour
 
         if (progressFill != null)
         {
+            bool showSavingsProgress = !ownershipOnly || !maxed;
+            progressFill.transform.parent.gameObject.SetActive(showSavingsProgress);
+            if (!showSavingsProgress)
+            {
+                return;
+            }
+
             float progress = state.Cost > 0
                 ? Mathf.Clamp01(EggScoreHud.CurrentCents / (float)state.Cost)
                 : 1f;
@@ -198,7 +236,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         treePreview?.Select(this);
     }
 
-    private void HandleBalanceChanged(int _)
+    private void HandleBalanceChanged(long _)
     {
         Refresh();
     }
@@ -207,9 +245,12 @@ public sealed class ProgressionNodeButton : MonoBehaviour
     {
         return upgradeId switch
         {
-            ProgressionSystem.UpgradeId.FeedSpeed => "FEED\nSPEED",
-            ProgressionSystem.UpgradeId.RareEggChance => "PREMIUM\nEGGS",
-            ProgressionSystem.UpgradeId.EggValue => "EGG\nWEIGHT",
+            ProgressionSystem.UpgradeId.FeedSpeed =>
+                $"FEED SPEED\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.RareEggChance =>
+                $"PREMIUM EGGS\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.EggValue =>
+                $"EGG WEIGHT\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
                 $"CAPACITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorSpeed =>
@@ -219,8 +260,10 @@ public sealed class ProgressionNodeButton : MonoBehaviour
             ProgressionSystem.UpgradeId.CrosshatcherQuality =>
                 $"BREED QUALITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.BasketCapacity => "BASKET\nCAPACITY",
-            ProgressionSystem.UpgradeId.VacuumPower => "VACUUM\nPOWER",
-            ProgressionSystem.UpgradeId.VacuumRange => "VACUUM\nRANGE",
+            ProgressionSystem.UpgradeId.VacuumPower =>
+                $"VACUUM POWER\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.VacuumRange =>
+                $"VACUUM RANGE\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.RobotSpeed => "ROBOT\nSPEED",
             ProgressionSystem.UpgradeId.RobotCapacity => "ROBOT\nCAPACITY",
             ProgressionSystem.UpgradeId.RobotSmartness => "ROBOT\nLOGIC",

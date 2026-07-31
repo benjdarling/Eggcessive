@@ -73,7 +73,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         eggContainer = targetContainer;
         incubator = targetIncubator;
         capacity = Mathf.Max(1, eggCapacity);
-        smartnessLevel = Mathf.Clamp(deliverySmartnessLevel, 0, 2);
+        smartnessLevel = Mathf.Clamp(deliverySmartnessLevel, 0, 3);
         agent.speed = Mathf.Max(0.1f, movementSpeed);
         agent.acceleration = agent.speed * 5f;
         agent.angularSpeed = 540f;
@@ -319,14 +319,13 @@ public sealed class EggCollectorRobot : MonoBehaviour
             }
 
             float distance = (egg.transform.position - transform.position).sqrMagnitude;
-            float selectionScore = smartnessLevel >= 2
-                ? distance / Mathf.Max(1f, egg.ValueCents / 100f)
-                : distance;
-
             int insertionIndex = candidateCount;
             while (insertionIndex > 0
-                && selectionScore
-                    < nearestEggCandidateScores[insertionIndex - 1])
+                && IsHigherPriorityEgg(
+                    egg,
+                    distance,
+                    nearestEggCandidates[insertionIndex - 1],
+                    nearestEggCandidateScores[insertionIndex - 1]))
             {
                 insertionIndex--;
             }
@@ -350,7 +349,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
             }
 
             nearestEggCandidates[insertionIndex] = egg;
-            nearestEggCandidateScores[insertionIndex] = selectionScore;
+            nearestEggCandidateScores[insertionIndex] = distance;
             candidateCount = newCandidateCount;
         }
 
@@ -365,6 +364,44 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
 
         return null;
+    }
+
+    private bool IsHigherPriorityEgg(
+        ChickenEgg candidate,
+        float candidateDistance,
+        ChickenEgg existing,
+        float existingDistance)
+    {
+        if (existing == null)
+        {
+            return true;
+        }
+
+        if (smartnessLevel >= 3)
+        {
+            if (candidate.Type != existing.Type)
+            {
+                return candidate.Type > existing.Type;
+            }
+
+            if (candidate.ValueCents != existing.ValueCents)
+            {
+                return candidate.ValueCents > existing.ValueCents;
+            }
+
+            return candidateDistance < existingDistance;
+        }
+
+        if (smartnessLevel >= 2)
+        {
+            float candidateScore = candidateDistance
+                / Mathf.Max(1f, candidate.ValueCents / 100f);
+            float existingScore = existingDistance
+                / Mathf.Max(1f, existing.ValueCents / 100f);
+            return candidateScore < existingScore;
+        }
+
+        return candidateDistance < existingDistance;
     }
 
     private bool CanReachEgg(ChickenEgg egg)

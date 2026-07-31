@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Action = System.Action;
+using GatorDragonGames.JigglePhysics;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -85,13 +86,54 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float leanSmoothTime = 0.08f;
     [SerializeField, Range(0f, 1f)] private float leanStrength = 1f;
 
+    [Header("Secondary Motion LOD")]
+    [Tooltip(
+        "Optional conventional LODGroup used to stop comb, wattle, and tail " +
+        "secondary motion. Leave empty when the model uses generated Mesh LODs.")]
+    [SerializeField] private LODGroup secondaryMotionLodGroup;
+    [Tooltip(
+        "Renderer whose generated Mesh LODs control secondary motion. When " +
+        "empty, the first child renderer with generated Mesh LODs is used.")]
+    [SerializeField] private Renderer secondaryMotionMeshLodRenderer;
+    [Tooltip(
+        "Highest LOD that keeps secondary motion active. Zero disables it " +
+        "as soon as LOD1 becomes active.")]
+    [SerializeField, Min(0)] private int lastSecondaryMotionLod;
+    [Tooltip(
+        "LOD checks are staggered between chickens to avoid checking the " +
+        "whole flock in one frame.")]
+    [SerializeField, Min(1)] private int secondaryMotionLodCheckIntervalFrames =
+        8;
+
+    [Header("Performance")]
+    [Tooltip(
+        "Interval for staggered gameplay decisions while the detailed chicken " +
+        "is visible. Movement itself remains smooth through NavMeshAgent.")]
+    [SerializeField, Min(0.02f)] private float simulationTickInterval = 0.08f;
+    [Tooltip(
+        "Slower gameplay decision interval while using the far impostor.")]
+    [SerializeField, Min(0.05f)] private float farSimulationTickInterval = 0.2f;
+    [Tooltip(
+        "Generated Mesh LOD at which the editable sprite child replaces all " +
+        "3D renderers and animation is suspended.")]
+    [SerializeField, Min(1)] private int farImpostorMeshLod = 3;
+    [SerializeField] private SpriteRenderer farImpostorRenderer;
+    [Tooltip(
+        "Chicken/egg overlap checks are spread across this many physics steps.")]
+    [SerializeField, Min(1)] private int eggPushIntervalFixedSteps = 4;
+
     [Header("Hand Carry")]
     [Tooltip(
         "Chicken bone aligned directly to the UI hand's Bone_Attach. Blender axis suffixes are matched automatically.")]
     [SerializeField] private string heldAttachBoneName = "c_skull_01";
+    [Tooltip(
+        "Blendshape applied at full weight while this chicken is carried by hand.")]
+    [SerializeField] private string heldBlendShapeName = "held";
+    [SerializeField, Range(0f, 100f)] private float heldBlendShapeWeight =
+        100f;
     [SerializeField, Min(0f)] private float heldAnimationTransitionDuration =
         0.08f;
-    [SerializeField, Range(0f, 10f)] private float heldDragMaximumAngle = 3f;
+    [SerializeField, Range(0f, 20f)] private float heldDragMaximumAngle = 8f;
     [SerializeField, Min(0.01f)] private float heldDragSpeedForMaximumAngle =
         2f;
     [SerializeField, Range(0.1f, 10f)] private float heldDragSpringFrequency =
@@ -122,6 +164,14 @@ public sealed class ChickenController : MonoBehaviour
     [Header("Separation")]
     [SerializeField, Min(0f)] private float separationRadius = 0.3f;
     [SerializeField, Min(0f)] private float separationStrength = 0.45f;
+    [Tooltip(
+        "Outer part of the separation radius where chickens are considered " +
+        "settled. This prevents corrections from repeatedly crossing one threshold.")]
+    [SerializeField, Min(0f)] private float separationSettleMargin = 0.035f;
+    [SerializeField, Min(0.01f)] private float separationResponseSpeed = 8f;
+    [SerializeField, Range(0f, 1f)]
+    private float idleSeparationStrengthMultiplier = 0.35f;
+    [SerializeField, Min(0f)] private float separationStopSpeed = 0.006f;
     [Tooltip("How far beyond the chicken's body collider eggs begin to receive a gentle nudge.")]
     [SerializeField, Min(0f)] private float eggPushRadius = 0.025f;
     [SerializeField, Min(0f)] private float eggPushForce = 3.25f;
@@ -200,9 +250,35 @@ public sealed class ChickenController : MonoBehaviour
     private Vector3 heldDragAngularVelocity;
     private Vector3 previousHeldAttachPosition;
     private bool hasPreviousHeldAttachPosition;
+    private readonly List<SkinnedMeshRenderer> heldBlendShapeRenderers =
+        new List<SkinnedMeshRenderer>();
+    private readonly List<int> heldBlendShapeIndices = new List<int>();
     private MaterialPropertyBlock breedPropertyBlock;
     private Vector3 cachedSeparation;
+    private Vector3 targetSeparationVelocity;
     private int separationUpdateOffset;
+    private Behaviour[] lodControlledSecondaryMotion =
+        System.Array.Empty<Behaviour>();
+    private bool[] lodControlledSecondaryMotionDefaults =
+        System.Array.Empty<bool>();
+    private float secondaryMotionTransitionHeight = -1f;
+    private Mesh secondaryMotionMeshLodMesh;
+    private bool secondaryMotionLodAvailable;
+    private int nextSecondaryMotionLodCheckFrame;
+    private bool secondaryMotionActive = true;
+    private Renderer[] detailedRenderers = System.Array.Empty<Renderer>();
+    private bool[] detailedRendererDefaults = System.Array.Empty<bool>();
+    private Behaviour[] farDisabledBehaviours =
+        System.Array.Empty<Behaviour>();
+    private bool[] farDisabledBehaviourDefaults =
+        System.Array.Empty<bool>();
+    private ObstacleAvoidanceType detailedAvoidanceType;
+    private bool animatorDefaultEnabled = true;
+    private bool usingFarImpostor;
+    private float nextSimulationTickTime;
+    private float accumulatedSimulationTime;
+    private int fixedUpdateCounter;
+    private static Camera secondaryMotionCamera;
 
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
@@ -235,6 +311,8 @@ public sealed class ChickenController : MonoBehaviour
         Vector3 attachPosition,
         float deltaTime)
     {
+        ApplyHeldBlendShape(isHeldByHand);
+
         if (!isHeldByHand)
         {
             AlignHeldBoneTo(attachPosition);
@@ -290,6 +368,7 @@ public sealed class ChickenController : MonoBehaviour
             1f - scaleVariation,
             1f + scaleVariation);
         transform.localScale *= randomScale;
+        CacheSecondaryMotionLod();
 
         path = new NavMeshPath();
         agent = GetComponent<NavMeshAgent>();
@@ -309,12 +388,15 @@ public sealed class ChickenController : MonoBehaviour
         agent.angularSpeed = angularSpeed;
         agent.stoppingDistance = 0.03f;
         agent.autoBraking = true;
-        agent.autoRepath = true;
-        // Custom separation already keeps the flock apart. Low-quality local
-        // avoidance avoids duplicating expensive dense-crowd work.
+        // The pen NavMesh is static and every destination is validated before
+        // assignment, so continuous automatic replanning is unnecessary.
+        agent.autoRepath = false;
+        // Static obstacles are handled by the baked NavMesh. Chicken/chicken
+        // spacing is handled by the smoother custom separation below; running
+        // both systems makes dense idle flocks oscillate.
         agent.obstacleAvoidanceType =
-            ObstacleAvoidanceType.LowQualityObstacleAvoidance;
-        agent.avoidancePriority = Random.Range(20, 81);
+            ObstacleAvoidanceType.NoObstacleAvoidance;
+        detailedAvoidanceType = agent.obstacleAvoidanceType;
         separationUpdateOffset = Mathf.Abs(GetInstanceID());
 
         navMeshQueryFilter = new NavMeshQueryFilter
@@ -328,9 +410,11 @@ public sealed class ChickenController : MonoBehaviour
             animator = GetComponentInChildren<Animator>(true);
         }
 
+        CacheFarImpostor();
         CacheLayEggAnimationTiming();
         eggSpawnBone = FindEggSpawnBone();
         heldAttachBone = FindHeldAttachBone();
+        CacheHeldBlendShapes();
 
         CacheWingFlutterLayer();
         ApplyBreedVisual();
@@ -342,16 +426,27 @@ public sealed class ChickenController : MonoBehaviour
     private void OnEnable()
     {
         ActiveChickens.Add(this);
+        SetFarImpostorActive(false, true);
         ScheduleInitialEgg();
         ScheduleNextBlink();
         ScheduleNextWingFlutter();
         ScheduleNextWingMicroTwitch();
         SetWingFlutterWeight(0f);
+        ApplyHeldBlendShape(false);
         wingFlutterActive = false;
         wingMicroTwitchActive = false;
         previousPlanarForward = GetPlanarForward();
         turnLean = 0f;
         turnLeanVelocity = 0f;
+        nextSecondaryMotionLodCheckFrame = Time.frameCount;
+        accumulatedSimulationTime = 0f;
+        float tickInterval = Mathf.Max(0.02f, simulationTickInterval);
+        nextSimulationTickTime = Time.time
+            + (Mathf.Abs(GetInstanceID()) % 997) / 997f
+            * tickInterval;
+        fixedUpdateCounter = Mathf.Abs(GetInstanceID())
+            % Mathf.Max(1, eggPushIntervalFixedSteps);
+        UpdateSecondaryMotionLod(true);
     }
 
     private void Start()
@@ -379,33 +474,62 @@ public sealed class ChickenController : MonoBehaviour
         }
         wingFlutterActive = false;
         wingMicroTwitchActive = false;
+        ApplyHeldBlendShape(false);
         isHeldByHand = false;
         hasPreviousHeldAttachPosition = false;
         heldDragAngles = Vector3.zero;
         heldDragAngularVelocity = Vector3.zero;
         cachedSeparation = Vector3.zero;
+        targetSeparationVelocity = Vector3.zero;
         targetFood = null;
     }
 
     private void Update()
     {
+        UpdateSecondaryMotionLod(false);
+
         // NavMeshAgent rotation has been applied by this point, while Animator
         // evaluation has not. Update the parameter now so the visible turn and
         // its additive lean use the same frame's direction.
-        UpdateTurnLean();
+        if (!usingFarImpostor)
+        {
+            UpdateTurnLean();
+        }
 
         if (isMachineControlled)
         {
             return;
         }
 
-        UpdateFoodAndEggTimers();
-        UpdateBlink();
-        UpdateWingFlutter();
+        UpdateChickenSeparation();
+        accumulatedSimulationTime += Time.deltaTime;
 
         if (isTraversingIncubatorExit)
         {
             UpdateIncubatorExit();
+        }
+
+        float tickInterval = usingFarImpostor
+            ? Mathf.Max(0.05f, farSimulationTickInterval)
+            : Mathf.Max(0.02f, simulationTickInterval);
+        if (Time.time < nextSimulationTickTime)
+        {
+            return;
+        }
+
+        nextSimulationTickTime = Time.time + tickInterval;
+        float simulationDeltaTime = accumulatedSimulationTime;
+        accumulatedSimulationTime = 0f;
+        UpdateFoodAndEggTimers(simulationDeltaTime);
+
+        if (!usingFarImpostor)
+        {
+            UpdateBlink();
+            UpdateWingFlutter();
+        }
+
+        if (isTraversingIncubatorExit)
+        {
             return;
         }
 
@@ -414,8 +538,6 @@ public sealed class ChickenController : MonoBehaviour
             TryInitializeNavigation();
             return;
         }
-
-        ApplyChickenSeparation();
 
         if (eggTimerRemaining <= 0f
             && state != ChickenState.Eating
@@ -451,25 +573,41 @@ public sealed class ChickenController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        fixedUpdateCounter++;
+        int interval = ActiveChickens.Count >= 80
+            ? Mathf.Max(eggPushIntervalFixedSteps, 8)
+            : ActiveChickens.Count >= 40
+                ? Mathf.Max(eggPushIntervalFixedSteps, 6)
+                : Mathf.Max(1, eggPushIntervalFixedSteps);
+        if (usingFarImpostor
+            || fixedUpdateCounter % interval != 0)
+        {
+            return;
+        }
+
         PushNearbyEggs();
     }
 
     private void LateUpdate()
     {
-        if (state == ChickenState.EggLaying && !eggSpawnedDuringLay)
+        if (!usingFarImpostor
+            && state == ChickenState.EggLaying
+            && !eggSpawnedDuringLay)
         {
             TrySpawnEggAtAnimationFrame();
         }
     }
 
-    private void UpdateFoodAndEggTimers()
+    private void UpdateFoodAndEggTimers(float deltaTime)
     {
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
         {
             return;
         }
 
-        foodScore = Mathf.Max(0f, foodScore - foodScoreDrainPerSecond * Time.deltaTime);
+        foodScore = Mathf.Max(
+            0f,
+            foodScore - foodScoreDrainPerSecond * deltaTime);
 
         if (foodScore <= 0f)
         {
@@ -480,7 +618,7 @@ public sealed class ChickenController : MonoBehaviour
             emptyFoodEggIntervalMultiplier,
             fullFoodEggIntervalMultiplier,
             FoodScoreNormalized);
-        eggTimerRemaining -= Time.deltaTime
+        eggTimerRemaining -= deltaTime
             * activeFoodProductionSpeed
             * (RoundSystem.Instance != null
                 ? RoundSystem.Instance.StartupProductionMultiplier
@@ -556,6 +694,7 @@ public sealed class ChickenController : MonoBehaviour
     {
         breed = newBreed;
         ApplyBreedVisual();
+        ApplyFarImpostorTint();
         gameObject.name = newBreed == ChickenBreed.White
             ? "prefab_chicken"
             : $"chicken_{newBreed.ToString().ToLowerInvariant()}";
@@ -570,6 +709,8 @@ public sealed class ChickenController : MonoBehaviour
 
         isMachineControlled = controlled;
         targetFood = null;
+        targetSeparationVelocity = Vector3.zero;
+        cachedSeparation = Vector3.zero;
         SetEatingAnimation(false);
 
         if (controlled)
@@ -639,6 +780,8 @@ public sealed class ChickenController : MonoBehaviour
         }
 
         isHeldByHand = held;
+        ApplyHeldBlendShape(held);
+        UpdateSecondaryMotionLod(true);
 
         if (held)
         {
@@ -693,6 +836,84 @@ public sealed class ChickenController : MonoBehaviour
                 heldAnimationTransitionDuration,
                 0,
                 0f);
+        }
+    }
+
+    private void CacheHeldBlendShapes()
+    {
+        heldBlendShapeRenderers.Clear();
+        heldBlendShapeIndices.Clear();
+
+        if (string.IsNullOrWhiteSpace(heldBlendShapeName))
+        {
+            return;
+        }
+
+        SkinnedMeshRenderer[] renderers =
+            GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        for (int rendererIndex = 0;
+            rendererIndex < renderers.Length;
+            rendererIndex++)
+        {
+            SkinnedMeshRenderer skinnedRenderer = renderers[rendererIndex];
+            Mesh mesh = skinnedRenderer.sharedMesh;
+            if (mesh == null)
+            {
+                continue;
+            }
+
+            for (int shapeIndex = 0;
+                shapeIndex < mesh.blendShapeCount;
+                shapeIndex++)
+            {
+                string shapeName = mesh.GetBlendShapeName(shapeIndex);
+                bool matches = string.Equals(
+                    shapeName,
+                    heldBlendShapeName,
+                    System.StringComparison.OrdinalIgnoreCase);
+                if (!matches)
+                {
+                    matches = shapeName.EndsWith(
+                        "." + heldBlendShapeName,
+                        System.StringComparison.OrdinalIgnoreCase);
+                }
+
+                if (!matches)
+                {
+                    continue;
+                }
+
+                heldBlendShapeRenderers.Add(skinnedRenderer);
+                heldBlendShapeIndices.Add(shapeIndex);
+                break;
+            }
+        }
+    }
+
+    private void ApplyHeldBlendShape(bool held)
+    {
+        float weight = held ? heldBlendShapeWeight : 0f;
+        int entryCount = Mathf.Min(
+            heldBlendShapeRenderers.Count,
+            heldBlendShapeIndices.Count);
+        for (int index = 0; index < entryCount; index++)
+        {
+            SkinnedMeshRenderer skinnedRenderer =
+                heldBlendShapeRenderers[index];
+            if (skinnedRenderer == null
+                || skinnedRenderer.sharedMesh == null)
+            {
+                continue;
+            }
+
+            int shapeIndex = heldBlendShapeIndices[index];
+            if (shapeIndex < 0
+                || shapeIndex >= skinnedRenderer.sharedMesh.blendShapeCount)
+            {
+                continue;
+            }
+
+            skinnedRenderer.SetBlendShapeWeight(shapeIndex, weight);
         }
     }
 
@@ -922,8 +1143,7 @@ public sealed class ChickenController : MonoBehaviour
 
             float distanceSquared = (foodPile.transform.position - transform.position).sqrMagnitude;
 
-            if (distanceSquared >= bestDistanceSquared
-                || !TryCalculateCompletePath(foodPile.transform.position))
+            if (distanceSquared >= bestDistanceSquared)
             {
                 continue;
             }
@@ -932,13 +1152,18 @@ public sealed class ChickenController : MonoBehaviour
             bestDistanceSquared = distanceSquared;
         }
 
-        if (bestFood == null || !TryCalculateCompletePath(bestFood.transform.position))
+        // The chicken pen is a single connected static NavMesh. Select first,
+        // then validate one path instead of calculating a path for every pile
+        // and calculating the winning path a second time.
+        if (bestFood == null
+            || !TryCalculateCompletePath(bestFood.transform.position))
         {
             return false;
         }
 
         targetFood = bestFood;
         agent.stoppingDistance = eatingDistance * 0.75f;
+        agent.updateRotation = true;
         agent.SetPath(path);
         state = ChickenState.SeekingFood;
         stateEndTime = Time.time + CalculateMovementTimeout(path);
@@ -964,6 +1189,7 @@ public sealed class ChickenController : MonoBehaviour
     {
         state = ChickenState.Eating;
         nextBiteTime = Time.time;
+        agent.updateRotation = false;
 
         if (agent.isOnNavMesh)
         {
@@ -1005,6 +1231,7 @@ public sealed class ChickenController : MonoBehaviour
         eggSpawnedDuringLay = false;
         targetFood = null;
         SetEatingAnimation(false);
+        agent.updateRotation = false;
 
         if (animator != null && animator.runtimeAnimatorController != null)
         {
@@ -1045,6 +1272,7 @@ public sealed class ChickenController : MonoBehaviour
         state = ChickenState.Idle;
         stateEndTime = Time.time + Random.Range(minIdleTime, maxIdleTime);
         agent.stoppingDistance = 0.03f;
+        agent.updateRotation = false;
         SetEatingAnimation(false);
 
         if (navigationReady && agent.isOnNavMesh)
@@ -1076,6 +1304,7 @@ public sealed class ChickenController : MonoBehaviour
             }
 
             agent.stoppingDistance = 0.03f;
+            agent.updateRotation = true;
             agent.SetPath(path);
             state = ChickenState.Moving;
             stateEndTime = Time.time + CalculateMovementTimeout(path);
@@ -1108,10 +1337,16 @@ public sealed class ChickenController : MonoBehaviour
             || agent.remainingDistance <= agent.stoppingDistance + 0.03f;
     }
 
-    private void ApplyChickenSeparation()
+    private void UpdateChickenSeparation()
     {
-        if (separationRadius <= 0f || separationStrength <= 0f || !agent.isOnNavMesh)
+        if (separationRadius <= 0f
+            || separationStrength <= 0f
+            || usingFarImpostor
+            || agent == null
+            || !agent.enabled
+            || !agent.isOnNavMesh)
         {
+            targetSeparationVelocity = Vector3.zero;
             cachedSeparation = Vector3.zero;
             return;
         }
@@ -1122,53 +1357,87 @@ public sealed class ChickenController : MonoBehaviour
                 ? 2
                 : 1;
 
-        if ((Time.frameCount + separationUpdateOffset)
-            % updateInterval != 0)
+        bool refreshTarget =
+            (Time.frameCount + separationUpdateOffset)
+            % updateInterval == 0;
+
+        if (refreshTarget)
         {
-            agent.Move(
-                cachedSeparation
-                * (separationStrength * Time.deltaTime));
+            Vector3 separation = Vector3.zero;
+            float activeRadius = Mathf.Max(
+                0.001f,
+                separationRadius - separationSettleMargin);
+            float radiusSquared = activeRadius * activeRadius;
+
+            foreach (ChickenController other in ActiveChickens)
+            {
+                if (other == null
+                    || other == this
+                    || other.isMachineControlled)
+                {
+                    continue;
+                }
+
+                Vector3 offset =
+                    transform.position - other.transform.position;
+                offset.y = 0f;
+                float distanceSquared = offset.sqrMagnitude;
+
+                if (distanceSquared >= radiusSquared)
+                {
+                    continue;
+                }
+
+                if (distanceSquared < 0.000001f)
+                {
+                    offset = GetInstanceID() < other.GetInstanceID()
+                        ? Vector3.left
+                        : Vector3.right;
+                    distanceSquared = 0.000001f;
+                }
+
+                float distance = Mathf.Sqrt(distanceSquared);
+                float penetration =
+                    1f - distance / activeRadius;
+                // Squaring makes the correction approach zero gently near the
+                // settle boundary instead of flipping on and off at full force.
+                separation += offset / distance
+                    * (penetration * penetration);
+            }
+
+            if (separation.sqrMagnitude > 1f)
+            {
+                separation.Normalize();
+            }
+
+            bool isActivelyTravelling = agent.hasPath
+                && agent.desiredVelocity.sqrMagnitude > 0.0025f;
+            float stateStrength = isActivelyTravelling
+                ? 1f
+                : idleSeparationStrengthMultiplier;
+            targetSeparationVelocity =
+                separation * (separationStrength * stateStrength);
+        }
+
+        float response = 1f - Mathf.Exp(
+            -Mathf.Max(0.01f, separationResponseSpeed)
+            * Time.deltaTime);
+        cachedSeparation = Vector3.Lerp(
+            cachedSeparation,
+            targetSeparationVelocity,
+            response);
+
+        float stopSpeed = Mathf.Max(0f, separationStopSpeed);
+        if (targetSeparationVelocity.sqrMagnitude
+                <= stopSpeed * stopSpeed
+            && cachedSeparation.sqrMagnitude
+                <= stopSpeed * stopSpeed)
+        {
+            cachedSeparation = Vector3.zero;
             return;
         }
 
-        Vector3 separation = Vector3.zero;
-        float radiusSquared = separationRadius * separationRadius;
-
-        foreach (ChickenController other in ActiveChickens)
-        {
-            if (other == this)
-            {
-                continue;
-            }
-
-            Vector3 offset = transform.position - other.transform.position;
-            offset.y = 0f;
-            float distanceSquared = offset.sqrMagnitude;
-
-            if (distanceSquared >= radiusSquared)
-            {
-                continue;
-            }
-
-            if (distanceSquared < 0.000001f)
-            {
-                offset = GetInstanceID() < other.GetInstanceID() ? Vector3.left : Vector3.right;
-                distanceSquared = 0.000001f;
-            }
-
-            float distance = Mathf.Sqrt(distanceSquared);
-            separation += offset / distance * (1f - distance / separationRadius);
-        }
-
-        if (separation.sqrMagnitude > 1f)
-        {
-            separation.Normalize();
-        }
-
-        cachedSeparation = separation;
-        agent.Move(
-            cachedSeparation
-            * (separationStrength * Time.deltaTime));
+        agent.Move(cachedSeparation * Time.deltaTime);
     }
 
     private void PushNearbyEggs()
@@ -1652,6 +1921,458 @@ public sealed class ChickenController : MonoBehaviour
         }
     }
 
+    private void CacheSecondaryMotionLod()
+    {
+        var controlledComponents = new List<Behaviour>();
+        controlledComponents.AddRange(
+            GetComponentsInChildren<JiggleRig>(true));
+        controlledComponents.AddRange(
+            GetComponentsInChildren<ChickenWattlePendulum>(true));
+        controlledComponents.AddRange(
+            GetComponentsInChildren<ChickenTailFlutter>(true));
+        controlledComponents.AddRange(
+            GetComponentsInChildren<ChickenWindResponse>(true));
+        lodControlledSecondaryMotion = controlledComponents.ToArray();
+        lodControlledSecondaryMotionDefaults =
+            new bool[lodControlledSecondaryMotion.Length];
+
+        for (int index = 0;
+             index < lodControlledSecondaryMotion.Length;
+             index++)
+        {
+            Behaviour component = lodControlledSecondaryMotion[index];
+            lodControlledSecondaryMotionDefaults[index] =
+                component != null && component.enabled;
+        }
+
+        secondaryMotionMeshLodMesh = GetRendererMesh(
+            secondaryMotionMeshLodRenderer);
+        if (secondaryMotionMeshLodMesh == null
+            || secondaryMotionMeshLodMesh.lodCount < 2)
+        {
+            secondaryMotionMeshLodRenderer =
+                FindGeneratedMeshLodRenderer();
+            secondaryMotionMeshLodMesh = GetRendererMesh(
+                secondaryMotionMeshLodRenderer);
+        }
+
+        if (secondaryMotionMeshLodMesh != null
+            && secondaryMotionMeshLodMesh.lodCount >= 2)
+        {
+            secondaryMotionLodAvailable = true;
+        }
+        else
+        {
+            if (secondaryMotionLodGroup == null)
+            {
+                secondaryMotionLodGroup =
+                    GetComponentInChildren<LODGroup>(true);
+            }
+
+            if (secondaryMotionLodGroup != null)
+            {
+                LOD[] lods = secondaryMotionLodGroup.GetLODs();
+                if (lods.Length >= 2)
+                {
+                    int transitionIndex = Mathf.Clamp(
+                        lastSecondaryMotionLod,
+                        0,
+                        lods.Length - 2);
+                    secondaryMotionTransitionHeight =
+                        lods[transitionIndex]
+                            .screenRelativeTransitionHeight;
+                    secondaryMotionLodAvailable = true;
+                }
+            }
+        }
+
+        int interval = Mathf.Max(
+            1,
+            secondaryMotionLodCheckIntervalFrames);
+        nextSecondaryMotionLodCheckFrame =
+            Time.frameCount + Mathf.Abs(GetInstanceID()) % interval;
+    }
+
+    private void UpdateSecondaryMotionLod(bool force)
+    {
+        if (lodControlledSecondaryMotion.Length == 0
+            || !secondaryMotionLodAvailable)
+        {
+            return;
+        }
+
+        if (!force
+            && Time.frameCount < nextSecondaryMotionLodCheckFrame)
+        {
+            return;
+        }
+
+        int interval = Mathf.Max(
+            1,
+            secondaryMotionLodCheckIntervalFrames);
+        nextSecondaryMotionLodCheckFrame =
+            Time.frameCount + interval;
+        bool insideDetailedLod = IsInsideSecondaryMotionLod();
+        bool shouldSimulate = isHeldByHand || insideDetailedLod;
+        SetSecondaryMotionEnabled(shouldSimulate);
+    }
+
+    private bool IsInsideSecondaryMotionLod()
+    {
+        if (secondaryMotionCamera == null
+            || !secondaryMotionCamera.isActiveAndEnabled)
+        {
+            secondaryMotionCamera = Camera.main;
+        }
+
+        Camera camera = secondaryMotionCamera;
+        if (camera == null)
+        {
+            return true;
+        }
+
+        if (secondaryMotionMeshLodMesh != null
+            && secondaryMotionMeshLodRenderer != null)
+        {
+            int activeLod = CalculateActiveMeshLod(
+                camera,
+                secondaryMotionMeshLodRenderer,
+                secondaryMotionMeshLodMesh);
+            bool useImpostor = !isHeldByHand
+                && activeLod >= Mathf.Clamp(
+                    farImpostorMeshLod,
+                    1,
+                    secondaryMotionMeshLodMesh.lodCount - 1);
+            SetFarImpostorActive(useImpostor, false);
+            if (useImpostor)
+            {
+                FaceImpostorTowards(camera);
+            }
+
+            return activeLod <= Mathf.Clamp(
+                lastSecondaryMotionLod,
+                0,
+                secondaryMotionMeshLodMesh.lodCount - 1);
+        }
+
+        if (secondaryMotionLodGroup == null)
+        {
+            return true;
+        }
+
+        Transform lodTransform = secondaryMotionLodGroup.transform;
+        Vector3 referencePoint = lodTransform.TransformPoint(
+            secondaryMotionLodGroup.localReferencePoint);
+        float maximumScale = Mathf.Max(
+            Mathf.Abs(lodTransform.lossyScale.x),
+            Mathf.Abs(lodTransform.lossyScale.y),
+            Mathf.Abs(lodTransform.lossyScale.z));
+        float worldSize =
+            secondaryMotionLodGroup.size * maximumScale;
+        float relativeHeight;
+
+        if (camera.orthographic)
+        {
+            relativeHeight = worldSize
+                / Mathf.Max(0.0001f, camera.orthographicSize * 2f);
+        }
+        else
+        {
+            float forwardDistance = Vector3.Dot(
+                referencePoint - camera.transform.position,
+                camera.transform.forward);
+            if (forwardDistance <= 0f)
+            {
+                return false;
+            }
+
+            float halfVerticalFov =
+                camera.fieldOfView * 0.5f * Mathf.Deg2Rad;
+            relativeHeight = worldSize
+                / Mathf.Max(
+                    0.0001f,
+                    forwardDistance
+                    * 2f
+                    * Mathf.Tan(halfVerticalFov));
+        }
+
+        relativeHeight *= Mathf.Max(
+            0.01f,
+            QualitySettings.lodBias);
+        return relativeHeight >= secondaryMotionTransitionHeight;
+    }
+
+    private void CacheFarImpostor()
+    {
+        if (farImpostorRenderer == null)
+        {
+            farImpostorRenderer =
+                GetComponentInChildren<SpriteRenderer>(true);
+        }
+
+        var renderers = new List<Renderer>();
+        foreach (Renderer renderer
+                 in GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer != null && renderer != farImpostorRenderer)
+            {
+                renderers.Add(renderer);
+            }
+        }
+
+        detailedRenderers = renderers.ToArray();
+        detailedRendererDefaults = new bool[detailedRenderers.Length];
+        for (int index = 0; index < detailedRenderers.Length; index++)
+        {
+            detailedRendererDefaults[index] =
+                detailedRenderers[index] != null
+                && detailedRenderers[index].enabled;
+        }
+
+        var behaviours = new List<Behaviour>();
+        ChickenLookController lookController =
+            GetComponent<ChickenLookController>();
+        ChickenFootPlacement footPlacement =
+            GetComponent<ChickenFootPlacement>();
+        ChickenMotionLean motionLean =
+            GetComponent<ChickenMotionLean>();
+        if (lookController != null)
+        {
+            behaviours.Add(lookController);
+        }
+        if (footPlacement != null)
+        {
+            behaviours.Add(footPlacement);
+        }
+        if (motionLean != null)
+        {
+            behaviours.Add(motionLean);
+        }
+
+        farDisabledBehaviours = behaviours.ToArray();
+        farDisabledBehaviourDefaults =
+            new bool[farDisabledBehaviours.Length];
+        for (int index = 0;
+             index < farDisabledBehaviours.Length;
+             index++)
+        {
+            farDisabledBehaviourDefaults[index] =
+                farDisabledBehaviours[index] != null
+                && farDisabledBehaviours[index].enabled;
+        }
+
+        animatorDefaultEnabled = animator == null || animator.enabled;
+        if (farImpostorRenderer != null)
+        {
+            farImpostorRenderer.enabled = false;
+            ApplyFarImpostorTint();
+        }
+    }
+
+    private void SetFarImpostorActive(bool active, bool force)
+    {
+        if (!force && usingFarImpostor == active)
+        {
+            return;
+        }
+
+        usingFarImpostor = active;
+
+        if (farImpostorRenderer != null)
+        {
+            farImpostorRenderer.enabled = active;
+        }
+
+        for (int index = 0; index < detailedRenderers.Length; index++)
+        {
+            Renderer renderer = detailedRenderers[index];
+            if (renderer != null)
+            {
+                renderer.enabled = !active
+                    && detailedRendererDefaults[index];
+            }
+        }
+
+        if (animator != null)
+        {
+            animator.enabled = !active && animatorDefaultEnabled;
+        }
+
+        for (int index = 0;
+             index < farDisabledBehaviours.Length;
+             index++)
+        {
+            Behaviour behaviour = farDisabledBehaviours[index];
+            if (behaviour != null)
+            {
+                behaviour.enabled = !active
+                    && farDisabledBehaviourDefaults[index];
+            }
+        }
+
+        if (agent != null)
+        {
+            agent.obstacleAvoidanceType = active
+                ? ObstacleAvoidanceType.NoObstacleAvoidance
+                : detailedAvoidanceType;
+        }
+    }
+
+    private void FaceImpostorTowards(Camera camera)
+    {
+        if (farImpostorRenderer == null || camera == null)
+        {
+            return;
+        }
+
+        farImpostorRenderer.transform.rotation =
+            Quaternion.LookRotation(
+                camera.transform.forward,
+                camera.transform.up);
+    }
+
+    private void ApplyFarImpostorTint()
+    {
+        if (farImpostorRenderer == null)
+        {
+            return;
+        }
+
+        farImpostorRenderer.color = breed switch
+        {
+            ChickenBreed.Brown =>
+                new Color(0.72f, 0.43f, 0.23f, 1f),
+            ChickenBreed.Black =>
+                new Color(0.28f, 0.29f, 0.32f, 1f),
+            ChickenBreed.Blue =>
+                new Color(0.38f, 0.65f, 0.95f, 1f),
+            ChickenBreed.Purple =>
+                new Color(0.69f, 0.43f, 0.9f, 1f),
+            ChickenBreed.Rainbow =>
+                new Color(1f, 0.58f, 0.83f, 1f),
+            ChickenBreed.Cosmic =>
+                new Color(0.43f, 0.25f, 0.7f, 1f),
+            _ => Color.white
+        };
+    }
+
+    private Renderer FindGeneratedMeshLodRenderer()
+    {
+        Renderer[] renderers =
+            GetComponentsInChildren<Renderer>(true);
+        for (int index = 0; index < renderers.Length; index++)
+        {
+            Mesh mesh = GetRendererMesh(renderers[index]);
+            if (mesh != null && mesh.lodCount >= 2)
+            {
+                return renderers[index];
+            }
+        }
+
+        return null;
+    }
+
+    private static Mesh GetRendererMesh(Renderer renderer)
+    {
+        if (renderer is SkinnedMeshRenderer skinnedRenderer)
+        {
+            return skinnedRenderer.sharedMesh;
+        }
+
+        if (renderer != null
+            && renderer.TryGetComponent(out MeshFilter meshFilter))
+        {
+            return meshFilter.sharedMesh;
+        }
+
+        return null;
+    }
+
+    private static int CalculateActiveMeshLod(
+        Camera camera,
+        Renderer renderer,
+        Mesh mesh)
+    {
+        if (renderer.forceMeshLod >= 0)
+        {
+            return Mathf.Clamp(
+                renderer.forceMeshLod,
+                0,
+                mesh.lodCount - 1);
+        }
+
+        Bounds bounds = renderer.bounds;
+        float radiusSquared = Mathf.Max(
+            bounds.extents.sqrMagnitude,
+            0.00001f);
+        float diameterSquared = radiusSquared * 4f;
+        float screenMetric = camera.orthographic
+            ? camera.orthographicSize * 2f
+            : 2f * Mathf.Tan(
+                camera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        float meshLodConstant =
+            Mathf.Max(0.00001f, QualitySettings.meshLodThreshold)
+            * screenMetric
+            / Mathf.Max(1f, camera.pixelHeight);
+        float cameraHeightAtDistanceSquared;
+
+        if (camera.orthographic)
+        {
+            cameraHeightAtDistanceSquared =
+                meshLodConstant * meshLodConstant;
+        }
+        else
+        {
+            cameraHeightAtDistanceSquared =
+                (bounds.center - camera.transform.position).sqrMagnitude
+                * meshLodConstant
+                * meshLodConstant;
+        }
+
+        float desiredPercentage = Mathf.Sqrt(
+            cameraHeightAtDistanceSquared / diameterSquared);
+        Mesh.LodSelectionCurve curve = mesh.lodSelectionCurve;
+        float lodLevel = Mathf.Log(
+                Mathf.Max(0.00001f, desiredPercentage),
+                2f)
+            * curve.lodSlope
+            + curve.lodBias;
+        lodLevel = Mathf.Max(lodLevel, 0f);
+        lodLevel += renderer.meshLodSelectionBias;
+        lodLevel = Mathf.Clamp(
+            lodLevel,
+            0f,
+            mesh.lodCount - 1);
+        return Mathf.FloorToInt(lodLevel);
+    }
+
+    private void SetSecondaryMotionEnabled(bool active)
+    {
+        if (secondaryMotionActive == active)
+        {
+            return;
+        }
+
+        secondaryMotionActive = active;
+        for (int index = 0;
+             index < lodControlledSecondaryMotion.Length;
+             index++)
+        {
+            Behaviour component = lodControlledSecondaryMotion[index];
+            if (component == null)
+            {
+                continue;
+            }
+
+            bool enabledForLod = active
+                && lodControlledSecondaryMotionDefaults[index];
+            if (component.enabled != enabledForLod)
+            {
+                component.enabled = enabledForLod;
+            }
+        }
+    }
+
     private Vector3 GetPlanarForward()
     {
         Vector3 planarForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
@@ -1727,13 +2448,33 @@ public sealed class ChickenController : MonoBehaviour
         fullLeanTurnRate = Mathf.Max(1f, fullLeanTurnRate);
         leanSmoothTime = Mathf.Max(0.01f, leanSmoothTime);
         leanStrength = Mathf.Clamp01(leanStrength);
+        lastSecondaryMotionLod = Mathf.Max(
+            0,
+            lastSecondaryMotionLod);
+        secondaryMotionLodCheckIntervalFrames = Mathf.Max(
+            1,
+            secondaryMotionLodCheckIntervalFrames);
+        simulationTickInterval = Mathf.Max(
+            0.02f,
+            simulationTickInterval);
+        farSimulationTickInterval = Mathf.Max(
+            0.05f,
+            farSimulationTickInterval);
+        farImpostorMeshLod = Mathf.Max(1, farImpostorMeshLod);
+        eggPushIntervalFixedSteps = Mathf.Max(
+            1,
+            eggPushIntervalFixedSteps);
         heldAnimationTransitionDuration = Mathf.Max(
             0f,
             heldAnimationTransitionDuration);
+        heldBlendShapeWeight = Mathf.Clamp(
+            heldBlendShapeWeight,
+            0f,
+            100f);
         heldDragMaximumAngle = Mathf.Clamp(
             heldDragMaximumAngle,
             0f,
-            10f);
+            20f);
         heldDragSpeedForMaximumAngle = Mathf.Max(
             0.01f,
             heldDragSpeedForMaximumAngle);
@@ -1759,6 +2500,16 @@ public sealed class ChickenController : MonoBehaviour
         secondsPerBite = Mathf.Max(0.01f, secondsPerBite);
         separationRadius = Mathf.Max(0f, separationRadius);
         separationStrength = Mathf.Max(0f, separationStrength);
+        separationSettleMargin = Mathf.Clamp(
+            separationSettleMargin,
+            0f,
+            Mathf.Max(0f, separationRadius - 0.001f));
+        separationResponseSpeed = Mathf.Max(
+            0.01f,
+            separationResponseSpeed);
+        idleSeparationStrengthMultiplier = Mathf.Clamp01(
+            idleSeparationStrengthMultiplier);
+        separationStopSpeed = Mathf.Max(0f, separationStopSpeed);
         eggPushRadius = Mathf.Max(0f, eggPushRadius);
         eggPushForce = Mathf.Max(0f, eggPushForce);
         maximumEggPushSpeed = Mathf.Max(0.01f, maximumEggPushSpeed);

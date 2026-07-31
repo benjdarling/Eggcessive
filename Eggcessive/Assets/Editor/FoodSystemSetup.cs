@@ -343,6 +343,7 @@ public static class FoodSystemSetup
             serializedShop.FindProperty("foodPrefab").objectReferenceValue = foodPrefab;
             serializedShop.FindProperty("foodCostCents").intValue = 200;
             serializedShop.ApplyModifiedPropertiesWithoutUndo();
+            GameplayHudPrefabSetup.ConfigureToolHud(root);
             PrefabUtility.SaveAsPrefabAsset(root, HudPrefabPath);
         }
         finally

@@ -80,6 +80,7 @@ public static class RoundUiPrefabSetup
             }
 
             buildMethod.Invoke(roundSystem, null);
+            GameplayHudPrefabSetup.ConfigureRoundHud(root);
             ConfigureEventSystem(root, uiInputActions);
 
             SerializedObject serializedSystem = new SerializedObject(roundSystem);

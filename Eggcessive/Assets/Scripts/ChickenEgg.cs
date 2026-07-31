@@ -35,13 +35,30 @@ public sealed class ChickenEgg : MonoBehaviour
     [SerializeField] private Material[] typeMaterials = null;
     [SerializeField] private bool cosmicVisualPrefab;
 
+    [Header("Far Impostor")]
+    [Tooltip(
+        "Editable SpriteRenderer child used when this egg becomes very small " +
+        "on screen. Leave empty to auto-find the prefab child.")]
+    [SerializeField] private SpriteRenderer farImpostorRenderer;
+    [SerializeField, Min(1f)]
+    private float farImpostorScreenHeightPixels = 18f;
+    [SerializeField, Min(1)]
+    private int farImpostorCheckIntervalFrames = 12;
+
     private Rigidbody eggBody;
     private Collider[] eggColliders;
     private GrassInteractor grassInteractor;
+    private Renderer[] detailedRenderers = System.Array.Empty<Renderer>();
+    private bool[] detailedRendererDefaults = System.Array.Empty<bool>();
+    private ParticleSystem[] detailedParticles =
+        System.Array.Empty<ParticleSystem>();
     private Vector3 baseLocalScale;
     private readonly HashSet<Collider> groundContacts =
         new HashSet<Collider>();
     private bool isPooled;
+    private bool usingFarImpostor;
+    private int nextFarImpostorCheckFrame;
+    private static Camera impostorCamera;
 
     public static IReadOnlyList<ChickenEgg> ActiveInstances => ActiveEggs;
     public bool IsHeld { get; private set; }
@@ -120,6 +137,7 @@ public sealed class ChickenEgg : MonoBehaviour
         eggColliders = GetComponentsInChildren<Collider>(true);
         grassInteractor = GetComponent<GrassInteractor>();
         baseLocalScale = transform.localScale;
+        CacheFarImpostor();
 
         if (typeMaterials != null && typeMaterials.Length >= 5)
         {
@@ -134,6 +152,11 @@ public sealed class ChickenEgg : MonoBehaviour
         {
             ActiveEggs.Add(this);
         }
+
+        nextFarImpostorCheckFrame = Time.frameCount
+            + Mathf.Abs(GetInstanceID())
+            % Mathf.Max(1, farImpostorCheckIntervalFrames);
+        UpdateFarImpostor(true);
     }
 
     private void OnDisable()
@@ -150,6 +173,11 @@ public sealed class ChickenEgg : MonoBehaviour
                 && !eggBody.isKinematic
                 && !eggBody.IsSleeping());
         SetGrassInteractionEnabled(shouldInteractWithGrass);
+    }
+
+    private void Update()
+    {
+        UpdateFarImpostor(false);
     }
 
     public bool BeginCarry()
@@ -171,6 +199,7 @@ public sealed class ChickenEgg : MonoBehaviour
         eggBody.isKinematic = true;
         eggBody.useGravity = false;
         SetGrassInteractionEnabled(true);
+        UpdateFarImpostor(true);
         return true;
     }
 
@@ -179,6 +208,7 @@ public sealed class ChickenEgg : MonoBehaviour
         Type = type;
         ValueCents = Mathf.Max(1, valueCents);
         ApplyTypeVisual(gameObject, type);
+        ApplyFarImpostorTint();
         gameObject.name = type == EggType.Common
             ? gameObject.name
             : $"{type} Egg";
@@ -259,6 +289,7 @@ public sealed class ChickenEgg : MonoBehaviour
         groundContacts.Clear();
         eggBody.WakeUp();
         SetGrassInteractionEnabled(true);
+        UpdateFarImpostor(true);
     }
 
     public bool TryCollect()
@@ -270,6 +301,7 @@ public sealed class ChickenEgg : MonoBehaviour
 
         IsCollected = true;
         SetGrassInteractionEnabled(false);
+        SetFarImpostorActive(false, true);
         return true;
     }
 
@@ -296,6 +328,7 @@ public sealed class ChickenEgg : MonoBehaviour
         }
 
         SetGrassInteractionEnabled(false);
+        SetFarImpostorActive(false, true);
         return true;
     }
 
@@ -310,6 +343,7 @@ public sealed class ChickenEgg : MonoBehaviour
         IsHeld = false;
         IsCollected = true;
         SetGrassInteractionEnabled(false);
+        SetFarImpostorActive(false, true);
 
         if (eggBody != null)
         {
@@ -390,7 +424,188 @@ public sealed class ChickenEgg : MonoBehaviour
         }
 
         ApplyTypeVisual(gameObject, EggType.Common);
+        ApplyFarImpostorTint();
+        SetFarImpostorActive(false, true);
         SetGrassInteractionEnabled(true);
+    }
+
+    private void CacheFarImpostor()
+    {
+        if (farImpostorRenderer == null)
+        {
+            farImpostorRenderer =
+                GetComponentInChildren<SpriteRenderer>(true);
+        }
+
+        var renderers = new List<Renderer>();
+        foreach (Renderer renderer
+                 in GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer != null && renderer != farImpostorRenderer)
+            {
+                renderers.Add(renderer);
+            }
+        }
+
+        detailedRenderers = renderers.ToArray();
+        detailedRendererDefaults =
+            new bool[detailedRenderers.Length];
+        for (int index = 0; index < detailedRenderers.Length; index++)
+        {
+            detailedRendererDefaults[index] =
+                detailedRenderers[index] != null
+                && detailedRenderers[index].enabled;
+        }
+
+        detailedParticles =
+            GetComponentsInChildren<ParticleSystem>(true);
+        if (farImpostorRenderer != null)
+        {
+            farImpostorRenderer.enabled = false;
+        }
+    }
+
+    private void UpdateFarImpostor(bool force)
+    {
+        if (farImpostorRenderer == null)
+        {
+            return;
+        }
+
+        if (!force
+            && Time.frameCount < nextFarImpostorCheckFrame)
+        {
+            return;
+        }
+
+        nextFarImpostorCheckFrame = Time.frameCount
+            + Mathf.Max(1, farImpostorCheckIntervalFrames);
+        if (impostorCamera == null
+            || !impostorCamera.isActiveAndEnabled)
+        {
+            impostorCamera = Camera.main;
+        }
+
+        Camera camera = impostorCamera;
+        if (camera == null)
+        {
+            return;
+        }
+
+        bool shouldUseImpostor = !IsHeld
+            && !IsCollected
+            && CalculateScreenHeightPixels(camera)
+                <= farImpostorScreenHeightPixels;
+        SetFarImpostorActive(shouldUseImpostor, force);
+        if (shouldUseImpostor)
+        {
+            farImpostorRenderer.transform.rotation =
+                Quaternion.LookRotation(
+                    camera.transform.forward,
+                    camera.transform.up);
+        }
+    }
+
+    private float CalculateScreenHeightPixels(Camera camera)
+    {
+        Bounds bounds = new Bounds(transform.position, Vector3.zero);
+        bool hasBounds = false;
+        for (int index = 0; index < detailedRenderers.Length; index++)
+        {
+            Renderer renderer = detailedRenderers[index];
+            if (renderer == null)
+            {
+                continue;
+            }
+
+            if (!hasBounds)
+            {
+                bounds = renderer.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        float worldHeight = hasBounds
+            ? Mathf.Max(0.001f, bounds.size.y)
+            : 0.1f;
+        if (camera.orthographic)
+        {
+            return worldHeight
+                / Mathf.Max(0.001f, camera.orthographicSize * 2f)
+                * camera.pixelHeight;
+        }
+
+        float distance = Mathf.Max(
+            0.001f,
+            Vector3.Distance(
+                bounds.center,
+                camera.transform.position));
+        float visibleWorldHeight = distance
+            * 2f
+            * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        return worldHeight
+            / Mathf.Max(0.001f, visibleWorldHeight)
+            * camera.pixelHeight;
+    }
+
+    private void SetFarImpostorActive(bool active, bool force)
+    {
+        if (!force && usingFarImpostor == active)
+        {
+            return;
+        }
+
+        usingFarImpostor = active;
+        farImpostorRenderer.enabled = active;
+
+        for (int index = 0; index < detailedRenderers.Length; index++)
+        {
+            Renderer renderer = detailedRenderers[index];
+            if (renderer != null)
+            {
+                renderer.enabled = !active
+                    && detailedRendererDefaults[index];
+            }
+        }
+
+        for (int index = 0; index < detailedParticles.Length; index++)
+        {
+            ParticleSystem particles = detailedParticles[index];
+            if (particles == null)
+            {
+                continue;
+            }
+
+            if (active)
+            {
+                particles.Pause(true);
+            }
+            else if (particles.isPaused)
+            {
+                particles.Play(true);
+            }
+        }
+    }
+
+    private void ApplyFarImpostorTint()
+    {
+        if (farImpostorRenderer == null)
+        {
+            return;
+        }
+
+        farImpostorRenderer.color = Type switch
+        {
+            EggType.Rare => new Color(0.45f, 0.72f, 1f, 1f),
+            EggType.Epic => new Color(0.72f, 0.42f, 0.95f, 1f),
+            EggType.Legendary => new Color(1f, 0.66f, 0.18f, 1f),
+            EggType.Cosmic => new Color(0.45f, 0.2f, 0.72f, 1f),
+            _ => Color.white
+        };
     }
 
     private void OnCollisionEnter(Collision collision)
@@ -454,5 +669,11 @@ public sealed class ChickenEgg : MonoBehaviour
     {
         minimumScale = Mathf.Max(0.01f, minimumScale);
         maximumScale = Mathf.Max(minimumScale, maximumScale);
+        farImpostorScreenHeightPixels = Mathf.Max(
+            1f,
+            farImpostorScreenHeightPixels);
+        farImpostorCheckIntervalFrames = Mathf.Max(
+            1,
+            farImpostorCheckIntervalFrames);
     }
 }

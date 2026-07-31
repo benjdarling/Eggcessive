@@ -148,7 +148,7 @@ MonoBehaviour:
   pointerSpringDamping: 0.68
   pointerDwellTime: 0.08
   actionPause: 0.2
-  vacuumHoldTime: 0.85
+  vacuumHoldTime: 4
   minimumFeedBags: 1
   maximumShopPurchasesPerVisit: 12
   statusText: {fileID: 5336482332662369525}

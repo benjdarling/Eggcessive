@@ -118,10 +118,13 @@ public sealed class ProgressionTreePreview : MonoBehaviour
 
         ProgressionSystem.NodeState state = selectedNode.GetNodeState();
 
-        int balance = EggScoreHud.CurrentCents;
+        long balance = EggScoreHud.CurrentCents;
         bool maxed = state.IsMaxed;
         bool affordable = state.Cost <= balance;
         bool canBuy = state.Visible && state.PrerequisiteMet && !maxed && affordable;
+        bool ownershipOnly =
+            !selectedNode.IsTierNode && state.MaximumLevel == 1;
+        bool showSavingsProgress = !ownershipOnly || !maxed;
 
         titleText.text = $"<b>{state.Title}</b>";
         levelText.text = selectedNode.IsTierNode
@@ -130,21 +133,27 @@ public sealed class ProgressionTreePreview : MonoBehaviour
                 : state.PrerequisiteMet
                     ? "AVAILABLE"
                     : $"REQUIRES TIER {selectedNode.TargetLevel - 1}"
-            : state.IsRepeatable
-                ? $"OWNED  {state.Level}"
-                : $"LEVEL  {state.Level} / {state.MaximumLevel}";
+            : ownershipOnly
+                ? maxed ? "OWNED" : "UNLOCK"
+                : state.IsRepeatable
+                    ? $"OWNED  {state.Level}"
+                    : $"LEVEL  {state.Level} / {state.MaximumLevel}";
         descriptionText.text =
             $"{GetDescription(selectedNode.UpgradeId)}\n\n" +
             $"<color=#FFD95A>{state.Details}</color>";
+        priceText.gameObject.SetActive(!ownershipOnly || !maxed);
         priceText.text = maxed
             ? selectedNode.IsTierNode ? "OWNED" : "FULLY UPGRADED"
             : $"COST  {FormatMoney(state.Cost)}";
+        affordabilityText.gameObject.SetActive(showSavingsProgress);
         affordabilityText.text = maxed
             ? "COMPLETE"
             : $"{FormatMoney(balance)} / {FormatMoney(state.Cost)}";
 
         if (affordabilityFill != null)
         {
+            affordabilityFill.transform.parent.gameObject.SetActive(
+                showSavingsProgress);
             float progress = maxed || state.Cost <= 0
                 ? 1f
                 : Mathf.Clamp01(balance / (float)state.Cost);
@@ -153,6 +162,7 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             affordabilityFill.rectTransform.offsetMax = Vector2.zero;
         }
 
+        buyButton.gameObject.SetActive(!ownershipOnly || !maxed);
         buyButton.interactable = canBuy;
         buyButtonText.text = maxed
             ? "MAXED"
@@ -217,7 +227,7 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             Mathf.Clamp(nodePosition.y, -320f, 270f));
     }
 
-    private void HandleBalanceChanged(int _)
+    private void HandleBalanceChanged(long _)
     {
         Refresh();
     }
@@ -248,8 +258,10 @@ public sealed class ProgressionTreePreview : MonoBehaviour
                 "Raises the chance that mixed breeds produce the next stronger chicken.",
             ProgressionSystem.UpgradeId.BasketCapacity =>
                 "Unlocks and expands the cursor-following egg basket.",
+            ProgressionSystem.UpgradeId.VacuumUnlock =>
+                "Unlocks click-hold vacuum collection after completing the basket upgrades.",
             ProgressionSystem.UpgradeId.VacuumPower =>
-                "Unlocks the vacuum and increases how quickly it pulls eggs.",
+                "Increases how quickly the vacuum pulls eggs.",
             ProgressionSystem.UpgradeId.VacuumRange =>
                 "Extends the vacuum cone so it can reach more eggs.",
             ProgressionSystem.UpgradeId.RobotUnlock =>
@@ -259,13 +271,18 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             ProgressionSystem.UpgradeId.RobotCapacity =>
                 "Allows the collector robot to carry more eggs each trip.",
             ProgressionSystem.UpgradeId.RobotSmartness =>
-                "Improves incubator routing and egg-selection decisions.",
+                "Improves incubator routing, value awareness, and rarity-first egg selection.",
             _ => string.Empty
         };
     }
 
     private static string FormatMoney(int cents)
     {
-        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
+        return FormatMoney((long)cents);
+    }
+
+    private static string FormatMoney(long cents)
+    {
+        return $"${cents / 100:N0}.{System.Math.Abs(cents % 100):D2}";
     }
 }

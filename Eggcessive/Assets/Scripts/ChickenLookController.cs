@@ -65,7 +65,9 @@ public sealed class ChickenLookController : MonoBehaviour
     private Vector3 currentTargetOffset;
     private Vector3 desiredTargetPosition;
     private Vector3 smoothedTargetPosition;
-    private Vector3 targetPositionVelocity;
+    private Vector3 smoothedLookDirection;
+    private float smoothedLookDistance;
+    private float lookDistanceVelocity;
     private float lookWeight;
     private float lookWeightVelocity;
     private float nextTargetScanTime;
@@ -158,10 +160,18 @@ public sealed class ChickenLookController : MonoBehaviour
     {
         hasTarget = false;
         targetPositionInitialized = false;
+        currentTargetTransform = null;
+        currentTargetOffset = Vector3.zero;
         currentTargetType = LookTargetType.None;
+        smoothedLookDirection = Vector3.zero;
+        smoothedLookDistance = 0f;
+        lookDistanceVelocity = 0f;
         lookWeight = 0f;
         lookWeightVelocity = 0f;
-        nextTargetScanTime = 0f;
+        float interval = Mathf.Max(0.02f, targetScanInterval);
+        nextTargetScanTime = Time.time
+            + (Mathf.Abs(GetInstanceID()) % 997) / 997f
+            * interval;
     }
 
     private void Update()
@@ -195,22 +205,47 @@ public sealed class ChickenLookController : MonoBehaviour
 
         if (hasTarget)
         {
+            Vector3 viewOrigin = GetViewOrigin();
+            Vector3 desiredOffset = desiredTargetPosition - viewOrigin;
             if (!targetPositionInitialized)
             {
-                smoothedTargetPosition = desiredTargetPosition;
-                targetPositionVelocity = Vector3.zero;
-                targetPositionInitialized = true;
+                if (desiredOffset.sqrMagnitude > 0.000001f)
+                {
+                    smoothedLookDirection = desiredOffset.normalized;
+                    smoothedLookDistance = desiredOffset.magnitude;
+                    lookDistanceVelocity = 0f;
+                    targetPositionInitialized = true;
+                }
             }
-            else
+            else if (desiredOffset.sqrMagnitude > 0.000001f)
             {
-                smoothedTargetPosition = Vector3.SmoothDamp(
-                    smoothedTargetPosition,
-                    desiredTargetPosition,
-                    ref targetPositionVelocity,
+                float directionBlend = 1f - Mathf.Exp(
+                    -Time.deltaTime / Mathf.Max(0.01f, targetSmoothTime));
+                smoothedLookDirection = Vector3.Slerp(
+                    smoothedLookDirection,
+                    desiredOffset.normalized,
+                    directionBlend).normalized;
+                smoothedLookDistance = Mathf.SmoothDamp(
+                    smoothedLookDistance,
+                    desiredOffset.magnitude,
+                    ref lookDistanceVelocity,
                     targetSmoothTime,
                     Mathf.Infinity,
                     Time.deltaTime);
             }
+
+            smoothedTargetPosition =
+                viewOrigin + smoothedLookDirection * smoothedLookDistance;
+        }
+        else if (lookWeight <= 0.0001f)
+        {
+            // Once the old look has fully blended out, the next target can be
+            // initialized invisibly. If a new target arrives before then, the
+            // retained direction is spherically blended instead of snapping.
+            targetPositionInitialized = false;
+            smoothedLookDirection = Vector3.zero;
+            smoothedLookDistance = 0f;
+            lookDistanceVelocity = 0f;
         }
 
         if (lookWeight <= 0.0001f || !targetPositionInitialized)
@@ -285,8 +320,14 @@ public sealed class ChickenLookController : MonoBehaviour
             return;
         }
 
-        nextTargetScanTime = Time.time + targetScanInterval;
-        bool previouslyHadTarget = hasTarget;
+        int populationMultiplier =
+            ChickenController.ActiveInstances.Count >= 80
+                ? 3
+                : ChickenController.ActiveInstances.Count >= 40
+                    ? 2
+                    : 1;
+        nextTargetScanTime = Time.time
+            + targetScanInterval * populationMultiplier;
         hasTarget = TrySelectTarget(out Vector3 position, out Transform target, out Vector3 offset, out LookTargetType type);
 
         if (!hasTarget)
@@ -302,15 +343,9 @@ public sealed class ChickenLookController : MonoBehaviour
         currentTargetType = type;
         desiredTargetPosition = position;
 
-        if (!previouslyHadTarget)
+        if (targetChanged)
         {
-            smoothedTargetPosition = position;
-            targetPositionVelocity = Vector3.zero;
-            targetPositionInitialized = true;
-        }
-        else if (targetChanged)
-        {
-            targetPositionVelocity *= 0.25f;
+            lookDistanceVelocity *= 0.25f;
         }
     }
 

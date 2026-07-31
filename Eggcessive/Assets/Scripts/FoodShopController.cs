@@ -53,6 +53,16 @@ public sealed class FoodShopController : MonoBehaviour
     [SerializeField] private TMP_Text ownedCountText = null;
     [SerializeField] private TMP_Text placementStatusText = null;
     [SerializeField] private Image affordabilityProgressFill = null;
+    [Header("Authored Tool HUD")]
+    [SerializeField] private Button handToolButton;
+    [SerializeField] private Button collectionToolButton;
+    [SerializeField] private TMP_Text collectionToolLabel;
+    [SerializeField] private Image handToolImage;
+    [SerializeField] private Image collectionToolImage;
+    [SerializeField] private Image foodToolImage;
+    [SerializeField] private RawImage handToolIcon;
+    [SerializeField] private RawImage collectionToolIcon;
+    [SerializeField] private RawImage foodToolIcon;
     [SerializeField] private GameObject foodPrefab = null;
     [SerializeField, Min(1)] private int foodCostCents = 200;
 
@@ -74,13 +84,6 @@ public sealed class FoodShopController : MonoBehaviour
     private int ignorePlacementUntilFrame;
     private bool hasValidPlacement;
     private bool isPlacementActive;
-    private Button handToolButton;
-    private Button collectionToolButton;
-    private TMP_Text collectionToolLabel;
-    private Image handToolImage;
-    private Image collectionToolImage;
-    private Image foodToolImage;
-
     public const int MaximumFeedTier = 10;
     public static FoodShopController Instance { get; private set; }
     public static bool IsPlacementActive { get; private set; }
@@ -126,7 +129,6 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         previewProperties = new MaterialPropertyBlock();
-        ConfigureCompactHud();
     }
 
     private void OnEnable()
@@ -508,7 +510,7 @@ public sealed class FoodShopController : MonoBehaviour
         RefreshToolButtons();
     }
 
-    private void HandleBalanceChanged(int _)
+    private void HandleBalanceChanged(long _)
     {
         RefreshUi();
     }
@@ -547,6 +549,9 @@ public sealed class FoodShopController : MonoBehaviour
         RefreshToolButtons();
     }
 
+#if UNITY_EDITOR
+    // Legacy editor-only migration helpers. The live tool HUD is authored in
+    // prefab_EggScoreHud and is never assembled during gameplay.
     private void ConfigureCompactHud()
     {
         if (foodIconButton == null)
@@ -562,31 +567,52 @@ public sealed class FoodShopController : MonoBehaviour
             return;
         }
 
+        RectTransform rightHudRect = rightHudPanel as RectTransform;
+        if (rightHudRect != null)
+        {
+            rightHudRect.anchorMin =
+                new Vector2(0.85f, rightHudRect.anchorMin.y);
+            rightHudRect.anchorMax =
+                new Vector2(1f, rightHudRect.anchorMax.y);
+            rightHudRect.offsetMin =
+                new Vector2(0f, rightHudRect.offsetMin.y);
+            rightHudRect.offsetMax =
+                new Vector2(0f, rightHudRect.offsetMax.y);
+        }
+
         foodIconButton.transform.SetParent(rightHudPanel, false);
         RectTransform iconRect = foodIconButton.GetComponent<RectTransform>();
-        iconRect.anchorMin = new Vector2(0.5f, 1f);
-        iconRect.anchorMax = new Vector2(0.5f, 1f);
-        iconRect.pivot = new Vector2(0.5f, 1f);
-        iconRect.anchoredPosition = new Vector2(0f, -358f);
-        iconRect.sizeDelta = new Vector2(54f, 54f);
+        iconRect.anchorMin = Vector2.one;
+        iconRect.anchorMax = Vector2.one;
+        iconRect.pivot = Vector2.one;
+        iconRect.anchoredPosition = new Vector2(-24f, -396f);
+        iconRect.sizeDelta = new Vector2(64f, 64f);
         foodToolImage = foodIconButton.GetComponent<Image>();
+        StyleToolButtonFrame(foodIconButton, foodToolImage);
+        Transform oldFoodIcon = foodIconButton.transform.Find(
+            "Food Sphere Icon");
+        if (oldFoodIcon != null)
+        {
+            oldFoodIcon.gameObject.SetActive(false);
+        }
 
         if (ownedCountText != null)
         {
             ownedCountText.transform.SetParent(foodIconButton.transform, false);
             RectTransform countRect = ownedCountText.rectTransform;
-            countRect.anchorMin = new Vector2(1f, 1f);
-            countRect.anchorMax = new Vector2(1f, 1f);
-            countRect.pivot = new Vector2(0.5f, 0.5f);
-            countRect.anchoredPosition = new Vector2(4f, -10f);
-            countRect.sizeDelta = new Vector2(76f, 24f);
-            ownedCountText.fontSize = 15f;
+            countRect.anchorMin = Vector2.zero;
+            countRect.anchorMax = Vector2.zero;
+            countRect.pivot = Vector2.zero;
+            countRect.anchoredPosition = new Vector2(5f, 4f);
+            countRect.sizeDelta = new Vector2(36f, 18f);
+            ownedCountText.fontSize = 11f;
+            ownedCountText.alignment = TextAlignmentOptions.BottomLeft;
         }
 
         handToolButton = CreateToolButton(
             rightHudPanel,
             "Hand Tool Button",
-            new Vector2(0f, -230f),
+            new Vector2(-24f, -248f),
             "HAND",
             "1",
             new Color(0.18f, 0.48f, 0.34f, 1f),
@@ -595,12 +621,30 @@ public sealed class FoodShopController : MonoBehaviour
         collectionToolButton = CreateToolButton(
             rightHudPanel,
             "Collection Tool Button",
-            new Vector2(0f, -294f),
+            new Vector2(-24f, -322f),
             "BASKET",
             "2",
             new Color(0.15f, 0.39f, 0.63f, 1f),
             out collectionToolImage,
             out collectionToolLabel);
+
+        Texture2D iconAtlas = Resources.Load<Texture2D>("UI/HudIconAtlas");
+        if (iconAtlas != null)
+        {
+            handToolIcon = EnsureToolIcon(
+                handToolButton.transform,
+                iconAtlas,
+                5);
+            collectionToolIcon = EnsureToolIcon(
+                collectionToolButton.transform,
+                iconAtlas,
+                6);
+            foodToolIcon = EnsureToolIcon(
+                foodIconButton.transform,
+                iconAtlas,
+                7);
+        }
+
         EnsureShortcutBadge(foodIconButton.transform, "3");
 
         oldFoodPanel.gameObject.SetActive(false);
@@ -644,16 +688,17 @@ public sealed class FoodShopController : MonoBehaviour
             typeof(Button));
         buttonObject.transform.SetParent(parent, false);
         RectTransform rect = buttonObject.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 1f);
-        rect.anchorMax = new Vector2(0.5f, 1f);
-        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchorMin = Vector2.one;
+        rect.anchorMax = Vector2.one;
+        rect.pivot = Vector2.one;
         rect.anchoredPosition = position;
-        rect.sizeDelta = new Vector2(54f, 54f);
+        rect.sizeDelta = new Vector2(64f, 64f);
         image = buttonObject.GetComponent<Image>();
         image.color = color;
 
         Button button = buttonObject.GetComponent<Button>();
         button.targetGraphic = image;
+        StyleToolButtonFrame(button, image);
 
         GameObject labelObject = new GameObject(
             "Label",
@@ -664,55 +709,69 @@ public sealed class FoodShopController : MonoBehaviour
         RectTransform labelRect = labelObject.GetComponent<RectTransform>();
         labelRect.anchorMin = Vector2.zero;
         labelRect.anchorMax = Vector2.one;
-        labelRect.offsetMin = new Vector2(3f, 10f);
+        labelRect.offsetMin = new Vector2(3f, 3f);
         labelRect.offsetMax = new Vector2(-3f, -3f);
         labelText = labelObject.GetComponent<TextMeshProUGUI>();
         labelText.text = label;
         labelText.font = GetHudFont();
-        labelText.fontSize = 10f;
+        labelText.fontSize = 9f;
         labelText.fontStyle = FontStyles.Bold;
         labelText.alignment = TextAlignmentOptions.Center;
         labelText.color = Color.white;
         labelText.raycastTarget = false;
+        labelText.gameObject.SetActive(false);
         EnsureShortcutBadge(buttonObject.transform, shortcut);
         return button;
     }
 
     private void EnsureShortcutBadge(Transform parent, string shortcut)
     {
-        if (parent.Find("Shortcut Badge") != null)
+        RectTransform badgeRect =
+            parent.Find("Shortcut Badge") as RectTransform;
+        Image badgeImage;
+        if (badgeRect == null)
         {
-            return;
+            GameObject badgeObject = new GameObject(
+                "Shortcut Badge",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            badgeObject.transform.SetParent(parent, false);
+            badgeRect = badgeObject.GetComponent<RectTransform>();
+            badgeImage = badgeObject.GetComponent<Image>();
+        }
+        else
+        {
+            badgeImage = badgeRect.GetComponent<Image>();
         }
 
-        GameObject badgeObject = new GameObject(
-            "Shortcut Badge",
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(Image));
-        badgeObject.transform.SetParent(parent, false);
-        RectTransform badgeRect = badgeObject.GetComponent<RectTransform>();
-        badgeRect.anchorMin = new Vector2(1f, 0f);
-        badgeRect.anchorMax = new Vector2(1f, 0f);
-        badgeRect.pivot = new Vector2(1f, 0f);
-        badgeRect.anchoredPosition = new Vector2(-2f, 2f);
-        badgeRect.sizeDelta = new Vector2(18f, 18f);
-        Image badgeImage = badgeObject.GetComponent<Image>();
+        badgeRect.anchorMin = Vector2.one;
+        badgeRect.anchorMax = Vector2.one;
+        badgeRect.pivot = Vector2.one;
+        badgeRect.anchoredPosition = new Vector2(-2f, -2f);
+        badgeRect.sizeDelta = new Vector2(20f, 20f);
+        badgeImage.sprite = RoundSystem.GetHudRoundedSprite();
+        badgeImage.type = Image.Type.Sliced;
         badgeImage.color = new Color(0.04f, 0.04f, 0.04f, 0.94f);
         badgeImage.raycastTarget = false;
 
-        GameObject textObject = new GameObject(
-            "Number",
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(TextMeshProUGUI));
-        textObject.transform.SetParent(badgeObject.transform, false);
-        RectTransform textRect = textObject.GetComponent<RectTransform>();
+        TMP_Text text = badgeRect.Find("Number")?.GetComponent<TMP_Text>();
+        if (text == null)
+        {
+            GameObject textObject = new GameObject(
+                "Number",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(TextMeshProUGUI));
+            textObject.transform.SetParent(badgeRect, false);
+            text = textObject.GetComponent<TextMeshProUGUI>();
+        }
+
+        RectTransform textRect = text.rectTransform;
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
         textRect.offsetMin = Vector2.zero;
         textRect.offsetMax = Vector2.zero;
-        TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
         text.text = shortcut;
         text.font = GetHudFont();
         text.fontSize = 12f;
@@ -720,6 +779,78 @@ public sealed class FoodShopController : MonoBehaviour
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;
         text.raycastTarget = false;
+        badgeRect.SetAsLastSibling();
+    }
+
+    private static void StyleToolButtonFrame(Button button, Image image)
+    {
+        if (button == null || image == null)
+        {
+            return;
+        }
+
+        image.sprite = RoundSystem.GetHudRoundedSprite();
+        image.type = Image.Type.Sliced;
+        Outline outline = button.GetComponent<Outline>();
+        if (outline == null)
+        {
+            outline = button.gameObject.AddComponent<Outline>();
+        }
+
+        outline.effectColor = new Color(0.08f, 0.06f, 0.035f, 0.9f);
+        outline.effectDistance = new Vector2(2f, -2f);
+
+        Shadow shadow = null;
+        Shadow[] shadows = button.GetComponents<Shadow>();
+        for (int index = 0; index < shadows.Length; index++)
+        {
+            if (shadows[index] != null
+                && shadows[index].GetType() == typeof(Shadow))
+            {
+                shadow = shadows[index];
+                break;
+            }
+        }
+
+        if (shadow == null)
+        {
+            shadow = button.gameObject.AddComponent<Shadow>();
+        }
+
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.55f);
+        shadow.effectDistance = new Vector2(3f, -4f);
+    }
+
+    private static RawImage EnsureToolIcon(
+        Transform parent,
+        Texture2D atlas,
+        int atlasIndex)
+    {
+        RawImage icon = parent.Find("HUD Tool Icon")
+            ?.GetComponent<RawImage>();
+        if (icon == null)
+        {
+            GameObject iconObject = new GameObject(
+                "HUD Tool Icon",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(RawImage));
+            iconObject.transform.SetParent(parent, false);
+            icon = iconObject.GetComponent<RawImage>();
+        }
+
+        RectTransform iconRect = icon.rectTransform;
+        iconRect.anchorMin = new Vector2(0.5f, 0.5f);
+        iconRect.anchorMax = new Vector2(0.5f, 0.5f);
+        iconRect.pivot = new Vector2(0.5f, 0.5f);
+        iconRect.anchoredPosition = new Vector2(0f, -1f);
+        iconRect.sizeDelta = new Vector2(44f, 44f);
+        icon.texture = atlas;
+        icon.uvRect = RoundSystem.GetHudIconUv(atlasIndex);
+        icon.color = Color.white;
+        icon.raycastTarget = false;
+        icon.transform.SetAsFirstSibling();
+        return icon;
     }
 
     private TMP_FontAsset GetHudFont()
@@ -731,6 +862,8 @@ public sealed class FoodShopController : MonoBehaviour
 
         return placementStatusText != null ? placementStatusText.font : null;
     }
+
+#endif
 
     private void RefreshToolButtons()
     {
@@ -768,6 +901,12 @@ public sealed class FoodShopController : MonoBehaviour
                 ? collection.CollectionToolName
                 : "BASKET";
         }
+
+        if (collectionToolIcon != null)
+        {
+            collectionToolIcon.uvRect = RoundSystem.GetHudIconUv(
+                collection != null && collection.HasVacuum ? 8 : 6);
+        }
     }
 
     private static void SetToolButtonVisual(
@@ -791,6 +930,17 @@ public sealed class FoodShopController : MonoBehaviour
         colors.highlightedColor = Color.Lerp(shownColor, Color.white, 0.18f);
         colors.pressedColor = Color.Lerp(shownColor, Color.black, 0.16f);
         button.colors = colors;
+
+        Outline outline = button.GetComponent<Outline>();
+        if (outline != null)
+        {
+            outline.effectColor = selected
+                ? new Color(1f, 0.9f, 0.42f, 1f)
+                : new Color(0.08f, 0.06f, 0.035f, 0.9f);
+            outline.effectDistance = selected
+                ? new Vector2(3f, -3f)
+                : new Vector2(2f, -2f);
+        }
     }
 
     private static string FormatMoney(int cents)

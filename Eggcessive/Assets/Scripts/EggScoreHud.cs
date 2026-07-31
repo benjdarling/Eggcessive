@@ -23,13 +23,13 @@ public sealed class EggScoreHud : MonoBehaviour
     [SerializeField, Min(1)] private int punchVibrato = 3;
     [SerializeField, Range(0f, 1f)] private float punchElasticity = 0.72f;
 
-    private int displayedCents;
-    private int targetCents;
+    private long displayedCents;
+    private long targetCents;
     private Tweener countTween;
     private Tweener punchTween;
 
-    public static event Action<int> BalanceChanged;
-    public static int CurrentCents => instance != null ? instance.targetCents : 0;
+    public static event Action<long> BalanceChanged;
+    public static long CurrentCents => instance != null ? instance.targetCents : 0L;
 
     private void Awake()
     {
@@ -98,7 +98,7 @@ public sealed class EggScoreHud : MonoBehaviour
         punchTween?.Rewind();
         scoreText.rectTransform.localScale = Vector3.one;
 
-        int centsDifference = targetCents - displayedCents;
+        long centsDifference = targetCents - displayedCents;
 
         if (centsDifference == 0)
         {
@@ -106,9 +106,11 @@ public sealed class EggScoreHud : MonoBehaviour
             return;
         }
 
-        int centsRemaining = Mathf.Abs(centsDifference);
+        long centsRemaining = Math.Abs(centsDifference);
         float totalDuration = Mathf.Clamp(
-            centsRemaining * secondsPerCent,
+            (float)Math.Min(
+                maximumCountDuration,
+                centsRemaining * (double)secondsPerCent),
             minimumCountDuration,
             maximumCountDuration);
 
@@ -160,7 +162,7 @@ public sealed class EggScoreHud : MonoBehaviour
         if (scoreText != null)
         {
             scoreText.text =
-                $"${displayedCents / 100:N0}.{Mathf.Abs(displayedCents % 100):D2}";
+                $"${displayedCents / 100:N0}.{Math.Abs(displayedCents % 100):D2}";
         }
     }
 

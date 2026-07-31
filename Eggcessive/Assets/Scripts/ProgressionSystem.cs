@@ -22,7 +22,8 @@ public sealed class ProgressionSystem : MonoBehaviour
         RobotUnlock,
         RobotSpeed,
         RobotCapacity,
-        RobotSmartness
+        RobotSmartness,
+        VacuumUnlock
     }
 
     public readonly struct NodeState
@@ -125,7 +126,7 @@ public sealed class ProgressionSystem : MonoBehaviour
     private static readonly int[] VacuumRangeCosts = { 14000, 42000, 130000 };
     private static readonly int[] RobotSpeedCosts = { 180000, 520000, 1600000 };
     private static readonly int[] RobotCapacityCosts = { 240000, 750000, 2400000 };
-    private static readonly int[] RobotSmartCosts = { 600000, 3500000 };
+    private static readonly int[] RobotSmartCosts = { 600000, 3500000, 12000000 };
     private const int RobotUnlockCost = 120000;
 
     [SerializeField, Range(0, 8)] private int rareEggChanceLevel;
@@ -316,6 +317,19 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     collection != null && !collection.HasVacuum);
 
+            case UpgradeId.VacuumUnlock:
+                return new NodeState(
+                    "Egg Vacuum",
+                    "V",
+                    collection != null && collection.HasVacuum
+                        ? "Vacuum collection unlocked"
+                        : "Replace the full basket with click-hold suction",
+                    collection != null && collection.HasVacuum ? 1 : 0,
+                    1,
+                    VacuumPowerCosts[0],
+                    true,
+                    collection != null && basketLevel >= 3);
+
             case UpgradeId.VacuumPower:
                 return new NodeState(
                     "Vacuum Power",
@@ -377,11 +391,15 @@ public sealed class ProgressionSystem : MonoBehaviour
                 return new NodeState(
                     "Robot Logic",
                     "AI",
-                    smartness == 0
-                        ? "Route spare eggs to incubator"
-                        : "Prioritise rare eggs and open incubator slots",
+                    smartness switch
+                    {
+                        0 => "Route spare eggs to incubator",
+                        1 => "Prioritise valuable eggs and open incubator slots",
+                        2 => "Upgrade to collect strictly by egg rarity",
+                        _ => "Collects highest-rarity eggs before nearby common eggs"
+                    },
                     smartness,
-                    2,
+                    3,
                     GetArrayCost(RobotSmartCosts, smartness),
                     robotUnlocked,
                     robotUnlocked);
@@ -599,13 +617,16 @@ public sealed class ProgressionSystem : MonoBehaviour
             case UpgradeId.RobotSmartness:
             {
                 int current = collection != null ? collection.RobotSmartnessLevel : 0;
-                int target = Mathf.Clamp(targetLevel, 1, 2);
+                int target = Mathf.Clamp(targetLevel, 1, 3);
                 return new NodeState(
                     $"Robot Logic Upgrade {target}",
                     "AI",
-                    target == 1
-                        ? "Route spare eggs to the incubator"
-                        : "Prioritise valuable eggs and open incubator slots",
+                    target switch
+                    {
+                        1 => "Route spare eggs to the incubator",
+                        2 => "Prioritise valuable eggs and open incubator slots",
+                        _ => "Collect highest-rarity eggs before closer common eggs"
+                    },
                     current,
                     target,
                     GetArrayCost(RobotSmartCosts, target - 1),
@@ -799,6 +820,10 @@ public sealed class ProgressionSystem : MonoBehaviour
             case UpgradeId.BasketCapacity:
                 EggCarryController.Instance.UpgradeBasket();
                 message = $"Basket capacity level {EggCarryController.Instance.BasketUpgradeLevel}";
+                return true;
+            case UpgradeId.VacuumUnlock:
+                EggCarryController.Instance.UpgradeVacuumPower();
+                message = "Egg vacuum unlocked";
                 return true;
             case UpgradeId.VacuumPower:
                 EggCarryController.Instance.UpgradeVacuumPower();

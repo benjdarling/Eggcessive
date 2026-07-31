@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
 using UnityEngine.UI;
@@ -8,6 +10,23 @@ using UnityEngine.UI;
 [DisallowMultipleComponent]
 public sealed class GameplayTestBot : MonoBehaviour
 {
+    private readonly struct CrosshatchCandidate
+    {
+        public CrosshatchCandidate(
+            ChickenController chicken,
+            ChickenPickupTarget target,
+            float pointerDistance)
+        {
+            Chicken = chicken;
+            Target = target;
+            PointerDistance = pointerDistance;
+        }
+
+        public ChickenController Chicken { get; }
+        public ChickenPickupTarget Target { get; }
+        public float PointerDistance { get; }
+    }
+
     private static Mouse automationInputMouse;
 
     private static readonly Vector2[] FoodPlacementViewportPoints =
@@ -33,7 +52,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     [SerializeField, Range(0.35f, 0.95f)] private float pointerSpringDamping = 0.68f;
     [SerializeField, Min(0f)] private float pointerDwellTime = 0.08f;
     [SerializeField, Min(0.05f)] private float actionPause = 0.2f;
-    [SerializeField, Min(0.1f)] private float vacuumHoldTime = 0.85f;
+    [SerializeField, Min(0.5f)] private float vacuumHoldTime = 4f;
 
     [Header("Strategy")]
     [SerializeField, Min(0)] private int minimumFeedBags = 1;
@@ -279,7 +298,8 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        collection.SetAutomationRareEggProtection(true);
+        collection.SetAutomationRareEggProtection(
+            !NeedsHigherTierChickens());
         CrosshatcherController crosshatcher = FindCrosshatcher();
 
         if (TryFindCrosshatcherChicken(
@@ -415,7 +435,6 @@ public sealed class GameplayTestBot : MonoBehaviour
             || !TryGetHandDropPoint(
                 destination,
                 collection.HandCarryHeight,
-                out Vector3 dropPosition,
                 out Vector2 destinationPoint))
         {
             yield return new WaitForSecondsRealtime(0.15f);
@@ -453,28 +472,12 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         yield return MovePointer(destinationPoint, MouseButton.Left);
-        float arrivalWait = 0f;
-
-        while (egg != null
-            && collection.HeldEgg == egg
-            && Vector3.SqrMagnitude(egg.transform.position - dropPosition) > 0.0016f
-            && arrivalWait < 1.2f)
-        {
-            ForceMouseButton(MouseButton.Left, true);
-            arrivalWait += Time.unscaledDeltaTime;
-            yield return null;
-        }
-
-        if (collection.HeldEgg != egg)
-        {
-            yield return new WaitForSecondsRealtime(0.08f);
-            yield break;
-        }
-
+        ForceMouseButton(MouseButton.Left, true);
+        yield return null;
         QueueMouseButton(MouseButton.Left, false);
         collectionActionCount++;
         completedActions++;
-        yield return new WaitForSecondsRealtime(Mathf.Max(actionPause, 0.3f));
+        yield return new WaitForSecondsRealtime(actionPause);
     }
 
     private IEnumerator UseBasket(EggCarryController collection)
@@ -487,7 +490,8 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (collection.BasketEggCount > 0
             && basketLoaded
-            && !collection.BasketContainsRareEggs
+            && (!collection.BasketContainsRareEggs
+                || NeedsHigherTierChickens())
             && CanUseIncubator())
         {
             SetStatus($"BASKET {collection.BasketEggCount}/{collection.CurrentBasketCapacity}  .  INCUBATING ONE");
@@ -540,8 +544,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        bool incubate = ShouldUseIncubator(egg)
-            && !HasUncollectedRareEggs();
+        bool incubate = CanUseIncubator();
         SetStatus($"VACUUM  .  {(incubate ? "RIGHT SUCK TO INCUBATOR" : "CASH SUCK")}");
         yield return MovePointerToEgg(egg);
         if (!IsPointerOverEgg(egg))
@@ -553,12 +556,21 @@ public sealed class GameplayTestBot : MonoBehaviour
         MouseButton button = incubate ? MouseButton.Right : MouseButton.Left;
         QueueMouseButton(button, true);
         float vacuumTime = 0f;
+        float idleTime = 0f;
         ChickenEgg trackedEgg = egg;
         while (vacuumTime < vacuumHoldTime)
         {
             if (!TryGetEggScreenPoint(trackedEgg, out Vector2 liveEggPoint))
             {
-                TryFindClickableEgg(out trackedEgg, out liveEggPoint);
+                trackedEgg = null;
+                if (TryFindClickableEgg(out trackedEgg, out liveEggPoint))
+                {
+                    idleTime = 0f;
+                }
+                else
+                {
+                    idleTime += Time.unscaledDeltaTime;
+                }
             }
 
             if (trackedEgg != null)
@@ -571,13 +583,21 @@ public sealed class GameplayTestBot : MonoBehaviour
             }
 
             vacuumTime += Time.unscaledDeltaTime;
+
+            if (idleTime >= 0.35f
+                && (EggCarryController.Instance == null
+                    || !EggCarryController.Instance.HasPendingCollection))
+            {
+                break;
+            }
+
             yield return null;
         }
 
         QueueMouseButton(button, false);
         collectionActionCount++;
         completedActions++;
-        yield return new WaitForSecondsRealtime(actionPause);
+        yield return new WaitForSecondsRealtime(0.05f);
     }
 
     private IEnumerator TryPlaceFood()
@@ -626,32 +646,15 @@ public sealed class GameplayTestBot : MonoBehaviour
         if (preview != null && preview.IsOpen)
         {
             SetStatus("SHOP  .  CLOSING DETAILS");
-            RectTransform emptySpace = FindNamedRectTransform("Shop Title");
-            if (emptySpace != null)
-            {
-                Canvas canvas = emptySpace.GetComponentInParent<Canvas>();
-                Camera uiCamera = canvas != null
-                    && canvas.renderMode != RenderMode.ScreenSpaceOverlay
-                        ? canvas.worldCamera
-                        : null;
-                Vector2 point = RectTransformUtility.WorldToScreenPoint(
-                    uiCamera,
-                    emptySpace.TransformPoint(emptySpace.rect.center));
-                yield return ClickScreen(point);
-            }
-            else
-            {
-                preview.Hide();
-                yield return new WaitForSecondsRealtime(actionPause);
-            }
-
+            preview.Hide();
+            yield return new WaitForSecondsRealtime(actionPause);
             yield break;
         }
 
         FoodShopController foodShop = FoodShopController.Instance;
         ProgressionNodeButton[] nodes =
             Object.FindObjectsByType<ProgressionNodeButton>(
-                FindObjectsInactive.Exclude,
+                FindObjectsInactive.Include,
                 FindObjectsSortMode.None);
         int availableFoodPiles = CountAvailableFoodPiles();
         int desiredFeedInventory = Mathf.Max(
@@ -696,19 +699,24 @@ public sealed class GameplayTestBot : MonoBehaviour
             if (incubatorPriorityNode != null
                 && shopPurchaseCount < maximumShopPurchasesPerVisit)
             {
+                yield return EnsureShopTabVisible(
+                    incubatorPriorityNode);
                 Button incubatorUpgrade =
                     incubatorPriorityNode.GetComponent<Button>();
-                yield return ClickButton(
-                    incubatorUpgrade,
-                    "SHOP - PRIORITISING INCUBATOR");
-                Button previewBuy = FindNamedButton("Preview Buy");
-                if (IsUsable(previewBuy))
+                if (CanPurchaseProgressionNode(incubatorUpgrade))
                 {
-                    shopPurchaseCount++;
                     yield return ClickButton(
-                        previewBuy,
-                        "SHOP - BUYING INCUBATOR");
-                    yield break;
+                        incubatorUpgrade,
+                        "SHOP - PRIORITISING INCUBATOR");
+                    Button previewBuy = FindNamedButton("Preview Buy");
+                    if (IsUsable(previewBuy))
+                    {
+                        shopPurchaseCount++;
+                        yield return ClickButton(
+                            previewBuy,
+                            "SHOP - BUYING INCUBATOR");
+                        yield break;
+                    }
                 }
             }
 
@@ -723,6 +731,8 @@ public sealed class GameplayTestBot : MonoBehaviour
         if (crosshatcherPriorityNode != null
             && shopPurchaseCount < maximumShopPurchasesPerVisit)
         {
+            yield return EnsureShopTabVisible(
+                crosshatcherPriorityNode);
             Button crosshatcherUpgrade =
                 crosshatcherPriorityNode.GetComponent<Button>();
 
@@ -758,6 +768,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         if (vacuumPriorityNode != null)
         {
+            yield return EnsureShopTabVisible(vacuumPriorityNode);
             Button priorityUpgrade = vacuumPriorityNode.GetComponent<Button>();
             if (CanPurchaseProgressionNode(priorityUpgrade))
             {
@@ -784,19 +795,24 @@ public sealed class GameplayTestBot : MonoBehaviour
             && feedSpeedPriorityNode != null
             && shopPurchaseCount < maximumShopPurchasesPerVisit)
         {
+            yield return EnsureShopTabVisible(
+                feedSpeedPriorityNode);
             Button feedSpeedUpgrade =
                 feedSpeedPriorityNode.GetComponent<Button>();
-            yield return ClickButton(
-                feedSpeedUpgrade,
-                $"SHOP - PRIORITISING {feedSpeedUpgrade.name.ToUpperInvariant()}");
-            Button previewBuy = FindNamedButton("Preview Buy");
-            if (IsUsable(previewBuy))
+            if (CanPurchaseProgressionNode(feedSpeedUpgrade))
             {
-                shopPurchaseCount++;
                 yield return ClickButton(
-                    previewBuy,
-                    $"SHOP - BUYING {feedSpeedUpgrade.name.ToUpperInvariant()}");
-                yield break;
+                    feedSpeedUpgrade,
+                    $"SHOP - PRIORITISING {feedSpeedUpgrade.name.ToUpperInvariant()}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        $"SHOP - BUYING {feedSpeedUpgrade.name.ToUpperInvariant()}");
+                    yield break;
+                }
             }
         }
 
@@ -853,6 +869,12 @@ public sealed class GameplayTestBot : MonoBehaviour
                 }
 
                 Button upgrade = node.GetComponent<Button>();
+                if (!CanPurchaseProgressionNode(node))
+                {
+                    continue;
+                }
+
+                yield return EnsureShopTabVisible(node);
                 if (!CanPurchaseProgressionNode(upgrade))
                 {
                     continue;
@@ -882,7 +904,8 @@ public sealed class GameplayTestBot : MonoBehaviour
     private bool ShouldUseIncubator(ChickenEgg egg)
     {
         return egg != null
-            && egg.Type == ChickenEgg.EggType.Common
+            && (egg.Type == ChickenEgg.EggType.Common
+                || NeedsHigherTierChickens())
             && CanUseIncubator();
     }
 
@@ -892,23 +915,6 @@ public sealed class GameplayTestBot : MonoBehaviour
         return incubator != null
             && incubator.isActiveAndEnabled
             && incubator.AvailableCapacity > 0;
-    }
-
-    private static bool HasUncollectedRareEggs()
-    {
-        var eggs = ChickenEgg.ActiveInstances;
-        for (int index = 0; index < eggs.Count; index++)
-        {
-            ChickenEgg egg = eggs[index];
-            if (egg != null
-                && !egg.IsCollected
-                && egg.Type != ChickenEgg.EggType.Common)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static ProgressionNodeButton FindCrosshatcherPriorityNode(
@@ -979,7 +985,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         ProgressionSystem.UpgradeId priorityId =
             collection.BasketUpgradeLevel < 3
                 ? ProgressionSystem.UpgradeId.BasketCapacity
-                : ProgressionSystem.UpgradeId.VacuumPower;
+                : ProgressionSystem.UpgradeId.VacuumUnlock;
 
         for (int index = 0; index < nodes.Length; index++)
         {
@@ -988,8 +994,8 @@ public sealed class GameplayTestBot : MonoBehaviour
                 && node.UpgradeId == priorityId
                 && (priorityId != ProgressionSystem.UpgradeId.BasketCapacity
                     || node.TargetLevel == collection.BasketUpgradeLevel + 1)
-                && (priorityId != ProgressionSystem.UpgradeId.VacuumPower
-                    || node.TargetLevel == 1))
+                && (priorityId != ProgressionSystem.UpgradeId.VacuumUnlock
+                    || node.TargetLevel == 0))
             {
                 return node;
             }
@@ -1017,8 +1023,7 @@ public sealed class GameplayTestBot : MonoBehaviour
                 continue;
             }
 
-            Button button = node.GetComponent<Button>();
-            if (!CanPurchaseProgressionNode(button))
+            if (!CanPurchaseProgressionNode(node))
             {
                 continue;
             }
@@ -1050,6 +1055,23 @@ public sealed class GameplayTestBot : MonoBehaviour
     {
         return ChickenController.ActiveInstances.Count
             >= ChickenController.MaximumChickenCount;
+    }
+
+    private static bool NeedsHigherTierChickens()
+    {
+        var chickens = ChickenController.ActiveInstances;
+        for (int index = 0; index < chickens.Count; index++)
+        {
+            ChickenController chicken = chickens[index];
+            if (chicken != null
+                && chicken.Breed
+                    == ChickenController.ChickenBreed.Cosmic)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsIncubatorUpgrade(
@@ -1149,12 +1171,10 @@ public sealed class GameplayTestBot : MonoBehaviour
             Object.FindObjectsByType<ChickenPickupTarget>(
                 FindObjectsInactive.Exclude,
                 FindObjectsSortMode.None);
-        int availableChickenCount = 0;
-        int bestBreed = int.MaxValue;
-        float bestDistance = float.PositiveInfinity;
-        Vector2 screenCenter = new Vector2(
-            Screen.width * 0.5f,
-            Screen.height * 0.5f);
+        var candidates = new List<CrosshatchCandidate>(targets.Length);
+        Vector2 pointerPosition = automationInputMouse != null
+            ? automationInputMouse.position.ReadValue()
+            : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
 
         for (int index = 0; index < targets.Length; index++)
         {
@@ -1181,33 +1201,287 @@ public sealed class GameplayTestBot : MonoBehaviour
                 continue;
             }
 
-            availableChickenCount++;
-            int breed = (int)chicken.Breed;
-            float distance = Vector2.SqrMagnitude(
-                point - screenCenter);
+            candidates.Add(new CrosshatchCandidate(
+                chicken,
+                target,
+                Vector2.SqrMagnitude(point - pointerPosition)));
+        }
 
-            if (breed > bestBreed
-                || breed == bestBreed
+        if (crosshatcher.OccupiedSlots > 0)
+        {
+            return TrySelectSecondCrosshatchChicken(
+                crosshatcher,
+                candidates,
+                out selectedChicken,
+                out selectedTarget);
+        }
+
+        return ChickenController.ActiveInstances.Count >= 4
+            && TrySelectBestCrosshatchPair(
+                crosshatcher,
+                candidates,
+                out selectedChicken,
+                out selectedTarget);
+    }
+
+    private static bool TrySelectBestCrosshatchPair(
+        CrosshatcherController crosshatcher,
+        List<CrosshatchCandidate> candidates,
+        out ChickenController selectedChicken,
+        out ChickenPickupTarget selectedTarget)
+    {
+        selectedChicken = null;
+        selectedTarget = null;
+        if (candidates == null || candidates.Count < 2)
+        {
+            return false;
+        }
+
+        bool canReplaceChicken = HasWorkingIncubator();
+        float bestProfit = 0f;
+        float bestResultTier = -1f;
+        float bestDistance = float.PositiveInfinity;
+        int bestFirstIndex = -1;
+
+        for (int firstIndex = 0;
+            firstIndex < candidates.Count - 1;
+            firstIndex++)
+        {
+            for (int secondIndex = firstIndex + 1;
+                secondIndex < candidates.Count;
+                secondIndex++)
+            {
+                CrosshatchCandidate first = candidates[firstIndex];
+                CrosshatchCandidate second = candidates[secondIndex];
+                float profit = GetExpectedCrosshatchProfit(
+                    first.Chicken.Breed,
+                    second.Chicken.Breed,
+                    crosshatcher.ImprovementChance,
+                    canReplaceChicken);
+                float resultTier = GetExpectedCrosshatchTier(
+                    first.Chicken.Breed,
+                    second.Chicken.Breed,
+                    crosshatcher.ImprovementChance);
+                float distance = first.PointerDistance
+                    + second.PointerDistance;
+
+                if (profit < bestProfit
+                    || Mathf.Approximately(profit, bestProfit)
+                        && resultTier < bestResultTier
+                    || Mathf.Approximately(profit, bestProfit)
+                        && Mathf.Approximately(
+                            resultTier,
+                            bestResultTier)
+                        && distance >= bestDistance)
+                {
+                    continue;
+                }
+
+                bestProfit = profit;
+                bestResultTier = resultTier;
+                bestDistance = distance;
+                bestFirstIndex = SelectFirstParentIndex(
+                    candidates,
+                    firstIndex,
+                    secondIndex);
+            }
+        }
+
+        if (bestFirstIndex < 0 || bestProfit <= 0f)
+        {
+            return false;
+        }
+
+        CrosshatchCandidate selected = candidates[bestFirstIndex];
+        selectedChicken = selected.Chicken;
+        selectedTarget = selected.Target;
+        return true;
+    }
+
+    private static bool TrySelectSecondCrosshatchChicken(
+        CrosshatcherController crosshatcher,
+        List<CrosshatchCandidate> candidates,
+        out ChickenController selectedChicken,
+        out ChickenPickupTarget selectedTarget)
+    {
+        selectedChicken = null;
+        selectedTarget = null;
+        if (candidates == null
+            || candidates.Count == 0
+            || !crosshatcher.TryGetLoadedBreed(
+                out ChickenController.ChickenBreed loadedBreed))
+        {
+            return false;
+        }
+
+        bool canReplaceChicken = HasWorkingIncubator();
+        float bestProfit = float.NegativeInfinity;
+        float bestResultTier = -1f;
+        float bestDistance = float.PositiveInfinity;
+
+        for (int index = 0; index < candidates.Count; index++)
+        {
+            CrosshatchCandidate candidate = candidates[index];
+            float profit = GetExpectedCrosshatchProfit(
+                loadedBreed,
+                candidate.Chicken.Breed,
+                crosshatcher.ImprovementChance,
+                canReplaceChicken);
+            float resultTier = GetExpectedCrosshatchTier(
+                loadedBreed,
+                candidate.Chicken.Breed,
+                crosshatcher.ImprovementChance);
+            float distance = candidate.PointerDistance;
+
+            if (profit < bestProfit
+                || Mathf.Approximately(profit, bestProfit)
+                    && resultTier < bestResultTier
+                || Mathf.Approximately(profit, bestProfit)
+                    && Mathf.Approximately(resultTier, bestResultTier)
                     && distance >= bestDistance)
             {
                 continue;
             }
 
-            selectedChicken = chicken;
-            selectedTarget = target;
-            bestBreed = breed;
+            bestProfit = profit;
+            bestResultTier = resultTier;
             bestDistance = distance;
+            selectedChicken = candidate.Chicken;
+            selectedTarget = candidate.Target;
         }
 
-        int requiredAvailable = crosshatcher.OccupiedSlots > 0
-            ? 1
-            : 2;
-        bool preservesWorkingFlock =
-            crosshatcher.OccupiedSlots > 0
-            || ChickenController.ActiveInstances.Count >= 4;
-        return selectedChicken != null
-            && availableChickenCount >= requiredAvailable
-            && preservesWorkingFlock;
+        return selectedChicken != null;
+    }
+
+    private static int SelectFirstParentIndex(
+        List<CrosshatchCandidate> candidates,
+        int firstIndex,
+        int secondIndex)
+    {
+        CrosshatchCandidate first = candidates[firstIndex];
+        CrosshatchCandidate second = candidates[secondIndex];
+        int firstBreed = (int)first.Chicken.Breed;
+        int secondBreed = (int)second.Chicken.Breed;
+        if (firstBreed != secondBreed)
+        {
+            // Keep the more valuable layer producing until the second pickup.
+            return firstBreed < secondBreed
+                ? firstIndex
+                : secondIndex;
+        }
+
+        return first.PointerDistance
+            <= second.PointerDistance
+                ? firstIndex
+                : secondIndex;
+    }
+
+    private static float GetExpectedCrosshatchProfit(
+        ChickenController.ChickenBreed first,
+        ChickenController.ChickenBreed second,
+        float improvementChance,
+        bool canReplaceChicken)
+    {
+        int maximumBreed =
+            (int)ChickenController.ChickenBreed.Cosmic;
+        int strongestBreed = Mathf.Max((int)first, (int)second);
+        int improvedBreed = Mathf.Min(
+            strongestBreed + 1,
+            maximumBreed);
+        float strongestValue = GetExpectedEggValue(
+            (ChickenController.ChickenBreed)strongestBreed);
+        float resultValue = first == second
+            ? GetExpectedEggValue(
+                (ChickenController.ChickenBreed)improvedBreed)
+            : Mathf.Lerp(
+                strongestValue,
+                GetExpectedEggValue(
+                    (ChickenController.ChickenBreed)improvedBreed),
+                Mathf.Clamp01(improvementChance));
+        float replacementValue = canReplaceChicken
+            ? GetExpectedEggValue(
+                ChickenController.ChickenBreed.White)
+            : 0f;
+        return resultValue
+            + replacementValue
+            - GetExpectedEggValue(first)
+            - GetExpectedEggValue(second);
+    }
+
+    private static float GetExpectedCrosshatchTier(
+        ChickenController.ChickenBreed first,
+        ChickenController.ChickenBreed second,
+        float improvementChance)
+    {
+        int maximumBreed =
+            (int)ChickenController.ChickenBreed.Cosmic;
+        int strongestBreed = Mathf.Max((int)first, (int)second);
+        if (first == second)
+        {
+            return Mathf.Min(strongestBreed + 1, maximumBreed);
+        }
+
+        return strongestBreed
+            + (strongestBreed < maximumBreed
+                ? Mathf.Clamp01(improvementChance)
+                : 0f);
+    }
+
+    private static float GetExpectedEggValue(
+        ChickenController.ChickenBreed breed)
+    {
+        ProgressionSystem progression = ProgressionSystem.Instance;
+        if (progression == null)
+        {
+            return 100f;
+        }
+
+        progression.GetCombinedRareChances(
+            breed,
+            out float rareChance,
+            out float epicChance,
+            out float legendaryChance,
+            out float cosmicChance);
+        float remainingChance = 1f;
+        float cosmicProbability = TakeProbability(
+            cosmicChance,
+            ref remainingChance);
+        float legendaryProbability = TakeProbability(
+            legendaryChance,
+            ref remainingChance);
+        float epicProbability = TakeProbability(
+            epicChance,
+            ref remainingChance);
+        float rareProbability = TakeProbability(
+            rareChance,
+            ref remainingChance);
+        return remainingChance * progression.GetEggValueCents(
+                ChickenEgg.EggType.Common)
+            + rareProbability * progression.GetEggValueCents(
+                ChickenEgg.EggType.Rare)
+            + epicProbability * progression.GetEggValueCents(
+                ChickenEgg.EggType.Epic)
+            + legendaryProbability * progression.GetEggValueCents(
+                ChickenEgg.EggType.Legendary)
+            + cosmicProbability * progression.GetEggValueCents(
+                ChickenEgg.EggType.Cosmic);
+    }
+
+    private static float TakeProbability(
+        float chance,
+        ref float remainingChance)
+    {
+        float probability = Mathf.Min(
+            remainingChance,
+            Mathf.Clamp01(chance));
+        remainingChance -= probability;
+        return probability;
+    }
+
+    private static bool HasWorkingIncubator()
+    {
+        IncubatorController incubator = FindIncubator();
+        return incubator != null && incubator.isActiveAndEnabled;
     }
 
     private bool TryGetChickenPickupScreenPoint(
@@ -1540,10 +1814,9 @@ public sealed class GameplayTestBot : MonoBehaviour
     private bool TryGetHandDropPoint(
         Component destination,
         float carryHeight,
-        out Vector3 dropPosition,
         out Vector2 screenPoint)
     {
-        dropPosition = destination switch
+        Vector3 dropPosition = destination switch
         {
             EggContainer container => container.DepositPosition,
             IncubatorController incubator => incubator.DepositPosition,
@@ -1579,6 +1852,87 @@ public sealed class GameplayTestBot : MonoBehaviour
         return gameplayCamera;
     }
 
+    private IEnumerator EnsureShopTabVisible(
+        ProgressionNodeButton node)
+    {
+        if (node == null
+            || !TryGetShopTabNames(
+                node.UpgradeId,
+                out string tabName,
+                out string groupName))
+        {
+            yield break;
+        }
+
+        Transform group = node.transform;
+        while (group != null && group.name != groupName)
+        {
+            group = group.parent;
+        }
+
+        if (group != null && group.gameObject.activeInHierarchy)
+        {
+            yield break;
+        }
+
+        Button tab = FindNamedButton(tabName);
+        if (!IsUsable(tab))
+        {
+            SetStatus(
+                $"SHOP  .  WAITING FOR {tabName.Replace(" Branch", string.Empty)} TAB");
+            yield return new WaitForSecondsRealtime(0.15f);
+            yield break;
+        }
+
+        yield return ClickButton(
+            tab,
+            $"SHOP  .  OPENING {tabName.Replace(" Branch", string.Empty)} TAB");
+        yield return null;
+    }
+
+    private static bool TryGetShopTabNames(
+        ProgressionSystem.UpgradeId id,
+        out string tabName,
+        out string groupName)
+    {
+        switch (id)
+        {
+            case ProgressionSystem.UpgradeId.FeedSpeed:
+            case ProgressionSystem.UpgradeId.RareEggChance:
+            case ProgressionSystem.UpgradeId.EggValue:
+                tabName = "FOOD Branch";
+                groupName = "Food Tree Group";
+                return true;
+
+            case ProgressionSystem.UpgradeId.IncubatorInstall:
+            case ProgressionSystem.UpgradeId.IncubatorCapacity:
+            case ProgressionSystem.UpgradeId.IncubatorSpeed:
+            case ProgressionSystem.UpgradeId.CrosshatcherInstall:
+            case ProgressionSystem.UpgradeId.CrosshatcherSpeed:
+            case ProgressionSystem.UpgradeId.CrosshatcherQuality:
+                tabName = "TECH Branch";
+                groupName = "Tech Tree Group";
+                return true;
+
+            case ProgressionSystem.UpgradeId.BasketCapacity:
+            case ProgressionSystem.UpgradeId.VacuumUnlock:
+            case ProgressionSystem.UpgradeId.VacuumPower:
+            case ProgressionSystem.UpgradeId.VacuumRange:
+            case ProgressionSystem.UpgradeId.RobotUnlock:
+            case ProgressionSystem.UpgradeId.RobotSpeed:
+            case ProgressionSystem.UpgradeId.RobotCapacity:
+            case ProgressionSystem.UpgradeId.RobotSmartness:
+                tabName = "COLLECTION Branch";
+                groupName = "Collection Tree Group";
+                return true;
+
+            default:
+                tabName = null;
+                groupName = null;
+                return false;
+        }
+    }
+
     private IEnumerator ClickNamedButton(string objectName, string activity)
     {
         Button button = FindNamedButton(objectName);
@@ -1595,6 +1949,17 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator ClickButton(Button button, string activity)
     {
+        ProgressionNodeButton progressionNode =
+            button != null ? button.GetComponent<ProgressionNodeButton>() : null;
+        ProgressionTreePreview preview = progressionNode != null
+            ? button.GetComponentInParent<ProgressionTreePreview>(true)
+            : null;
+        if (preview != null && preview.IsOpen)
+        {
+            preview.Hide();
+            yield return null;
+        }
+
         yield return EnsureButtonVisible(button);
         RectTransform rect = button.transform as RectTransform;
 
@@ -1612,7 +1977,63 @@ public sealed class GameplayTestBot : MonoBehaviour
             uiCamera,
             rect.TransformPoint(rect.rect.center));
         SetStatus(activity);
-        yield return ClickScreen(point);
+        yield return ClickUiButton(button, point);
+
+        // The preview panel can overlap the lowest tree nodes. If UI layout or
+        // scaling still intercepted the physical click, select the intended node
+        // directly so automation never buys the wrong tier.
+        if (progressionNode != null
+            && preview != null
+            && !preview.IsSelected(progressionNode))
+        {
+            preview.Select(progressionNode);
+            yield return null;
+        }
+    }
+
+    private IEnumerator ClickUiButton(Button button, Vector2 point)
+    {
+        yield return MovePointer(point);
+        yield return new WaitForSecondsRealtime(pointerDwellTime);
+
+        if (!IsUsable(button))
+        {
+            yield break;
+        }
+
+        ReleaseMouseButtons();
+        EventSystem eventSystem = EventSystem.current;
+        if (eventSystem != null)
+        {
+            var pointerEvent = new PointerEventData(eventSystem)
+            {
+                button = PointerEventData.InputButton.Left,
+                position = point,
+                pointerId = -1
+            };
+            ExecuteEvents.Execute(
+                button.gameObject,
+                pointerEvent,
+                ExecuteEvents.pointerDownHandler);
+            yield return null;
+            ExecuteEvents.Execute(
+                button.gameObject,
+                pointerEvent,
+                ExecuteEvents.pointerUpHandler);
+            ExecuteEvents.Execute(
+                button.gameObject,
+                pointerEvent,
+                ExecuteEvents.pointerClickHandler);
+        }
+        else
+        {
+            // Authored UI should always have an EventSystem, but invoking the
+            // button is safer than leaving automation permanently stalled.
+            button.onClick.Invoke();
+        }
+
+        completedActions++;
+        yield return new WaitForSecondsRealtime(actionPause);
     }
 
     private IEnumerator EnsureButtonVisible(Button button)
@@ -1781,6 +2202,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             FindObjectsInactive.Include,
             FindObjectsSortMode.None);
 
+        Button inactiveMatch = null;
         for (int index = 0; index < buttons.Length; index++)
         {
             Button button = buttons[index];
@@ -1789,11 +2211,16 @@ public sealed class GameplayTestBot : MonoBehaviour
                 && button.name == objectName
                 && button.gameObject.scene.IsValid())
             {
-                return button;
+                if (button.gameObject.activeInHierarchy)
+                {
+                    return button;
+                }
+
+                inactiveMatch ??= button;
             }
         }
 
-        return null;
+        return inactiveMatch;
     }
 
     private static RectTransform FindNamedRectTransform(string objectName)
@@ -1832,7 +2259,18 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         ProgressionNodeButton node = button.GetComponent<ProgressionNodeButton>();
-        if (node == null || ProgressionSystem.Instance == null)
+        return node == null || CanPurchaseProgressionNode(node);
+    }
+
+    private static bool CanPurchaseProgressionNode(
+        ProgressionNodeButton node)
+    {
+        if (node == null)
+        {
+            return false;
+        }
+
+        if (ProgressionSystem.Instance == null)
         {
             return true;
         }
@@ -1939,7 +2377,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         pointerSpringDamping = Mathf.Clamp(pointerSpringDamping, 0.35f, 0.95f);
         pointerDwellTime = Mathf.Max(0f, pointerDwellTime);
         actionPause = Mathf.Max(0.05f, actionPause);
-        vacuumHoldTime = Mathf.Max(0.1f, vacuumHoldTime);
+        vacuumHoldTime = Mathf.Max(0.5f, vacuumHoldTime);
         minimumFeedBags = Mathf.Max(0, minimumFeedBags);
         maximumShopPurchasesPerVisit = Mathf.Max(1, maximumShopPurchasesPerVisit);
     }

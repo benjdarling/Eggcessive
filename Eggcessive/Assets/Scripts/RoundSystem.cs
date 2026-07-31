@@ -15,6 +15,9 @@ using UnityEngine.UI;
 public sealed class RoundSystem : MonoBehaviour
 {
     private const float RewardAccumulationWindow = 0.75f;
+#if UNITY_EDITOR
+    private static Sprite hudRoundedSprite;
+#endif
     private const float ContainerRewardVisualDelay = 0.06f;
     private const float RewardFlightDuration = 0.62f;
     private const int RewardParticleCapacity = 8000;
@@ -98,6 +101,8 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private TMP_Text timerText;
     [SerializeField] private TMP_Text liveStatsText;
     [SerializeField] private TMP_Text liveStatsValueText;
+    [SerializeField] private TMP_Text[] liveStatRowValues =
+        new TMP_Text[5];
     [SerializeField] private TMP_Text resultsTitleText;
     [SerializeField] private TMP_Text resultsCashText;
     [SerializeField] private TMP_Text resultsCollectedText;
@@ -148,6 +153,11 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Min(1)] private int cashRewardThresholdCents = 300000;
     [SerializeField, Range(250, 10000)]
     private int maximumRewardParticlesPerBurst = 6000;
+    [Tooltip("Cash notes are visually much larger than coins, so emit only this fraction.")]
+    [SerializeField, Range(0.05f, 1f)]
+    private float cashNoteParticleDensity = 0.18f;
+    [SerializeField, Range(25, 1000)]
+    private int maximumCashNotesPerBurst = 400;
     [SerializeField, Range(0.5f, 5f)]
     private float rewardParticleTrailDuration = 1f;
     [SerializeField, Range(100f, 5000f)]
@@ -244,7 +254,7 @@ public sealed class RoundSystem : MonoBehaviour
     private int roundEggTarget;
     private int eggsTowardTruck;
     private int trucksFilled;
-    private int roundQuotaBonus;
+    private int roundTruckCashMade;
     private int pendingTruckReplacements;
     private Coroutine rewardDisplayCoroutine;
     private TMP_Text activeRewardText;
@@ -271,7 +281,7 @@ public sealed class RoundSystem : MonoBehaviour
             new Queue<RewardParticleLanding>();
     private float rewardParticleEmissionAllowance;
     private bool forceCashNotesForTesting;
-    private int shopDisplayedBalanceCents;
+    private long shopDisplayedBalanceCents;
     private Tweener shopBalanceTween;
     private bool skipResultsAnimation;
     private bool configured;
@@ -918,7 +928,7 @@ public sealed class RoundSystem : MonoBehaviour
         roundEggTarget = CalculateEggTarget(roundNumber);
         eggsTowardTruck = 0;
         trucksFilled = 0;
-        roundQuotaBonus = 0;
+        roundTruckCashMade = 0;
         pendingTruckReplacements = 0;
         liveStatsRefreshTime = 0f;
         SetPhase(RoundPhase.InProgress);
@@ -1192,7 +1202,7 @@ public sealed class RoundSystem : MonoBehaviour
             trucksFilled,
             value => Mathf.RoundToInt(value).ToString());
         resultsQuotaText.text =
-            $"{trucksFilled}  <size=16><color=#86A382>+{FormatMoney(roundQuotaBonus)}</color></size>";
+            $"{trucksFilled}  <size=16><color=#86A382>{FormatMoney(roundTruckCashMade)}</color></size>";
 
         resultsAnimation = null;
         resultsShopButton.gameObject.SetActive(true);
@@ -1360,7 +1370,7 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void RefreshShopUi()
     {
-        int balance = EggScoreHud.CurrentCents;
+        long balance = EggScoreHud.CurrentCents;
         shopBalanceText.text = FormatMoney(shopDisplayedBalanceCents);
 
         if (suppliesShopScreen != null)
@@ -1485,7 +1495,7 @@ public sealed class RoundSystem : MonoBehaviour
         Button button,
         Image progressFill,
         TMP_Text progressText,
-        int currentCash,
+        long currentCash,
         int cost,
         bool isAvailable)
     {
@@ -1580,7 +1590,7 @@ public sealed class RoundSystem : MonoBehaviour
             * 75f
             * trucksFilled
             * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
-        roundQuotaBonus += bonus;
+        roundTruckCashMade += bonus;
         roundCashMade += bonus;
         EggScoreHud.AddCents(bonus);
 
@@ -1682,7 +1692,7 @@ public sealed class RoundSystem : MonoBehaviour
             worldPosition,
             targetScreenPosition,
             useCashNotes ? 0 : particleCount,
-            useCashNotes ? particleCount : 0);
+            useCashNotes ? CalculateCashNoteParticleCount(particleCount) : 0);
     }
 
     private void ShowTruckBonusText(
@@ -1806,7 +1816,7 @@ public sealed class RoundSystem : MonoBehaviour
             worldPosition,
             targetScreenPosition,
             useCashNotes ? 0 : coinCount,
-            useCashNotes ? coinCount : 0);
+            useCashNotes ? CalculateCashNoteParticleCount(coinCount) : 0);
     }
 
     private void AccumulateRewardNumber(
@@ -1987,14 +1997,16 @@ public sealed class RoundSystem : MonoBehaviour
                         cashRewardThresholdCents)));
         }
 
-        int cashNoteParticleCount = cashBlend > 0f
+        int requestedCashNoteCount = cashBlend > 0f
             ? Mathf.Clamp(
                 Mathf.RoundToInt(rewardParticleCount * cashBlend),
                 1,
                 rewardParticleCount)
             : 0;
+        int cashNoteParticleCount =
+            CalculateCashNoteParticleCount(requestedCashNoteCount);
         int coinParticleCount =
-            rewardParticleCount - cashNoteParticleCount;
+            rewardParticleCount - requestedCashNoteCount;
         SpawnRewardParticles(
             startWorldPosition,
             targetScreenPosition,
@@ -2014,6 +2026,19 @@ public sealed class RoundSystem : MonoBehaviour
             scaledParticleCount,
             1,
             maximumRewardParticlesPerBurst);
+    }
+
+    private int CalculateCashNoteParticleCount(int requestedCount)
+    {
+        if (requestedCount <= 0)
+        {
+            return 0;
+        }
+
+        return Mathf.Clamp(
+            Mathf.RoundToInt(requestedCount * cashNoteParticleDensity),
+            1,
+            Mathf.Min(requestedCount, maximumCashNotesPerBurst));
     }
 
     private void SpawnRewardParticles(
@@ -2852,7 +2877,7 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
-    private void HandleBalanceChanged(int _)
+    private void HandleBalanceChanged(long _)
     {
         if (Phase == RoundPhase.SuppliesShop)
         {
@@ -2912,20 +2937,20 @@ public sealed class RoundSystem : MonoBehaviour
         spendSequence.OnComplete(() => Destroy(spendObject));
     }
 
-    private void SetShopBalanceImmediate(int cents)
+    private void SetShopBalanceImmediate(long cents)
     {
         shopBalanceTween?.Kill();
         shopBalanceTween = null;
-        shopDisplayedBalanceCents = Mathf.Max(0, cents);
+        shopDisplayedBalanceCents = Math.Max(0L, cents);
         if (shopBalanceText != null)
         {
             shopBalanceText.text = FormatMoney(shopDisplayedBalanceCents);
         }
     }
 
-    private void AnimateShopBalanceTo(int targetCents)
+    private void AnimateShopBalanceTo(long targetCents)
     {
-        targetCents = Mathf.Max(0, targetCents);
+        targetCents = Math.Max(0L, targetCents);
         shopBalanceTween?.Kill();
         shopBalanceTween = DOTween.To(
                 () => shopDisplayedBalanceCents,
@@ -2950,13 +2975,338 @@ public sealed class RoundSystem : MonoBehaviour
         float eggsPerMinute = roundElapsed > 0.01f
             ? roundEggsCollected * 60f / roundElapsed
             : 0f;
-        liveStatsValueText.text =
-            $"{roundEggsCollected}\n" +
-            $"{eggsPerMinute:0.0}\n" +
-            $"+{FormatMoney(roundCashMade)}\n" +
-            $"{CountChickens()}/{ChickenController.MaximumChickenCount}\n" +
-            $"{trucksFilled}";
+        string[] values =
+        {
+            roundEggsCollected.ToString(),
+            $"{eggsPerMinute:0.0}",
+            FormatMoney(EggScoreHud.CurrentCents),
+            $"{CountChickens()}/{ChickenController.MaximumChickenCount}",
+            trucksFilled.ToString()
+        };
+
+        bool hasRows = liveStatRowValues[0] != null;
+        if (hasRows)
+        {
+            for (int index = 0; index < liveStatRowValues.Length; index++)
+            {
+                if (liveStatRowValues[index] != null)
+                {
+                    liveStatRowValues[index].text = values[index];
+                }
+            }
+        }
+        else if (liveStatsValueText != null)
+        {
+            liveStatsValueText.text = string.Join("\n", values);
+        }
     }
+
+#if UNITY_EDITOR
+    // Legacy editor-only migration helpers. Gameplay uses the serialized
+    // objects in prefab_RoundSystem and never constructs this HUD at runtime.
+    private void ApplyGameplayHudVisualPolish()
+    {
+        if (liveStatsDisplay == null)
+        {
+            return;
+        }
+
+        RectTransform statsRect =
+            liveStatsDisplay.GetComponent<RectTransform>();
+        statsRect.anchorMin = Vector2.one;
+        statsRect.anchorMax = Vector2.one;
+        statsRect.pivot = Vector2.one;
+        statsRect.anchoredPosition = new Vector2(-24f, -62f);
+        statsRect.sizeDelta = new Vector2(260f, 170f);
+
+        Image outer = liveStatsDisplay.GetComponent<Image>();
+        if (outer != null)
+        {
+            outer.sprite = GetHudRoundedSprite();
+            outer.type = Image.Type.Sliced;
+            outer.color = new Color(0.28f, 0.16f, 0.085f, 0.97f);
+            outer.raycastTarget = false;
+        }
+
+        Outline outline = liveStatsDisplay.GetComponent<Outline>();
+        if (outline == null)
+        {
+            outline = liveStatsDisplay.AddComponent<Outline>();
+        }
+
+        outline.effectColor = new Color(0.12f, 0.07f, 0.035f, 1f);
+        outline.effectDistance = new Vector2(3f, -3f);
+        outline.useGraphicAlpha = false;
+
+        Shadow shadow = null;
+        Shadow[] shadows = liveStatsDisplay.GetComponents<Shadow>();
+        for (int index = 0; index < shadows.Length; index++)
+        {
+            if (shadows[index] != null
+                && shadows[index].GetType() == typeof(Shadow))
+            {
+                shadow = shadows[index];
+                break;
+            }
+        }
+
+        if (shadow == null)
+        {
+            shadow = liveStatsDisplay.AddComponent<Shadow>();
+        }
+
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.62f);
+        shadow.effectDistance = new Vector2(4f, -5f);
+
+        RectTransform inner =
+            liveStatsDisplay.transform.Find("Stats Inner Panel")
+                as RectTransform;
+        if (inner == null)
+        {
+            GameObject innerObject = new GameObject(
+                "Stats Inner Panel",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            inner = innerObject.transform as RectTransform;
+            inner.SetParent(liveStatsDisplay.transform, false);
+        }
+
+        inner.anchorMin = Vector2.zero;
+        inner.anchorMax = Vector2.one;
+        inner.offsetMin = new Vector2(6f, 6f);
+        inner.offsetMax = new Vector2(-6f, -6f);
+        Image innerImage = inner.GetComponent<Image>();
+        innerImage.sprite = GetHudRoundedSprite();
+        innerImage.type = Image.Type.Sliced;
+        innerImage.color = new Color(0.055f, 0.06f, 0.048f, 0.98f);
+        innerImage.raycastTarget = false;
+        inner.SetAsFirstSibling();
+
+        if (liveStatsText != null)
+        {
+            liveStatsText.gameObject.SetActive(false);
+        }
+
+        if (liveStatsValueText != null)
+        {
+            liveStatsValueText.gameObject.SetActive(false);
+        }
+
+        Texture2D atlas = Resources.Load<Texture2D>("UI/HudIconAtlas");
+        if (atlas != null)
+        {
+            string[] labels =
+            {
+                "EGGS",
+                "EGGS / MIN",
+                "CASH",
+                "CHICKENS",
+                "TRUCKS"
+            };
+
+            for (int index = 0; index < labels.Length; index++)
+            {
+                Transform oldIcon =
+                    liveStatsDisplay.transform.Find($"HUD Stat Icon {index}");
+                if (oldIcon != null)
+                {
+                    oldIcon.gameObject.SetActive(false);
+                }
+
+                liveStatRowValues[index] = EnsureHudStatRow(
+                    liveStatsDisplay.transform,
+                    index,
+                    labels[index],
+                    atlas);
+            }
+        }
+
+        if (coinHudTarget != null)
+        {
+            coinHudTarget.anchorMin = Vector2.one;
+            coinHudTarget.anchorMax = Vector2.one;
+            coinHudTarget.pivot = new Vector2(0.5f, 0.5f);
+            coinHudTarget.anchoredPosition = new Vector2(-259f, -147f);
+        }
+    }
+
+    private TMP_Text EnsureHudStatRow(
+        Transform parent,
+        int index,
+        string label,
+        Texture2D atlas)
+    {
+        string rowName = $"HUD Stat Row {index}";
+        RectTransform row = parent.Find(rowName) as RectTransform;
+        if (row == null)
+        {
+            GameObject rowObject = new GameObject(
+                rowName,
+                typeof(RectTransform),
+                typeof(HorizontalLayoutGroup));
+            rowObject.transform.SetParent(parent, false);
+            row = rowObject.GetComponent<RectTransform>();
+        }
+
+        SetRuntimeRect(
+            row,
+            new Vector2(0f, 56f - index * 28f),
+            new Vector2(228f, 26f));
+        HorizontalLayoutGroup layout =
+            row.GetComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 0, 0);
+        layout.spacing = 6f;
+        layout.childAlignment = TextAnchor.MiddleLeft;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
+
+        RawImage icon = row.Find("Icon")?.GetComponent<RawImage>();
+        if (icon == null)
+        {
+            GameObject iconObject = new GameObject(
+                "Icon",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(RawImage),
+                typeof(LayoutElement));
+            iconObject.transform.SetParent(row, false);
+            icon = iconObject.GetComponent<RawImage>();
+        }
+
+        icon.texture = atlas;
+        icon.uvRect = GetHudIconUv(index);
+        icon.color = Color.white;
+        icon.raycastTarget = false;
+        LayoutElement iconLayout = icon.GetComponent<LayoutElement>();
+        iconLayout.minWidth = 26f;
+        iconLayout.preferredWidth = 26f;
+        iconLayout.minHeight = 26f;
+        iconLayout.preferredHeight = 26f;
+        iconLayout.flexibleWidth = 0f;
+
+        TMP_Text labelText = EnsureHudStatText(
+            row,
+            "Label",
+            TextAlignmentOptions.MidlineLeft);
+        labelText.text = label;
+        labelText.color = Color.white;
+        labelText.fontStyle = FontStyles.Bold;
+        LayoutElement labelLayout =
+            labelText.GetComponent<LayoutElement>();
+        labelLayout.minWidth = 82f;
+        labelLayout.preferredWidth = 82f;
+        labelLayout.flexibleWidth = 1f;
+
+        TMP_Text valueText = EnsureHudStatText(
+            row,
+            "Value",
+            TextAlignmentOptions.MidlineRight);
+        valueText.color = new Color(1f, 0.87f, 0.27f, 1f);
+        valueText.fontStyle = FontStyles.Bold;
+        LayoutElement valueLayout =
+            valueText.GetComponent<LayoutElement>();
+        valueLayout.minWidth = 102f;
+        valueLayout.preferredWidth = 102f;
+        valueLayout.flexibleWidth = 0f;
+        return valueText;
+    }
+
+    private TMP_Text EnsureHudStatText(
+        Transform parent,
+        string objectName,
+        TextAlignmentOptions alignment)
+    {
+        TMP_Text text = parent.Find(objectName)?.GetComponent<TMP_Text>();
+        if (text == null)
+        {
+            GameObject textObject = new GameObject(
+                objectName,
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(TextMeshProUGUI),
+                typeof(LayoutElement));
+            textObject.transform.SetParent(parent, false);
+            text = textObject.GetComponent<TMP_Text>();
+        }
+
+        text.font = liveStatsText != null
+            ? liveStatsText.font
+            : liveStatsValueText != null
+                ? liveStatsValueText.font
+                : null;
+        text.fontSize = 14f;
+        text.alignment = alignment;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
+        text.overflowMode = TextOverflowModes.Overflow;
+        text.raycastTarget = false;
+        return text;
+    }
+
+#endif
+
+    public static Rect GetHudIconUv(int atlasIndex)
+    {
+        int clamped = Mathf.Clamp(atlasIndex, 0, 11);
+        int column = clamped % 4;
+        int rowFromTop = clamped / 4;
+        return new Rect(
+            column * 0.25f,
+            (2 - rowFromTop) / 3f,
+            0.25f,
+            1f / 3f);
+    }
+
+#if UNITY_EDITOR
+    public static Sprite GetHudRoundedSprite()
+    {
+        if (hudRoundedSprite != null)
+        {
+            return hudRoundedSprite;
+        }
+
+        const int size = 48;
+        const float radius = 11f;
+        Texture2D texture = new Texture2D(
+            size,
+            size,
+            TextureFormat.RGBA32,
+            false);
+        texture.name = "Runtime HUD Rounded Rect";
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+        Color32[] pixels = new Color32[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float nearestX = Mathf.Clamp(x + 0.5f, radius, size - radius);
+                float nearestY = Mathf.Clamp(y + 0.5f, radius, size - radius);
+                float dx = x + 0.5f - nearestX;
+                float dy = y + 0.5f - nearestY;
+                float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                byte alpha = (byte)Mathf.RoundToInt(
+                    Mathf.Clamp01(radius + 0.75f - distance) * 255f);
+                pixels[y * size + x] = new Color32(255, 255, 255, alpha);
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, true);
+        hudRoundedSprite = Sprite.Create(
+            texture,
+            new Rect(0f, 0f, size, size),
+            new Vector2(0.5f, 0.5f),
+            100f,
+            0,
+            SpriteMeshType.FullRect,
+            new Vector4(12f, 12f, 12f, 12f));
+        hudRoundedSprite.name = "Runtime HUD Rounded Sprite";
+        return hudRoundedSprite;
+    }
+#endif
 
     private int CalculateEggTarget(int round)
     {
@@ -3323,7 +3673,7 @@ public sealed class RoundSystem : MonoBehaviour
         resultsPerMinuteText = CreateResultStat(card, "Eggs Per Minute", "EGGS PER MINUTE", 0f);
         resultsHatchedText = CreateResultStat(card, "Chickens Hatched", "CHICKENS HATCHED", -45f);
         resultsChickenCountText = CreateResultStat(card, "Chicken Count", "CHICKEN COUNT", -90f);
-        resultsQuotaText = CreateResultStat(card, "Truck Quota", "TRUCKS / BONUS", -135f);
+        resultsQuotaText = CreateResultStat(card, "Truck Quota", "TRUCKS / CASH", -135f);
 
         resultsShopButton = CreateButton(
             "Open Supplies Shop",
@@ -3420,7 +3770,7 @@ public sealed class RoundSystem : MonoBehaviour
         CreateIconBadge(
             "Balance Coin",
             card,
-            new Vector2(590f, 410f),
+            new Vector2(480f, 410f),
             new Vector2(40f, 40f),
             "$",
             new Color(1f, 0.73f, 0.16f));
@@ -3429,14 +3779,14 @@ public sealed class RoundSystem : MonoBehaviour
             "Available Cash",
             card,
             30f,
-            TextAlignmentOptions.Left);
+            TextAlignmentOptions.Right);
         shopBalanceText.text = "$0.00";
         shopBalanceText.fontStyle = FontStyles.Bold;
         shopBalanceText.color = Color.white;
         SetRect(
             shopBalanceText.rectTransform,
-            new Vector2(720f, 410f),
-            new Vector2(210f, 44f));
+            new Vector2(665f, 410f),
+            new Vector2(330f, 44f));
 
         RectTransform scrollRoot = CreateUiObject("Progression Scroll View", card);
         SetRect(scrollRoot, new Vector2(0f, -28f), new Vector2(1830f, 800f));
@@ -3759,7 +4109,7 @@ public sealed class RoundSystem : MonoBehaviour
             robotCapacityPrevious = capacityPosition;
         }
 
-        for (int tier = 1; tier <= 2; tier++)
+        for (int tier = 1; tier <= 3; tier++)
         {
             Vector2 position = new Vector2(790f, 85f - (tier - 1) * 95f);
             CreateTreeConnector(treeContent, robotLogicPrevious, position, robotColor);
@@ -3786,8 +4136,8 @@ public sealed class RoundSystem : MonoBehaviour
         shopStatusText.color = new Color(1f, 0.84f, 0.3f);
         SetRect(
             shopStatusText.rectTransform,
-            new Vector2(350f, 410f),
-            new Vector2(220f, 30f));
+            new Vector2(260f, 410f),
+            new Vector2(370f, 30f));
 
         doneShoppingButton = CreateButton(
             "Done Shopping",
@@ -3836,18 +4186,18 @@ public sealed class RoundSystem : MonoBehaviour
         SetChildRect(
             card,
             "Balance Coin",
-            new Vector2(590f, 410f),
+            new Vector2(480f, 410f),
             new Vector2(40f, 40f));
         SetChildRect(
             card,
             "Available Cash",
-            new Vector2(720f, 410f),
-            new Vector2(210f, 44f));
+            new Vector2(665f, 410f),
+            new Vector2(330f, 44f));
         SetChildRect(
             card,
             "Shop Status",
-            new Vector2(350f, 410f),
-            new Vector2(220f, 30f));
+            new Vector2(260f, 410f),
+            new Vector2(370f, 30f));
         SetChildRect(
             card,
             "Done Shopping",
@@ -3863,6 +4213,13 @@ public sealed class RoundSystem : MonoBehaviour
             closeText.color = Color.white;
             closeText.fontSize = 30f;
             closeText.fontStyle = FontStyles.Bold;
+        }
+
+        if (shopBalanceText != null)
+        {
+            shopBalanceText.alignment = TextAlignmentOptions.Right;
+            shopBalanceText.textWrappingMode = TextWrappingModes.NoWrap;
+            shopBalanceText.overflowMode = TextOverflowModes.Overflow;
         }
 
         RectTransform scrollRoot = card.Find("Progression Scroll View")
@@ -3881,6 +4238,1221 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         treeContent.sizeDelta = new Vector2(1800f, treeContent.sizeDelta.y);
+        EnsureRobotRarityLogicTier(treeContent);
+        EnsureVacuumUnlockNode(treeContent);
+        ApplyProgressionTreeLayout(treeContent);
+        ApplySuppliesShopVisualPolish(card, treeContent);
+    }
+
+    private static void ApplySuppliesShopVisualPolish(
+        RectTransform card,
+        RectTransform treeContent)
+    {
+        Color cream = new Color(1f, 0.91f, 0.68f, 1f);
+        Color wood = new Color(0.34f, 0.16f, 0.045f, 1f);
+        Color woodBorder = new Color(0.7f, 0.4f, 0.1f, 1f);
+        Color cashGreen = new Color(0.08f, 0.31f, 0.08f, 1f);
+
+        RectTransform titleFrame = EnsureShopFrame(
+            card,
+            "Shop Title Frame",
+            new Vector2(-620f, 410f),
+            new Vector2(560f, 72f),
+            wood,
+            woodBorder,
+            3f);
+        titleFrame.SetAsFirstSibling();
+        TMP_Text title = card.Find("Shop Title")?.GetComponent<TMP_Text>();
+        if (title != null)
+        {
+            SetRuntimeRect(
+                title.rectTransform,
+                new Vector2(-620f, 410f),
+                new Vector2(520f, 64f));
+            title.alignment = TextAlignmentOptions.Center;
+            title.fontSize = 40f;
+            title.color = Color.white;
+            title.fontStyle = FontStyles.Bold;
+        }
+
+        RectTransform cashFrame = EnsureShopFrame(
+            card,
+            "Cash Banner Frame",
+            new Vector2(585f, 410f),
+            new Vector2(410f, 64f),
+            cream,
+            new Color(0.74f, 0.57f, 0.24f, 1f),
+            3f);
+        cashFrame.SetAsFirstSibling();
+        SetChildRect(
+            card,
+            "Balance Coin",
+            new Vector2(405f, 410f),
+            new Vector2(48f, 48f));
+        SetChildRect(
+            card,
+            "Available Cash",
+            new Vector2(590f, 410f),
+            new Vector2(340f, 64f));
+        TMP_Text balance = card.Find("Available Cash")?.GetComponent<TMP_Text>();
+        if (balance != null)
+        {
+            balance.alignment = TextAlignmentOptions.Right;
+            balance.fontSize = 34f;
+            balance.enableAutoSizing = true;
+            balance.fontSizeMin = 22f;
+            balance.fontSizeMax = 34f;
+            balance.fontStyle = FontStyles.Bold;
+            balance.color = cashGreen;
+            balance.margin = new Vector4(0f, 0f, 10f, 0f);
+        }
+
+        SetChildRect(
+            card,
+            "Done Shopping",
+            new Vector2(865f, 410f),
+            new Vector2(64f, 64f));
+        Button closeButton =
+            card.Find("Done Shopping")?.GetComponent<Button>();
+        if (closeButton != null)
+        {
+            Image closeImage = closeButton.targetGraphic as Image;
+            if (closeImage != null)
+            {
+                closeImage.color = new Color(0.78f, 0.12f, 0.055f, 1f);
+            }
+
+            TMP_Text closeLabel =
+                closeButton.GetComponentInChildren<TMP_Text>(true);
+            if (closeLabel != null)
+            {
+                closeLabel.fontSize = 38f;
+            }
+        }
+
+        SetChildRect(
+            card,
+            "Shop Status",
+            new Vector2(220f, 410f),
+            new Vector2(310f, 38f));
+
+        CreateTreePanel(
+            treeContent,
+            "Consumables Column Frame",
+            new Vector2(-735f, 105f),
+            new Vector2(330f, 1090f),
+            new Color(0.15f, 0.13f, 0.065f, 0.98f),
+            new Color(0.66f, 0.48f, 0.13f, 1f));
+
+        RectTransform foodGroup = treeContent.Find("Food Tree Group")
+            as RectTransform;
+        RectTransform techGroup = treeContent.Find("Tech Tree Group")
+            as RectTransform;
+        RectTransform collectionGroup =
+            treeContent.Find("Collection Tree Group") as RectTransform;
+        if (foodGroup != null)
+        {
+            CreateTreePanel(
+                foodGroup,
+                "Active Tree Frame",
+                new Vector2(175f, 105f),
+                new Vector2(1450f, 1090f),
+                new Color(0.14f, 0.085f, 0.035f, 0.98f),
+                new Color(0.78f, 0.35f, 0.075f, 1f));
+        }
+
+        if (techGroup != null)
+        {
+            CreateTreePanel(
+                techGroup,
+                "Active Tree Frame",
+                new Vector2(175f, 105f),
+                new Vector2(1450f, 1090f),
+                new Color(0.045f, 0.13f, 0.065f, 0.98f),
+                new Color(0.28f, 0.6f, 0.13f, 1f));
+        }
+
+        if (collectionGroup != null)
+        {
+            CreateTreePanel(
+                collectionGroup,
+                "Active Tree Frame",
+                new Vector2(175f, 105f),
+                new Vector2(1450f, 1090f),
+                new Color(0.04f, 0.095f, 0.14f, 0.98f),
+                new Color(0.18f, 0.5f, 0.78f, 1f));
+        }
+
+        StyleTreeHeader(
+            treeContent,
+            "CONSUMABLES Branch",
+            new Color(0.42f, 0.33f, 0.11f, 1f),
+            new Color(0.72f, 0.52f, 0.16f, 1f));
+        StyleTreeHeader(
+            treeContent,
+            "FOOD Branch",
+            new Color(0.65f, 0.28f, 0.055f, 1f),
+            new Color(0.9f, 0.47f, 0.1f, 1f));
+        StyleTreeHeader(
+            treeContent,
+            "TECH Branch",
+            new Color(0.18f, 0.43f, 0.1f, 1f),
+            new Color(0.43f, 0.73f, 0.16f, 1f));
+        StyleTreeHeader(
+            treeContent,
+            "COLLECTION Branch",
+            new Color(0.12f, 0.34f, 0.57f, 1f),
+            new Color(0.27f, 0.61f, 0.9f, 1f));
+
+        Texture2D iconAtlas =
+            Resources.Load<Texture2D>("UI/SuppliesIconAtlas");
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            StyleProgressionNode(nodes[index], iconAtlas);
+        }
+
+        ConfigureSupplyShopTabs(
+            treeContent,
+            foodGroup,
+            techGroup,
+            collectionGroup);
+    }
+
+    private static void ConfigureSupplyShopTabs(
+        RectTransform treeContent,
+        RectTransform foodGroup,
+        RectTransform techGroup,
+        RectTransform collectionGroup)
+    {
+        RectTransform[] headers =
+        {
+            treeContent.Find("FOOD Branch") as RectTransform,
+            treeContent.Find("TECH Branch") as RectTransform,
+            treeContent.Find("COLLECTION Branch") as RectTransform
+        };
+        RectTransform[] groups =
+        {
+            foodGroup,
+            techGroup,
+            collectionGroup
+        };
+        Color[] tabColors =
+        {
+            new Color(0.65f, 0.28f, 0.055f, 1f),
+            new Color(0.18f, 0.43f, 0.1f, 1f),
+            new Color(0.12f, 0.34f, 0.57f, 1f)
+        };
+
+        for (int index = 0; index < headers.Length; index++)
+        {
+            RectTransform header = headers[index];
+            if (header == null)
+            {
+                continue;
+            }
+
+            Button tab = header.GetComponent<Button>();
+            if (tab == null)
+            {
+                tab = header.gameObject.AddComponent<Button>();
+            }
+
+            tab.targetGraphic = header.GetComponent<Image>();
+            if (tab.targetGraphic != null)
+            {
+                tab.targetGraphic.raycastTarget = true;
+            }
+
+            tab.transition = Selectable.Transition.ColorTint;
+            ColorBlock colors = tab.colors;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(1.12f, 1.12f, 1.12f, 1f);
+            colors.pressedColor = new Color(0.82f, 0.82f, 0.82f, 1f);
+            colors.selectedColor = Color.white;
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.08f;
+            tab.colors = colors;
+            tab.onClick.RemoveAllListeners();
+            int selectedIndex = index;
+            tab.onClick.AddListener(
+                () => SetSupplyShopTreeTab(
+                    selectedIndex,
+                    headers,
+                    groups,
+                    tabColors));
+        }
+
+        SetSupplyShopTreeTab(0, headers, groups, tabColors);
+    }
+
+    private static void SetSupplyShopTreeTab(
+        int selectedIndex,
+        RectTransform[] headers,
+        RectTransform[] groups,
+        Color[] tabColors)
+    {
+        ProgressionTreePreview preview = headers.Length > 0
+            && headers[0] != null
+            ? headers[0].GetComponentInParent<ProgressionTreePreview>(true)
+            : null;
+        preview?.Hide();
+
+        for (int index = 0; index < groups.Length; index++)
+        {
+            bool selected = index == selectedIndex;
+            if (groups[index] != null)
+            {
+                groups[index].gameObject.SetActive(selected);
+            }
+
+            Image headerImage = headers[index] != null
+                ? headers[index].GetComponent<Image>()
+                : null;
+            if (headerImage != null)
+            {
+                headerImage.color = selected
+                    ? Color.Lerp(tabColors[index], Color.white, 0.14f)
+                    : Color.Lerp(tabColors[index], Color.black, 0.28f);
+            }
+
+            Outline outline = headers[index] != null
+                ? headers[index].GetComponent<Outline>()
+                : null;
+            if (outline != null)
+            {
+                outline.effectDistance = selected
+                    ? new Vector2(3f, -3f)
+                    : new Vector2(1.5f, -1.5f);
+                outline.effectColor = selected
+                    ? Color.Lerp(tabColors[index], Color.white, 0.42f)
+                    : Color.Lerp(tabColors[index], Color.black, 0.08f);
+            }
+        }
+    }
+
+    private static RectTransform EnsureShopFrame(
+        Transform parent,
+        string objectName,
+        Vector2 position,
+        Vector2 size,
+        Color backgroundColor,
+        Color borderColor,
+        float borderWidth)
+    {
+        RectTransform frame = parent.Find(objectName) as RectTransform;
+        if (frame == null)
+        {
+            GameObject frameObject = new GameObject(
+                objectName,
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Outline));
+            frame = frameObject.transform as RectTransform;
+            frame.SetParent(parent, false);
+        }
+
+        SetRuntimeRect(frame, position, size);
+        Image image = frame.GetComponent<Image>();
+        image.color = backgroundColor;
+        image.raycastTarget = false;
+        Outline outline = frame.GetComponent<Outline>();
+        outline.effectColor = borderColor;
+        outline.effectDistance = new Vector2(borderWidth, -borderWidth);
+        outline.useGraphicAlpha = false;
+        return frame;
+    }
+
+    private static void CreateTreePanel(
+        Transform parent,
+        string objectName,
+        Vector2 position,
+        Vector2 size,
+        Color backgroundColor,
+        Color borderColor)
+    {
+        RectTransform panel = EnsureShopFrame(
+            parent,
+            objectName,
+            position,
+            size,
+            backgroundColor,
+            borderColor,
+            3f);
+        panel.SetAsFirstSibling();
+    }
+
+    private static void StyleTreeHeader(
+        Transform parent,
+        string headerName,
+        Color backgroundColor,
+        Color borderColor)
+    {
+        RectTransform header = parent.Find(headerName) as RectTransform;
+        if (header == null)
+        {
+            return;
+        }
+
+        Image image = header.GetComponent<Image>();
+        if (image != null)
+        {
+            image.color = backgroundColor;
+        }
+
+        Outline outline = header.GetComponent<Outline>();
+        if (outline == null)
+        {
+            outline = header.gameObject.AddComponent<Outline>();
+        }
+
+        outline.effectColor = borderColor;
+        outline.effectDistance = new Vector2(2f, -2f);
+        outline.useGraphicAlpha = false;
+    }
+
+    private static void StyleProgressionNode(
+        ProgressionNodeButton node,
+        Texture2D iconAtlas)
+    {
+        if (node == null
+            || node.transform is not RectTransform nodeRect)
+        {
+            return;
+        }
+
+        bool featured = IsFeaturedShopNode(node);
+        bool root = !node.IsTierNode;
+        if (featured)
+        {
+            nodeRect.sizeDelta = node.UpgradeId switch
+            {
+                ProgressionSystem.UpgradeId.IncubatorInstall
+                    or ProgressionSystem.UpgradeId.CrosshatcherInstall
+                    or ProgressionSystem.UpgradeId.RobotUnlock
+                    or ProgressionSystem.UpgradeId.VacuumUnlock =>
+                    new Vector2(250f, 104f),
+                ProgressionSystem.UpgradeId.FoodBag =>
+                    new Vector2(230f, 92f),
+                _ => new Vector2(190f, 90f)
+            };
+        }
+        else if (node.IsTierNode)
+        {
+            nodeRect.sizeDelta = new Vector2(150f, 74f);
+        }
+        else
+        {
+            nodeRect.sizeDelta = new Vector2(220f, 92f);
+        }
+
+        Button button = node.GetComponent<Button>();
+        if (button == null)
+        {
+            return;
+        }
+
+        Color borderColor = GetNodeBorderColor(node.UpgradeId);
+        Outline[] outlines = node.GetComponents<Outline>();
+        Outline decorativeOutline = outlines.Length > 1
+            ? outlines[outlines.Length - 1]
+            : node.gameObject.AddComponent<Outline>();
+        decorativeOutline.effectColor = borderColor;
+        decorativeOutline.effectDistance = new Vector2(2f, -2f);
+        decorativeOutline.useGraphicAlpha = false;
+
+        Shadow shadow = null;
+        Shadow[] shadows = node.GetComponents<Shadow>();
+        for (int index = 0; index < shadows.Length; index++)
+        {
+            if (shadows[index] != null
+                && shadows[index].GetType() == typeof(Shadow))
+            {
+                shadow = shadows[index];
+                break;
+            }
+        }
+
+        if (shadow == null)
+        {
+            shadow = node.gameObject.AddComponent<Shadow>();
+        }
+
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.72f);
+        shadow.effectDistance = new Vector2(3f, -3f);
+        shadow.useGraphicAlpha = true;
+
+        int atlasIndex = GetShopIconAtlasIndex(node);
+        Transform oldBadge = node.transform.Find("Node Icon");
+        if (oldBadge != null && atlasIndex >= 0)
+        {
+            oldBadge.gameObject.SetActive(false);
+        }
+
+        TMP_Text label = node.transform.Find("Label")?.GetComponent<TMP_Text>();
+        TMP_Text cost =
+            node.transform.Find("Node Cost")?.GetComponent<TMP_Text>();
+        if (atlasIndex >= 0 && iconAtlas != null)
+        {
+            RawImage icon = EnsureAtlasIcon(node.transform);
+            icon.texture = iconAtlas;
+            icon.uvRect = GetShopIconUv(atlasIndex);
+            icon.color = Color.white;
+            icon.raycastTarget = false;
+            float iconSize = root ? 68f : 56f;
+            float iconX = root
+                ? -nodeRect.sizeDelta.x * 0.5f + 43f
+                : -nodeRect.sizeDelta.x * 0.5f + 34f;
+            SetRuntimeRect(
+                icon.rectTransform,
+                new Vector2(iconX, root ? 7f : 8f),
+                new Vector2(iconSize, iconSize));
+
+            if (label != null)
+            {
+                label.alignment = TextAlignmentOptions.Left;
+                label.fontSize = root ? 14f : 12f;
+                label.margin = root
+                    ? new Vector4(86f, 9f, 7f, 28f)
+                    : new Vector4(68f, 7f, 5f, 22f);
+            }
+        }
+        else if (label != null)
+        {
+            label.alignment = TextAlignmentOptions.Center;
+            label.fontSize = 12.5f;
+            label.margin = new Vector4(5f, 5f, 5f, 21f);
+        }
+
+        if (cost != null)
+        {
+            cost.fontSize = featured ? 11.5f : 10.5f;
+            cost.color = new Color(1f, 0.88f, 0.2f, 1f);
+            cost.fontStyle = FontStyles.Bold;
+            if (root)
+            {
+                SetRuntimeRect(
+                    cost.rectTransform,
+                    new Vector2(
+                        nodeRect.sizeDelta.x * 0.5f - 64f,
+                        -31f),
+                    new Vector2(116f, 16f));
+            }
+            else if (featured)
+            {
+                SetRuntimeRect(
+                    cost.rectTransform,
+                    new Vector2(35f, -29f),
+                    new Vector2(104f, 15f));
+            }
+        }
+
+        RectTransform affordability =
+            node.transform.Find("Node Affordability") as RectTransform;
+        if (affordability != null && root)
+        {
+            SetRuntimeRect(
+                affordability,
+                new Vector2(0f, -nodeRect.sizeDelta.y * 0.5f + 7f),
+                new Vector2(nodeRect.sizeDelta.x - 24f, 7f));
+        }
+    }
+
+    private static RawImage EnsureAtlasIcon(Transform parent)
+    {
+        RawImage icon =
+            parent.Find("Generated Shop Icon")?.GetComponent<RawImage>();
+        if (icon != null)
+        {
+            return icon;
+        }
+
+        GameObject iconObject = new GameObject(
+            "Generated Shop Icon",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(RawImage));
+        iconObject.transform.SetParent(parent, false);
+        icon = iconObject.GetComponent<RawImage>();
+        icon.transform.SetAsLastSibling();
+        return icon;
+    }
+
+    private static bool IsFeaturedShopNode(ProgressionNodeButton node)
+    {
+        if (!node.IsTierNode)
+        {
+            return true;
+        }
+
+        return node.UpgradeId switch
+        {
+            ProgressionSystem.UpgradeId.FeedSpeed => node.TargetLevel == 2,
+            ProgressionSystem.UpgradeId.RareEggChance => node.TargetLevel == 1,
+            ProgressionSystem.UpgradeId.EggValue => node.TargetLevel == 1,
+            ProgressionSystem.UpgradeId.BasketCapacity => node.TargetLevel == 1,
+            _ => false
+        };
+    }
+
+    private static int GetShopIconAtlasIndex(ProgressionNodeButton node)
+    {
+        return node.UpgradeId switch
+        {
+            ProgressionSystem.UpgradeId.FoodBag => 0,
+            ProgressionSystem.UpgradeId.FeedSpeed
+                when node.TargetLevel == 2 => 1,
+            ProgressionSystem.UpgradeId.RareEggChance
+                when node.TargetLevel == 1 => 2,
+            ProgressionSystem.UpgradeId.EggValue
+                when node.TargetLevel == 1 => 3,
+            ProgressionSystem.UpgradeId.IncubatorInstall => 4,
+            ProgressionSystem.UpgradeId.CrosshatcherInstall => 5,
+            ProgressionSystem.UpgradeId.BasketCapacity
+                when node.TargetLevel == 1 => 6,
+            ProgressionSystem.UpgradeId.RobotUnlock => 7,
+            _ => -1
+        };
+    }
+
+    private static Rect GetShopIconUv(int atlasIndex)
+    {
+        int column = Mathf.Clamp(atlasIndex, 0, 7) % 4;
+        int row = Mathf.Clamp(atlasIndex, 0, 7) / 4;
+        return new Rect(
+            column * 0.25f,
+            row == 0 ? 0.5f : 0f,
+            0.25f,
+            0.5f);
+    }
+
+    private static Color GetNodeBorderColor(
+        ProgressionSystem.UpgradeId id)
+    {
+        return id switch
+        {
+            ProgressionSystem.UpgradeId.FoodBag
+                or ProgressionSystem.UpgradeId.FeedSpeed =>
+                new Color(0.82f, 0.45f, 0.11f, 1f),
+            ProgressionSystem.UpgradeId.RareEggChance =>
+                new Color(0.62f, 0.34f, 0.74f, 1f),
+            ProgressionSystem.UpgradeId.EggValue =>
+                new Color(0.8f, 0.62f, 0.13f, 1f),
+            ProgressionSystem.UpgradeId.IncubatorInstall
+                or ProgressionSystem.UpgradeId.IncubatorCapacity
+                or ProgressionSystem.UpgradeId.IncubatorSpeed =>
+                new Color(0.38f, 0.7f, 0.16f, 1f),
+            ProgressionSystem.UpgradeId.CrosshatcherInstall
+                or ProgressionSystem.UpgradeId.CrosshatcherSpeed
+                or ProgressionSystem.UpgradeId.CrosshatcherQuality =>
+                new Color(0.32f, 0.65f, 0.38f, 1f),
+            ProgressionSystem.UpgradeId.BasketCapacity
+                or ProgressionSystem.UpgradeId.VacuumUnlock
+                or ProgressionSystem.UpgradeId.VacuumPower
+                or ProgressionSystem.UpgradeId.VacuumRange =>
+                new Color(0.32f, 0.62f, 0.82f, 1f),
+            _ => new Color(0.48f, 0.36f, 0.74f, 1f)
+        };
+    }
+
+    private static void ApplyProgressionTreeLayout(RectTransform treeContent)
+    {
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+
+        SetRuntimeTreeHeader(
+            treeContent,
+            "CONSUMABLES Branch",
+            new Vector2(-735f, 650f),
+            330f);
+        SetRuntimeTreeHeader(
+            treeContent,
+            "FOOD Branch",
+            new Vector2(-315f, 650f),
+            470f);
+        SetRuntimeTreeHeader(
+            treeContent,
+            "TECH Branch",
+            new Vector2(170f, 650f),
+            470f);
+        SetRuntimeTreeHeader(
+            treeContent,
+            "COLLECTION Branch",
+            new Vector2(655f, 650f),
+            470f);
+
+        RectTransform[] treeRects =
+            treeContent.GetComponentsInChildren<RectTransform>(true);
+        for (int index = 0; index < treeRects.Length; index++)
+        {
+            RectTransform rect = treeRects[index];
+            if (rect != null
+                && rect != treeContent
+                && rect.name == "Branch Connector")
+            {
+                rect.gameObject.SetActive(false);
+                Destroy(rect.gameObject);
+            }
+        }
+
+        RectTransform foodGroup = EnsureSupplyShopTreeGroup(
+            treeContent,
+            "Food Tree Group");
+        RectTransform techGroup = EnsureSupplyShopTreeGroup(
+            treeContent,
+            "Tech Tree Group");
+        RectTransform collectionGroup = EnsureSupplyShopTreeGroup(
+            treeContent,
+            "Collection Tree Group");
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            bool obsoleteVacuumEntry =
+                node != null
+                && node.TargetLevel == 1
+                && (node.UpgradeId == ProgressionSystem.UpgradeId.VacuumPower
+                    || node.UpgradeId == ProgressionSystem.UpgradeId.VacuumRange);
+            if (obsoleteVacuumEntry)
+            {
+                node.gameObject.SetActive(false);
+                Destroy(node.gameObject);
+                continue;
+            }
+
+            if (node == null
+                || node.UpgradeId == ProgressionSystem.UpgradeId.FoodBag)
+            {
+                continue;
+            }
+
+            RectTransform group = GetSupplyShopTreeGroup(
+                node.UpgradeId,
+                foodGroup,
+                techGroup,
+                collectionGroup);
+            if (group != null && node.transform.parent != group)
+            {
+                node.transform.SetParent(group, false);
+            }
+        }
+
+        Color foodColor = new Color(0.62f, 0.31f, 0.07f);
+        Color premiumColor = new Color(0.44f, 0.2f, 0.62f);
+        Color valueColor = new Color(0.66f, 0.48f, 0.08f);
+        Color incubationColor = new Color(0.08f, 0.48f, 0.28f);
+        Color crosshatcherColor = new Color(0.18f, 0.5f, 0.46f);
+        Color collectionColor = new Color(0.08f, 0.35f, 0.64f);
+        Color robotColor = new Color(0.37f, 0.25f, 0.62f);
+
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.FoodBag,
+            0,
+            new Vector2(-735f, 535f));
+
+        Vector2 previousFeed = Vector2.zero;
+        for (int tier = 2; tier <= FoodShopController.MaximumFeedTier; tier++)
+        {
+            Vector2 position = new Vector2(
+                -300f,
+                520f - (tier - 2) * 108f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.FeedSpeed,
+                tier,
+                position);
+            if (tier > 2)
+            {
+                CreateRuntimeTreeConnector(
+                    foodGroup,
+                    previousFeed,
+                    position,
+                    foodColor);
+            }
+
+            previousFeed = position;
+        }
+
+        Vector2 previousPremium = Vector2.zero;
+        Vector2 premiumTierTwo = Vector2.zero;
+        for (int tier = 1; tier <= 8; tier++)
+        {
+            Vector2 position = new Vector2(
+                175f,
+                520f - (tier - 1) * 108f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.RareEggChance,
+                tier,
+                position);
+            if (tier > 1)
+            {
+                CreateRuntimeTreeConnector(
+                    foodGroup,
+                    previousPremium,
+                    position,
+                    premiumColor);
+            }
+
+            if (tier == 2)
+            {
+                premiumTierTwo = position;
+            }
+
+            previousPremium = position;
+        }
+
+        Vector2 previousValue = premiumTierTwo;
+        for (int tier = 1; tier <= 8; tier++)
+        {
+            Vector2 position = new Vector2(
+                650f,
+                412f - (tier - 1) * 108f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.EggValue,
+                tier,
+                position);
+            CreateRuntimeTreeConnector(
+                foodGroup,
+                previousValue,
+                position,
+                valueColor);
+            previousValue = position;
+        }
+
+        Vector2 incubatorRoot = new Vector2(-210f, 510f);
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.IncubatorInstall,
+            0,
+            incubatorRoot);
+        Vector2 previousCapacity = incubatorRoot;
+        Vector2 previousIncubatorSpeed = incubatorRoot;
+        for (int tier = 2; tier <= IncubatorController.MaximumLevel; tier++)
+        {
+            float y = 365f - (tier - 2) * 104f;
+            Vector2 capacityPosition = new Vector2(-340f, y);
+            Vector2 speedPosition = new Vector2(-80f, y);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.IncubatorCapacity,
+                tier,
+                capacityPosition);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.IncubatorSpeed,
+                tier,
+                speedPosition);
+            CreateRuntimeTreeConnector(
+                techGroup,
+                previousCapacity,
+                capacityPosition,
+                incubationColor);
+            CreateRuntimeTreeConnector(
+                techGroup,
+                previousIncubatorSpeed,
+                speedPosition,
+                incubationColor);
+            previousCapacity = capacityPosition;
+            previousIncubatorSpeed = speedPosition;
+        }
+
+        Vector2 crosshatcherRoot = new Vector2(560f, 510f);
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.CrosshatcherInstall,
+            0,
+            crosshatcherRoot);
+        Vector2 previousCrossSpeed = crosshatcherRoot;
+        Vector2 previousCrossQuality = crosshatcherRoot;
+        for (int tier = 2; tier <= CrosshatcherController.MaximumLevel; tier++)
+        {
+            float y = 365f - (tier - 2) * 104f;
+            Vector2 speedPosition = new Vector2(430f, y);
+            Vector2 qualityPosition = new Vector2(690f, y);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.CrosshatcherSpeed,
+                tier,
+                speedPosition);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.CrosshatcherQuality,
+                tier,
+                qualityPosition);
+            CreateRuntimeTreeConnector(
+                techGroup,
+                previousCrossSpeed,
+                speedPosition,
+                crosshatcherColor);
+            CreateRuntimeTreeConnector(
+                techGroup,
+                previousCrossQuality,
+                qualityPosition,
+                crosshatcherColor);
+            previousCrossSpeed = speedPosition;
+            previousCrossQuality = qualityPosition;
+        }
+
+        Vector2 basketOne = new Vector2(-300f, 510f);
+        Vector2 previousBasket = Vector2.zero;
+        for (int tier = 1; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(
+                basketOne.x,
+                basketOne.y - (tier - 1) * 125f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.BasketCapacity,
+                tier,
+                position);
+            if (tier > 1)
+            {
+                CreateRuntimeTreeConnector(
+                    collectionGroup,
+                    previousBasket,
+                    position,
+                    collectionColor);
+            }
+
+            previousBasket = position;
+        }
+
+        Vector2 vacuumUnlock = new Vector2(-300f, 70f);
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.VacuumUnlock,
+            0,
+            vacuumUnlock);
+        CreateRuntimeTreeConnector(
+            collectionGroup,
+            previousBasket,
+            vacuumUnlock,
+            collectionColor);
+
+        Vector2 previousVacuumPower = vacuumUnlock;
+        for (int tier = 2; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(
+                -420f,
+                -90f - (tier - 2) * 125f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.VacuumPower,
+                tier,
+                position);
+            CreateRuntimeTreeConnector(
+                collectionGroup,
+                previousVacuumPower,
+                position,
+                collectionColor);
+            previousVacuumPower = position;
+        }
+
+        Vector2 previousVacuumRange = vacuumUnlock;
+        for (int tier = 2; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(
+                -180f,
+                -90f - (tier - 2) * 125f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.VacuumRange,
+                tier,
+                position);
+            CreateRuntimeTreeConnector(
+                collectionGroup,
+                previousVacuumRange,
+                position,
+                collectionColor);
+            previousVacuumRange = position;
+        }
+
+        Vector2 robotUnlock = new Vector2(520f, 510f);
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.RobotUnlock,
+            0,
+            robotUnlock);
+
+        Vector2 previousRobotSpeed = robotUnlock;
+        Vector2 previousRobotCapacity = robotUnlock;
+        for (int tier = 2; tier <= 3; tier++)
+        {
+            float y = 345f - (tier - 2) * 125f;
+            Vector2 speedPosition = new Vector2(300f, y);
+            Vector2 capacityPosition = new Vector2(520f, y);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.RobotSpeed,
+                tier,
+                speedPosition);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.RobotCapacity,
+                tier,
+                capacityPosition);
+            CreateRuntimeTreeConnector(
+                collectionGroup,
+                previousRobotSpeed,
+                speedPosition,
+                robotColor);
+            CreateRuntimeTreeConnector(
+                collectionGroup,
+                previousRobotCapacity,
+                capacityPosition,
+                robotColor);
+            previousRobotSpeed = speedPosition;
+            previousRobotCapacity = capacityPosition;
+        }
+
+        Vector2 previousRobotLogic = robotUnlock;
+        for (int tier = 1; tier <= 3; tier++)
+        {
+            Vector2 position = new Vector2(
+                740f,
+                345f - (tier - 1) * 125f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.RobotSmartness,
+                tier,
+                position);
+            CreateRuntimeTreeConnector(
+                collectionGroup,
+                previousRobotLogic,
+                position,
+                robotColor);
+            previousRobotLogic = position;
+        }
+    }
+
+    private static RectTransform EnsureSupplyShopTreeGroup(
+        RectTransform treeContent,
+        string objectName)
+    {
+        RectTransform group = treeContent.Find(objectName) as RectTransform;
+        if (group == null)
+        {
+            GameObject groupObject = new GameObject(
+                objectName,
+                typeof(RectTransform));
+            group = groupObject.transform as RectTransform;
+            group.SetParent(treeContent, false);
+        }
+
+        SetRuntimeRect(group, Vector2.zero, treeContent.sizeDelta);
+        group.SetAsFirstSibling();
+        return group;
+    }
+
+    private static RectTransform GetSupplyShopTreeGroup(
+        ProgressionSystem.UpgradeId id,
+        RectTransform foodGroup,
+        RectTransform techGroup,
+        RectTransform collectionGroup)
+    {
+        return id switch
+        {
+            ProgressionSystem.UpgradeId.FeedSpeed
+                or ProgressionSystem.UpgradeId.RareEggChance
+                or ProgressionSystem.UpgradeId.EggValue => foodGroup,
+            ProgressionSystem.UpgradeId.IncubatorInstall
+                or ProgressionSystem.UpgradeId.IncubatorCapacity
+                or ProgressionSystem.UpgradeId.IncubatorSpeed
+                or ProgressionSystem.UpgradeId.CrosshatcherInstall
+                or ProgressionSystem.UpgradeId.CrosshatcherSpeed
+                or ProgressionSystem.UpgradeId.CrosshatcherQuality => techGroup,
+            ProgressionSystem.UpgradeId.BasketCapacity
+                or ProgressionSystem.UpgradeId.VacuumUnlock
+                or ProgressionSystem.UpgradeId.VacuumPower
+                or ProgressionSystem.UpgradeId.VacuumRange
+                or ProgressionSystem.UpgradeId.RobotUnlock
+                or ProgressionSystem.UpgradeId.RobotSpeed
+                or ProgressionSystem.UpgradeId.RobotCapacity
+                or ProgressionSystem.UpgradeId.RobotSmartness => collectionGroup,
+            _ => null
+        };
+    }
+
+    private static void SetRuntimeTreeHeader(
+        RectTransform treeContent,
+        string headerName,
+        Vector2 position,
+        float width)
+    {
+        RectTransform header = treeContent.Find(headerName) as RectTransform;
+        if (header == null)
+        {
+            return;
+        }
+
+        SetRuntimeRect(header, position, new Vector2(width, 54f));
+        SetChildRect(
+            header,
+            headerName.Replace(" Branch", " Icon"),
+            new Vector2(-width * 0.5f + 24f, 0f),
+            new Vector2(40f, 40f));
+        SetChildRect(
+            header,
+            headerName.Replace(" Branch", " Label"),
+            new Vector2(20f, 0f),
+            new Vector2(width - 64f, 46f));
+    }
+
+    private static void SetRuntimeNodePosition(
+        ProgressionNodeButton[] nodes,
+        ProgressionSystem.UpgradeId id,
+        int targetLevel,
+        Vector2 position)
+    {
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node != null
+                && node.UpgradeId == id
+                && node.TargetLevel == targetLevel
+                && node.transform is RectTransform rect)
+            {
+                rect.anchoredPosition = position;
+                return;
+            }
+        }
+    }
+
+    private static void CreateRuntimeTreeConnector(
+        Transform parent,
+        Vector2 start,
+        Vector2 end,
+        Color color)
+    {
+        GameObject connectorObject = new GameObject(
+            "Branch Connector",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image));
+        RectTransform connector = connectorObject.transform as RectTransform;
+        connector.SetParent(parent, false);
+        Vector2 direction = end - start;
+        SetRuntimeRect(
+            connector,
+            (start + end) * 0.5f,
+            new Vector2(direction.magnitude, 4f));
+        connector.localRotation = Quaternion.Euler(
+            0f,
+            0f,
+            Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg);
+        Image connectorImage = connectorObject.GetComponent<Image>();
+        connectorImage.color = new Color(color.r, color.g, color.b, 0.45f);
+        connectorImage.raycastTarget = false;
+        connector.SetAsFirstSibling();
+    }
+
+    private static void EnsureRobotRarityLogicTier(RectTransform treeContent)
+    {
+        ProgressionNodeButton tierTwo = null;
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node.UpgradeId != ProgressionSystem.UpgradeId.RobotSmartness)
+            {
+                continue;
+            }
+
+            if (node.TargetLevel == 3)
+            {
+                return;
+            }
+
+            if (node.TargetLevel == 2)
+            {
+                tierTwo = node;
+            }
+        }
+
+        if (tierTwo == null)
+        {
+            return;
+        }
+
+        GameObject clone = Instantiate(tierTwo.gameObject, tierTwo.transform.parent);
+        clone.name = "Upgrade Robot Logic 3";
+        RectTransform cloneRect = clone.transform as RectTransform;
+        RectTransform tierTwoRect = tierTwo.transform as RectTransform;
+        if (cloneRect != null && tierTwoRect != null)
+        {
+            cloneRect.anchoredPosition =
+                tierTwoRect.anchoredPosition + Vector2.down * 95f;
+
+            GameObject connectorObject = new GameObject(
+                "Branch Connector",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            RectTransform connector = connectorObject.transform as RectTransform;
+            connector.SetParent(treeContent, false);
+            Vector2 start = tierTwoRect.anchoredPosition;
+            Vector2 end = cloneRect.anchoredPosition;
+            Vector2 direction = end - start;
+            SetRuntimeRect(
+                connector,
+                (start + end) * 0.5f,
+                new Vector2(direction.magnitude, 4f));
+            connector.localRotation = Quaternion.Euler(
+                0f,
+                0f,
+                Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg);
+            Image connectorImage = connectorObject.GetComponent<Image>();
+            connectorImage.color = new Color(0.37f, 0.25f, 0.62f, 0.45f);
+            connectorImage.raycastTarget = false;
+            connector.SetAsFirstSibling();
+        }
+
+        clone.GetComponent<ProgressionNodeButton>()?.SetTargetLevel(3);
+    }
+
+    private static void EnsureVacuumUnlockNode(RectTransform treeContent)
+    {
+        ProgressionNodeButton robotTemplate = null;
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node == null)
+            {
+                continue;
+            }
+
+            if (node.UpgradeId == ProgressionSystem.UpgradeId.VacuumUnlock)
+            {
+                return;
+            }
+
+            if (node.UpgradeId == ProgressionSystem.UpgradeId.RobotUnlock)
+            {
+                robotTemplate = node;
+            }
+        }
+
+        if (robotTemplate == null)
+        {
+            return;
+        }
+
+        GameObject clone = Instantiate(
+            robotTemplate.gameObject,
+            robotTemplate.transform.parent);
+        clone.name = "Unlock Egg Vacuum";
+        ProgressionNodeButton vacuumNode =
+            clone.GetComponent<ProgressionNodeButton>();
+        vacuumNode?.SetUpgrade(
+            ProgressionSystem.UpgradeId.VacuumUnlock,
+            0);
     }
 
     private static void SetChildRect(
@@ -4577,6 +6149,14 @@ public sealed class RoundSystem : MonoBehaviour
             maximumRewardParticlesPerBurst,
             250,
             10000);
+        cashNoteParticleDensity = Mathf.Clamp(
+            cashNoteParticleDensity,
+            0.05f,
+            1f);
+        maximumCashNotesPerBurst = Mathf.Clamp(
+            maximumCashNotesPerBurst,
+            25,
+            1000);
         rewardParticleTrailDuration = Mathf.Clamp(
             rewardParticleTrailDuration,
             0.5f,
