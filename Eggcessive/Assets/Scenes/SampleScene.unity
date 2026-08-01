@@ -2270,6 +2270,14 @@ MonoBehaviour:
   grassMaterial: {fileID: 2100000, guid: a91a89581dc24711bd2e2e9e72670680, type: 2}
   groundColourSource: {fileID: 2100000, guid: b66dae7c3aeba824e8c4e1ad75169f4c, type: 2}
   castShadows: 0
+  renderingCamera: {fileID: 330585545}
+  fullDensityDistance: 5
+  cameraDensityFalloffDistance: 5
+  minimumCameraDensityRetention: 0.08
+  cameraDensityFalloffPower: 1.5
+  maximumRenderDistance: 14
+  renderFadeDistance: 3
+  renderingCellSize: 2
   groundMaskResolution: 512
   outerGroundMaskResolution: 1024
   areaSize: {x: 4, y: 5}
@@ -2284,9 +2292,6 @@ MonoBehaviour:
   outerAreaCenter: {x: 0, y: 2.5}
   outerAreaSize: {x: 12, y: 10}
   outerDensityMultiplier: 0.5
-  outerDensityFalloffDistance: 2
-  minimumOuterDensityRetention: 0.08
-  outerDensityFalloffPower: 1.5
   outerInteractionFadeDistance: 1
   minimumOuterInteraction: 0.15
   targetGrassCoverage: 0.88
@@ -9301,6 +9306,10 @@ PrefabInstance:
     - target: {fileID: 177638, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
       propertyPath: m_Name
       value: '[Graphy]'
+      objectReference: {fileID: 0}
+    - target: {fileID: 177638, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 11496292, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
       propertyPath: m_graphyMode

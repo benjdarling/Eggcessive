@@ -10,6 +10,8 @@ Shader "Eggcessive/Interactive Grass"
         _Cutoff("Alpha Clip Threshold", Range(0, 1)) = 0.5
         [HideInInspector] _GrassWindParameters0("Grass Wind Parameters 0", Vector) = (0.05, 0.5, 0.012, 0.42)
         [HideInInspector] _GrassWindParameters1("Grass Wind Parameters 1", Vector) = (0.7, 1, 0, 0)
+        [HideInInspector] _GrassDistanceParameters("Grass Distance Parameters", Vector) = (5, 10, 11, 14)
+        [HideInInspector] _GrassDistanceDensity("Grass Distance Density", Vector) = (0.08, 1.5, 0.08, 0)
     }
 
     SubShader
@@ -61,6 +63,8 @@ Shader "Eggcessive/Interactive Grass"
                 float4 _AlphaMap_ST;
                 float4 _GrassWindParameters0;
                 float4 _GrassWindParameters1;
+                float4 _GrassDistanceParameters;
+                float4 _GrassDistanceDensity;
             CBUFFER_END
 
             float4 _GlobalWindDirection;
@@ -110,6 +114,22 @@ Shader "Eggcessive/Interactive Grass"
                 return magnitudeSquared > maximumSquared && magnitudeSquared > 0.000001
                     ? bend * (maximum * rsqrt(magnitudeSquared))
                     : bend;
+            }
+
+            float GrassInstanceHash(float2 position)
+            {
+                float3 value = frac(float3(position.xyx) * 0.1031);
+                value += dot(value, value.yzx + 33.33);
+                return frac((value.x + value.y) * value.z);
+            }
+
+            float GrassDither(float2 pixelPosition)
+            {
+                // Interleaved gradient noise avoids visible concentric fade bands
+                // while remaining stable for a stationary camera.
+                return frac(
+                    52.9829189
+                    * frac(dot(floor(pixelPosition), float2(0.06711056, 0.00583715))));
             }
 
             float2 EvaluateGrassWind(float3 samplePositionWS, float responseVariation)
@@ -209,6 +229,7 @@ Shader "Eggcessive/Interactive Grass"
                 float2 uv : TEXCOORD4;
                 half3 vertexSH : TEXCOORD5;
                 float4 shadowCoord : TEXCOORD6;
+                half2 distanceVisibility : TEXCOORD7;
             };
 
             Varyings GrassVertex(Attributes input)
@@ -225,6 +246,28 @@ Shader "Eggcessive/Interactive Grass"
                     TransformObjectToWorld(float3(0.0, 0.0, 0.0));
                 float3 windSamplePositionWS = instancePositionWS
                     + float3(variation.z, 0.0, variation.w);
+                float cameraDistance = distance(
+                    instancePositionWS.xz,
+                    _WorldSpaceCameraPos.xz);
+                float densityDistance = smoothstep(
+                    _GrassDistanceParameters.x,
+                    _GrassDistanceParameters.y,
+                    cameraDistance);
+                float densityRetention = lerp(
+                    1.0,
+                    _GrassDistanceDensity.x,
+                    pow(densityDistance, _GrassDistanceDensity.y));
+                float instanceRank = GrassInstanceHash(instancePositionWS.xz);
+                float densityVisibility = densityRetention >= 0.9999
+                    ? 1.0
+                    : saturate(
+                        (densityRetention - instanceRank)
+                        / max(_GrassDistanceDensity.z, 0.0001)
+                        + 0.5);
+                float renderVisibility = 1.0 - smoothstep(
+                    _GrassDistanceParameters.z,
+                    _GrassDistanceParameters.w,
+                    cameraDistance);
                 float2 worldBend = bend.xy
                     + EvaluateGrassWind(windSamplePositionWS, variation.y);
                 worldBend = ClampGrassBend(worldBend, 0.95);
@@ -251,6 +294,9 @@ Shader "Eggcessive/Interactive Grass"
                 output.uv = TRANSFORM_TEX(input.uv, _AlphaMap);
                 OUTPUT_SH(output.normalWS, output.vertexSH);
                 output.shadowCoord = TransformWorldToShadowCoord(positions.positionWS);
+                output.distanceVisibility = half2(
+                    densityVisibility,
+                    renderVisibility);
                 return output;
             }
 
@@ -258,6 +304,9 @@ Shader "Eggcessive/Interactive Grass"
             {
                 half alpha = SAMPLE_TEXTURE2D(_AlphaMap, sampler_AlphaMap, input.uv).a;
                 clip(alpha - _Cutoff);
+                half visibility = input.distanceVisibility.x
+                    * input.distanceVisibility.y;
+                clip(visibility - GrassDither(input.positionCS.xy));
 
                 // Grass is rendered two-sided, but both sides should retain the
                 // authored/upward-blended normal. Flipping the back face normal

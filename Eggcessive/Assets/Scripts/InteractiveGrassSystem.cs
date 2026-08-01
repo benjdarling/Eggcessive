@@ -15,6 +15,10 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         Shader.PropertyToID("_GrassWindParameters0");
     private static readonly int GrassWindParameters1Id =
         Shader.PropertyToID("_GrassWindParameters1");
+    private static readonly int GrassDistanceParametersId =
+        Shader.PropertyToID("_GrassDistanceParameters");
+    private static readonly int GrassDistanceDensityId =
+        Shader.PropertyToID("_GrassDistanceDensity");
 
     private sealed class GrassInstance
     {
@@ -44,6 +48,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         public Vector4[] bends;
         public Vector4[] variations;
         public MaterialPropertyBlock properties;
+        public Bounds bounds;
         public bool bendDataDirty;
     }
 
@@ -53,6 +58,24 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private Material grassMaterial = null;
     [SerializeField] private Material groundColourSource = null;
     [SerializeField] private bool castShadows = false;
+
+    [Header("Camera Distance Rendering")]
+    [Tooltip("Camera used for distance rendering in play mode. The Main Camera is used when this is empty.")]
+    [SerializeField] private Camera renderingCamera = null;
+    [Tooltip("Grass keeps its full generated density up to this planar distance from the camera.")]
+    [SerializeField, Min(0f)] private float fullDensityDistance = 5f;
+    [Tooltip("Distance over which grass density falls from full density to the minimum retention.")]
+    [SerializeField, Min(0.01f)] private float cameraDensityFalloffDistance = 5f;
+    [Tooltip("Proportion of generated clumps retained after the camera-relative density falloff.")]
+    [SerializeField, Range(0f, 1f)] private float minimumCameraDensityRetention = 0.08f;
+    [Tooltip("Shape of the camera-relative density falloff. Values above one retain density for longer before thinning.")]
+    [SerializeField, Min(0.1f)] private float cameraDensityFalloffPower = 1.5f;
+    [Tooltip("Grass is completely omitted beyond this planar distance from the camera.")]
+    [SerializeField, Min(0.01f)] private float maximumRenderDistance = 14f;
+    [Tooltip("Width of the dithered transition immediately before the maximum render distance.")]
+    [SerializeField, Min(0.01f)] private float renderFadeDistance = 3f;
+    [Tooltip("World-space cell size used to keep instanced draw batches spatially compact for culling.")]
+    [SerializeField, Min(0.5f)] private float renderingCellSize = 2f;
 
     [Header("Ground Layer Mask")]
     [SerializeField, Range(64, 2048)] private int groundMaskResolution = 512;
@@ -75,12 +98,6 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private Vector2 outerAreaSize = new Vector2(12f, 10f);
     [Tooltip("Placement density outside the pen as a proportion of the existing inner density.")]
     [SerializeField, Range(0.01f, 1f)] private float outerDensityMultiplier = 0.35f;
-    [Tooltip("Distance outside the pen over which outer grass density falls from its boundary density to the minimum retention.")]
-    [SerializeField, Min(0.01f)] private float outerDensityFalloffDistance = 4f;
-    [Tooltip("Proportion of the boundary density retained at and beyond the density falloff distance.")]
-    [SerializeField, Range(0f, 1f)] private float minimumOuterDensityRetention = 0.08f;
-    [Tooltip("Shape of the density falloff. Values above one keep grass denser near the pen before falling away more sharply.")]
-    [SerializeField, Min(0.1f)] private float outerDensityFalloffPower = 1.5f;
     [Tooltip("Distance outside the pen over which character interaction fades.")]
     [SerializeField, Min(0.01f)] private float outerInteractionFadeDistance = 5f;
     [Tooltip("Interaction retained at and beyond the outer fade distance. Wind is unaffected.")]
@@ -148,6 +165,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     private bool regenerationRequested;
     private bool interactionStateReset = true;
     private int clumpPrefabSignature;
+    private Camera cachedMainCamera;
 
     public int InstanceCount { get; private set; }
     public Vector2 AreaSize => areaSize;
@@ -398,17 +416,6 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             cellPoints.Add(point);
             accepted.Add(point);
 
-            // Build the same even, blue-noise distribution used previously,
-            // then thin that completed distribution by distance. Rejecting
-            // before counting an accepted candidate would only make the loop
-            // refill toward targetCount and would not reliably reduce density.
-            float densityRetention = EvaluateOuterDensityRetention(
-                distanceOutsidePen);
-            if (NextFloat(random) > densityRetention)
-            {
-                continue;
-            }
-
             position += normal * groundOffset;
 
             float yaw = NextFloat(random) * 360f;
@@ -459,16 +466,6 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             Mathf.Max(0f, Mathf.Abs(localPoint.x) - areaSize.x * 0.5f),
             Mathf.Max(0f, Mathf.Abs(localPoint.y) - areaSize.y * 0.5f));
         return outside.magnitude;
-    }
-
-    private float EvaluateOuterDensityRetention(float distanceOutsidePen)
-    {
-        float normalizedDistance = Mathf.Clamp01(
-            distanceOutsidePen / outerDensityFalloffDistance);
-        float shapedDistance = Mathf.Pow(
-            normalizedDistance,
-            outerDensityFalloffPower);
-        return Mathf.Lerp(1f, minimumOuterDensityRetention, shapedDistance);
     }
 
     public float EvaluateGrassDistribution(Vector3 worldPosition)
@@ -841,9 +838,19 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         ShadowCastingMode shadowMode = castShadows
             ? ShadowCastingMode.On
             : ShadowCastingMode.Off;
+        Camera camera = Application.isPlaying ? ResolveRenderingCamera() : null;
+        Vector3 cameraPosition = camera != null ? camera.transform.position : Vector3.zero;
+        float maximumRenderDistanceSquared = maximumRenderDistance * maximumRenderDistance;
         for (int i = 0; i < batches.Length; i++)
         {
             DrawBatch batch = batches[i];
+            if (camera != null
+                && GetPlanarDistanceSquared(cameraPosition, batch.bounds)
+                    > maximumRenderDistanceSquared)
+            {
+                continue;
+            }
+
             if (batch.bendDataDirty)
             {
                 batch.properties.SetVectorArray(GrassBendId, batch.bends);
@@ -860,7 +867,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
                 shadowMode,
                 true,
                 gameObject.layer,
-                null,
+                camera,
                 LightProbeUsage.Off,
                 null);
         }
@@ -868,55 +875,135 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     private void BuildBatches(List<GrassInstance> instances)
     {
-        // DrawMeshInstanced culls an entire submitted array as one group.
-        // Spatial ordering keeps each group compact, allowing off-screen groups
-        // to be rejected without changing instance placement or appearance.
+        // DrawMeshInstanced culls a submitted array as one group. Sort into
+        // fixed world-space cells, then prevent batches from crossing a cell
+        // boundary so frustum and camera-distance rejection stay effective.
         instances.Sort(CompareInstancesSpatially);
 
-        int batchCount = Mathf.CeilToInt(instances.Count / (float)MaximumInstancesPerDraw);
-        batches = new DrawBatch[batchCount];
-
-        for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+        var builtBatches = new List<DrawBatch>();
+        int start = 0;
+        while (start < instances.Count)
         {
-            int start = batchIndex * MaximumInstancesPerDraw;
-            int count = Mathf.Min(MaximumInstancesPerDraw, instances.Count - start);
-            var batch = new DrawBatch
+            Vector2Int cell = GetCell(
+                new Vector2(instances[start].position.x, instances[start].position.z),
+                renderingCellSize);
+            int cellEnd = start + 1;
+            while (cellEnd < instances.Count)
             {
-                instances = new GrassInstance[count],
-                matrices = new Matrix4x4[count],
-                bends = new Vector4[count],
-                variations = new Vector4[count],
-                properties = new MaterialPropertyBlock()
-            };
+                Vector3 candidatePosition = instances[cellEnd].position;
+                Vector2Int candidateCell = GetCell(
+                    new Vector2(candidatePosition.x, candidatePosition.z),
+                    renderingCellSize);
+                if (candidateCell != cell)
+                {
+                    break;
+                }
 
-            for (int i = 0; i < count; i++)
-            {
-                GrassInstance instance = instances[start + i];
-                batch.instances[i] = instance;
-                batch.matrices[i] = instance.matrix;
-                batch.variations[i] = instance.variation;
-                instance.batch = batch;
-                instance.batchSlot = i;
+                cellEnd++;
             }
 
-            batch.properties.SetVectorArray(GrassBendId, batch.bends);
-            batch.properties.SetVectorArray(GrassVariationId, batch.variations);
-            batch.properties.SetVector(
-                GrassWindParameters0Id,
-                new Vector4(
-                    steadyWindBend,
-                    turbulentWindBend,
-                    turbulenceDeadZone,
-                    maximumWindBend));
-            batch.properties.SetVector(
-                GrassWindParameters1Id,
-                new Vector4(
-                    minimumWindResponse,
-                    maximumWindResponse,
-                    0f,
-                    0f));
-            batches[batchIndex] = batch;
+            while (start < cellEnd)
+            {
+                int count = Mathf.Min(MaximumInstancesPerDraw, cellEnd - start);
+                builtBatches.Add(CreateDrawBatch(instances, start, count));
+                start += count;
+            }
         }
+
+        batches = builtBatches.ToArray();
+    }
+
+    private DrawBatch CreateDrawBatch(
+        List<GrassInstance> instances,
+        int start,
+        int count)
+    {
+        var batch = new DrawBatch
+        {
+            instances = new GrassInstance[count],
+            matrices = new Matrix4x4[count],
+            bends = new Vector4[count],
+            variations = new Vector4[count],
+            properties = new MaterialPropertyBlock()
+        };
+
+        Vector3 minimum = instances[start].position;
+        Vector3 maximum = minimum;
+        for (int i = 0; i < count; i++)
+        {
+            GrassInstance instance = instances[start + i];
+            batch.instances[i] = instance;
+            batch.matrices[i] = instance.matrix;
+            batch.variations[i] = instance.variation;
+            instance.batch = batch;
+            instance.batchSlot = i;
+            minimum = Vector3.Min(minimum, instance.position);
+            maximum = Vector3.Max(maximum, instance.position);
+        }
+
+        batch.bounds = new Bounds((minimum + maximum) * 0.5f, maximum - minimum);
+        batch.bounds.Expand(
+            Mathf.Max(maximumHeight, maximumWidthScale * maximumHeight) * 2f);
+
+        batch.properties.SetVectorArray(GrassBendId, batch.bends);
+        batch.properties.SetVectorArray(GrassVariationId, batch.variations);
+        batch.properties.SetVector(
+            GrassWindParameters0Id,
+            new Vector4(
+                steadyWindBend,
+                turbulentWindBend,
+                turbulenceDeadZone,
+                maximumWindBend));
+        batch.properties.SetVector(
+            GrassWindParameters1Id,
+            new Vector4(
+                minimumWindResponse,
+                maximumWindResponse,
+                0f,
+                0f));
+        float densityEndDistance = fullDensityDistance + cameraDensityFalloffDistance;
+        float renderFadeStartDistance = Mathf.Max(
+            densityEndDistance,
+            maximumRenderDistance - renderFadeDistance);
+        batch.properties.SetVector(
+            GrassDistanceParametersId,
+            new Vector4(
+                fullDensityDistance,
+                densityEndDistance,
+                renderFadeStartDistance,
+                maximumRenderDistance));
+        batch.properties.SetVector(
+            GrassDistanceDensityId,
+            new Vector4(
+                minimumCameraDensityRetention,
+                cameraDensityFalloffPower,
+                0.08f,
+                0f));
+        return batch;
+    }
+
+    private Camera ResolveRenderingCamera()
+    {
+        if (renderingCamera != null && renderingCamera.isActiveAndEnabled)
+        {
+            return renderingCamera;
+        }
+
+        if (cachedMainCamera == null || !cachedMainCamera.isActiveAndEnabled)
+        {
+            cachedMainCamera = Camera.main;
+        }
+
+        return cachedMainCamera;
+    }
+
+    private static float GetPlanarDistanceSquared(Vector3 position, Bounds bounds)
+    {
+        Vector3 centre = bounds.center;
+        Vector3 extents = bounds.extents;
+        float deltaX = Mathf.Max(0f, Mathf.Abs(position.x - centre.x) - extents.x);
+        float deltaZ = Mathf.Max(0f, Mathf.Abs(position.z - centre.z) - extents.z);
+        return deltaX * deltaX + deltaZ * deltaZ;
     }
 
     private void BuildRuntimeSpatialData(List<GrassInstance> instances)
@@ -941,11 +1028,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         }
     }
 
-    private static int CompareInstancesSpatially(
+    private int CompareInstancesSpatially(
         GrassInstance left,
         GrassInstance right)
     {
-        const float sortingCellSize = 1.5f;
+        float sortingCellSize = Mathf.Max(0.5f, renderingCellSize);
         int leftX = Mathf.FloorToInt(left.position.x / sortingCellSize);
         int rightX = Mathf.FloorToInt(right.position.x / sortingCellSize);
         int xComparison = leftX.CompareTo(rightX);
@@ -1264,9 +1351,18 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         outerAreaSize.x = Mathf.Max(areaSize.x, outerAreaSize.x);
         outerAreaSize.y = Mathf.Max(areaSize.y, outerAreaSize.y);
         outerDensityMultiplier = Mathf.Clamp(outerDensityMultiplier, 0.01f, 1f);
-        outerDensityFalloffDistance = Mathf.Max(0.01f, outerDensityFalloffDistance);
-        minimumOuterDensityRetention = Mathf.Clamp01(minimumOuterDensityRetention);
-        outerDensityFalloffPower = Mathf.Max(0.1f, outerDensityFalloffPower);
+        fullDensityDistance = Mathf.Max(0f, fullDensityDistance);
+        cameraDensityFalloffDistance = Mathf.Max(0.01f, cameraDensityFalloffDistance);
+        minimumCameraDensityRetention = Mathf.Clamp01(minimumCameraDensityRetention);
+        cameraDensityFalloffPower = Mathf.Max(0.1f, cameraDensityFalloffPower);
+        maximumRenderDistance = Mathf.Max(
+            fullDensityDistance + cameraDensityFalloffDistance + 0.01f,
+            maximumRenderDistance);
+        renderFadeDistance = Mathf.Clamp(
+            renderFadeDistance,
+            0.01f,
+            maximumRenderDistance - fullDensityDistance - cameraDensityFalloffDistance);
+        renderingCellSize = Mathf.Max(0.5f, renderingCellSize);
         outerInteractionFadeDistance = Mathf.Max(0.01f, outerInteractionFadeDistance);
         minimumOuterInteraction = Mathf.Clamp01(minimumOuterInteraction);
         densityPerSquareMetre = Mathf.Max(1f, densityPerSquareMetre);
