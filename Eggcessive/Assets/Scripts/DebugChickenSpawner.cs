@@ -61,7 +61,7 @@ public class DebugChickenSpawner : MonoBehaviour
 
         if (performanceTestSpawnCoroutine != null)
         {
-            StopCoroutine(performanceTestSpawnCoroutine);
+            return;
         }
 
         performanceTestSpawnCoroutine =
@@ -70,12 +70,21 @@ public class DebugChickenSpawner : MonoBehaviour
 
     private IEnumerator PopulatePerformanceTestChickens()
     {
-        int targetPopulation = Mathf.Min(
-            PerformanceTestChickenCount,
-            ChickenController.MaximumChickenCount);
         int spawnedThisFrame = 0;
+        int existingCount = PenExpansionManager.Instance != null
+            ? PenExpansionManager.Instance.GetChickenCount(
+                PenExpansionManager.Instance.GetClosestPenIndex(
+                    spawnVolume.bounds.center))
+            : ChickenController.ActiveInstances.Count;
+        int spawnCount = Mathf.Min(
+            PerformanceTestChickenCount,
+            Mathf.Max(
+                0,
+                ChickenController.MaximumChickenCount - existingCount));
 
-        while (ChickenController.ActiveInstances.Count < targetPopulation)
+        for (int spawnedCount = 0;
+            spawnedCount < spawnCount;
+            spawnedCount++)
         {
             SpawnChicken();
             spawnedThisFrame++;
@@ -89,8 +98,9 @@ public class DebugChickenSpawner : MonoBehaviour
 
         performanceTestSpawnCoroutine = null;
         Debug.Log(
-            $"F5 chicken performance test ready: "
-            + $"{ChickenController.ActiveInstances.Count} chickens.",
+            $"F5 chicken performance test: spawned {spawnCount} chickens "
+            + "in the original gameplay pen. Total: "
+            + $"{ChickenController.ActiveInstances.Count}.",
             this);
     }
 
@@ -116,22 +126,49 @@ public class DebugChickenSpawner : MonoBehaviour
 
     private void SpawnChicken()
     {
-        Vector3 position = FindSpawnPosition();
+        SpawnChicken(spawnVolume.bounds);
+    }
+
+    public void SpawnStarterChickens(int count)
+    {
+        if (chickenPrefab == null || spawnVolume == null)
+        {
+            return;
+        }
+
+        int availableSlots = Mathf.Max(
+            0,
+            ChickenController.MaximumChickenCount
+            - (PenExpansionManager.Instance != null
+                ? PenExpansionManager.Instance.GetChickenCount(
+                    PenExpansionManager.Instance.GetClosestPenIndex(
+                        spawnVolume.bounds.center))
+                : ChickenController.ActiveInstances.Count));
+        int spawnCount = Mathf.Min(Mathf.Max(0, count), availableSlots);
+        for (int index = 0; index < spawnCount; index++)
+        {
+            SpawnChicken();
+        }
+    }
+
+    private void SpawnChicken(Bounds penBounds)
+    {
+        Vector3 position = FindSpawnPosition(penBounds);
         float yRotation = Random.Range(-180f, 180f);
 
         Instantiate(chickenPrefab, position, Quaternion.Euler(0f, yRotation, 0f));
         spawnedPositions.Add(position);
     }
 
-    private Vector3 FindSpawnPosition()
+    private Vector3 FindSpawnPosition(Bounds penBounds)
     {
-        Vector3 bestPosition = GetRandomPointInVolume();
+        Vector3 bestPosition = GetRandomPointInBounds(penBounds);
         float bestNearestDistance = NearestSpawnDistanceSquared(bestPosition);
         float minimumSpacingSquared = minimumSpacing * minimumSpacing;
 
         for (int attempt = 0; attempt < placementAttempts; attempt++)
         {
-            Vector3 candidate = GetRandomPointInVolume();
+            Vector3 candidate = GetRandomPointInBounds(penBounds);
             float nearestDistance = NearestSpawnDistanceSquared(candidate);
 
             if (nearestDistance >= minimumSpacingSquared)
@@ -151,16 +188,14 @@ public class DebugChickenSpawner : MonoBehaviour
         return bestPosition;
     }
 
-    private Vector3 GetRandomPointInVolume()
+    private Vector3 GetRandomPointInBounds(Bounds bounds)
     {
-        Vector3 halfSize = spawnVolume.size * 0.5f;
-        Vector3 localPoint = spawnVolume.center + new Vector3(
-            Random.Range(-halfSize.x, halfSize.x),
-            0f,
-            Random.Range(-halfSize.z, halfSize.z));
-
-        Vector3 worldPoint = spawnVolume.transform.TransformPoint(localPoint);
-        worldPoint.y = 0f;
+        float insetX = Mathf.Min(0.2f, bounds.size.x * 0.1f);
+        float insetZ = Mathf.Min(0.2f, bounds.size.z * 0.1f);
+        Vector3 worldPoint = new Vector3(
+            Random.Range(bounds.min.x + insetX, bounds.max.x - insetX),
+            bounds.max.y,
+            Random.Range(bounds.min.z + insetZ, bounds.max.z - insetZ));
 
         NavMeshQueryFilter queryFilter = new NavMeshQueryFilter
         {
@@ -185,13 +220,15 @@ public class DebugChickenSpawner : MonoBehaviour
             surface = gameObject.AddComponent<NavMeshSurface>();
         }
 
-        Vector3 volumeSize = spawnVolume.size;
+        Bounds worldBounds = spawnVolume.bounds;
+        Bounds localBounds = TransformWorldBoundsToLocal(worldBounds, transform);
+        Vector3 volumeSize = localBounds.size;
         volumeSize.y = Mathf.Max(volumeSize.y, navMeshVolumeHeight);
 
         surface.agentTypeID = chickenAgentTypeId;
         surface.collectObjects = CollectObjects.Volume;
         surface.size = volumeSize;
-        surface.center = spawnVolume.center;
+        surface.center = localBounds.center;
         surface.layerMask = navMeshSourceLayers;
         surface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
         surface.ignoreNavMeshAgent = true;
@@ -204,6 +241,29 @@ public class DebugChickenSpawner : MonoBehaviour
         {
             Debug.LogError($"Could not build a NavMesh inside {name}.", this);
         }
+    }
+
+    private static Bounds TransformWorldBoundsToLocal(Bounds worldBounds, Transform target)
+    {
+        Vector3 minimum = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+        Vector3 maximum = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+        for (int x = -1; x <= 1; x += 2)
+        {
+            for (int y = -1; y <= 1; y += 2)
+            {
+                for (int z = -1; z <= 1; z += 2)
+                {
+                    Vector3 worldCorner = worldBounds.center + Vector3.Scale(
+                        worldBounds.extents,
+                        new Vector3(x, y, z));
+                    Vector3 localCorner = target.InverseTransformPoint(worldCorner);
+                    minimum = Vector3.Min(minimum, localCorner);
+                    maximum = Vector3.Max(maximum, localCorner);
+                }
+            }
+        }
+
+        return new Bounds((minimum + maximum) * 0.5f, maximum - minimum);
     }
 
     private float NearestSpawnDistanceSquared(Vector3 candidate)

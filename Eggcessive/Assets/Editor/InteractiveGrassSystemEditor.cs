@@ -13,10 +13,9 @@ public sealed class InteractiveGrassSystemEditor : Editor
     private const string DirtTexturePath = "Assets/Env/textures/t_ground_dirt_placeholder.png";
     private const string LayerMaskPath = "Assets/Env/textures/t_ground_layer_mask.png";
     private const string OuterLayerMaskPath = "Assets/Env/textures/t_ground_layer_mask_outer.png";
-    private const string MaskGeneratorVersion = "EggcessiveGroundMask:v13";
-    // v3 records the complete outer candidate pool now that camera distance,
-    // rather than distance from the pen, controls runtime density.
-    private const string OuterMaskGeneratorVersion = "EggcessiveOuterGroundMask:v3";
+    private const string MaskGeneratorVersion = "EggcessiveGroundMask:v16";
+    // v8 regenerates distribution and coverage for the adjusted gameplay pen.
+    private const string OuterMaskGeneratorVersion = "EggcessiveOuterGroundMask:v8";
     private const double SetupPollingDuration = 15.0;
 
     private static double setupPollingDeadline;

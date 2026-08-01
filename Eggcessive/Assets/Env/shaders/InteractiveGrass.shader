@@ -10,8 +10,8 @@ Shader "Eggcessive/Interactive Grass"
         _Cutoff("Alpha Clip Threshold", Range(0, 1)) = 0.5
         [HideInInspector] _GrassWindParameters0("Grass Wind Parameters 0", Vector) = (0.05, 0.5, 0.012, 0.42)
         [HideInInspector] _GrassWindParameters1("Grass Wind Parameters 1", Vector) = (0.7, 1, 0, 0)
-        [HideInInspector] _GrassDistanceParameters("Grass Distance Parameters", Vector) = (5, 10, 11, 14)
-        [HideInInspector] _GrassDistanceDensity("Grass Distance Density", Vector) = (0.08, 1.5, 0.08, 0)
+        [HideInInspector] _GrassDistanceParameters("Grass Distance Parameters", Vector) = (8.25, 8.26, 8.26, 10)
+        [HideInInspector] _GrassDistanceDensity("Grass Distance Density", Vector) = (1, 1, 0.08, 0)
     }
 
     SubShader

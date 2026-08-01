@@ -401,7 +401,7 @@ public sealed class RoundSystem : MonoBehaviour
         gameplayHudCanvas = gameplayHud != null
             ? gameplayHud.GetComponent<Canvas>()
             : null;
-        EggContainer.EggCollected += HandleEggCollected;
+        EggContainer.EggCollectedFromContainer += HandleEggCollected;
         ChickenController.EggLaid += HandleEggLaid;
         IncubatorController.ChickenHatched += HandleChickenHatched;
         IncubatorController.EggsAccepted += HandleEggsAccepted;
@@ -859,7 +859,7 @@ public sealed class RoundSystem : MonoBehaviour
         resultsContinueButton?.onClick.RemoveListener(HandleResultsContinueClicked);
         doneShoppingButton?.onClick.RemoveListener(ShowIntermission);
 
-        EggContainer.EggCollected -= HandleEggCollected;
+        EggContainer.EggCollectedFromContainer -= HandleEggCollected;
         ChickenController.EggLaid -= HandleEggLaid;
         IncubatorController.ChickenHatched -= HandleChickenHatched;
         IncubatorController.EggsAccepted -= HandleEggsAccepted;
@@ -1551,13 +1551,25 @@ public sealed class RoundSystem : MonoBehaviour
     private void RefreshTimer()
     {
         int seconds = Mathf.CeilToInt(roundTimeRemaining);
+        int shownEggs = PenExpansionManager.Instance != null
+            ? PenExpansionManager.Instance.GetFocusedTruckEggCount(
+                eggsTowardTruck)
+            : eggsTowardTruck;
         timerText.text =
             $"ROUND {roundNumber}  .  TRUCK {trucksFilled + 1}\n" +
             $"{seconds / 60}:{seconds % 60:D2}   .   " +
-            $"EGGS {eggsTowardTruck}/{roundEggTarget}";
+            $"EGGS {shownEggs}/{roundEggTarget}";
     }
 
-    private void HandleEggCollected(int cents)
+    public void NotifyPenTruckProgressChanged()
+    {
+        if (timerText != null && IsRoundAcceptingEggs)
+        {
+            RefreshTimer();
+        }
+    }
+
+    private void HandleEggCollected(EggContainer container, int cents)
     {
         if (!IsRoundAcceptingEggs)
         {
@@ -1567,7 +1579,9 @@ public sealed class RoundSystem : MonoBehaviour
         roundEggsCollected++;
         roundCashMade += cents;
 
-        if (IsRoundAcceptingEggs && roundEggTarget > 0)
+        bool isPrimaryPen = PenExpansionManager.Instance == null
+            || PenExpansionManager.Instance.GetPenIndex(container) <= 0;
+        if (isPrimaryPen && IsRoundAcceptingEggs && roundEggTarget > 0)
         {
             eggsTowardTruck++;
 
@@ -1608,6 +1622,30 @@ public sealed class RoundSystem : MonoBehaviour
         {
             truckMovement = StartCoroutine(ReplaceFilledTrucks());
         }
+    }
+
+    public void CompleteAdditionalPenTruckQuota(Vector3 rewardPosition)
+    {
+        if (!IsRoundInProgress || roundEggTarget <= 0)
+        {
+            return;
+        }
+
+        trucksFilled++;
+        int bonus = Mathf.RoundToInt(
+            roundEggTarget
+            * 75f
+            * trucksFilled
+            * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
+        roundTruckCashMade += bonus;
+        roundCashMade += bonus;
+        EggScoreHud.AddCents(bonus);
+        ShowTruckBonusReward(
+            rewardPosition + Vector3.up * 0.45f,
+            bonus,
+            trucksFilled);
+        RefreshTimer();
+        RefreshLiveStats();
     }
 
     private IEnumerator ReplaceFilledTrucks()
@@ -2980,7 +3018,7 @@ public sealed class RoundSystem : MonoBehaviour
             roundEggsCollected.ToString(),
             $"{eggsPerMinute:0.0}",
             FormatMoney(EggScoreHud.CurrentCents),
-            $"{CountChickens()}/{ChickenController.MaximumChickenCount}",
+            CountChickens().ToString(),
             trucksFilled.ToString()
         };
 

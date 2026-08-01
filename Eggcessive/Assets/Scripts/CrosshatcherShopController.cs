@@ -90,6 +90,7 @@ public sealed class CrosshatcherShopController : MonoBehaviour
         }
 
         crosshatcher.InstallOrUpgrade(1, 1);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = "Crosshatcher installed";
 
         if (spendCurrency)
@@ -119,6 +120,7 @@ public sealed class CrosshatcherShopController : MonoBehaviour
         }
 
         crosshatcher.InstallOrUpgrade(SpeedLevel + 1, QualityLevel);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = $"Crosshatcher speed level {SpeedLevel}";
 
         if (spendCurrency)
@@ -148,6 +150,7 @@ public sealed class CrosshatcherShopController : MonoBehaviour
         }
 
         crosshatcher.InstallOrUpgrade(SpeedLevel, QualityLevel + 1);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = $"Crosshatcher quality level {QualityLevel}";
 
         if (spendCurrency)

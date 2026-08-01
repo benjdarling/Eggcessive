@@ -172,7 +172,10 @@ Shader "Eggcessive/Ground Layers"
                     generatedOuterLayerMask,
                     step(0.5h, _OuterPlacedCoverageAvailable));
                 half4 layerMask = lerp(
-                    half4(1.0h, 0.0h, 0.5h, 0.0h),
+                    // Ground outside an authored mask is surrounding meadow,
+                    // not bare dirt. This also keeps edge-buffer meshes green
+                    // if their shifted mask has not reached the renderer yet.
+                    half4(1.0h, 1.0h, 0.5h, 0.0h),
                     outerLayerMask,
                     insideOuter);
                 layerMask = lerp(layerMask, innerLayerMask, insideInner);
@@ -400,7 +403,7 @@ Shader "Eggcessive/Ground Layers"
                     generatedOuterLayerMask,
                     step(0.5h, _OuterPlacedCoverageAvailable));
                 half4 layerMask = lerp(
-                    half4(1.0h, 0.0h, 0.5h, 0.0h),
+                    half4(1.0h, 1.0h, 0.5h, 0.0h),
                     outerLayerMask,
                     insideOuter);
                 layerMask = lerp(layerMask, innerLayerMask, insideInner);

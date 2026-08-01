@@ -154,6 +154,7 @@ public sealed class IncubatorShopController : MonoBehaviour
         }
 
         incubator.InstallOrUpgrade(nextLevel);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = nextLevel == 1 ? "Incubator installed" : $"Incubator level {nextLevel}";
         RefreshUi();
         RoundSystem.Instance?.PlayCashRegisterSfx();
@@ -181,6 +182,7 @@ public sealed class IncubatorShopController : MonoBehaviour
         }
 
         incubator.InstallOrUpgrade(1, 1);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = "Incubator installed";
         RefreshUi();
         if (spendCurrency)
@@ -207,6 +209,7 @@ public sealed class IncubatorShopController : MonoBehaviour
         }
 
         incubator.InstallOrUpgrade(CapacityLevel + 1, SpeedLevel);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = $"Incubator capacity level {CapacityLevel}";
         RefreshUi();
         if (spendCurrency)
@@ -233,6 +236,7 @@ public sealed class IncubatorShopController : MonoBehaviour
         }
 
         incubator.InstallOrUpgrade(CapacityLevel, SpeedLevel + 1);
+        PenExpansionManager.Instance?.SynchronizeEquipmentAcrossPens();
         message = $"Incubator speed level {SpeedLevel}";
         RefreshUi();
         if (spendCurrency)

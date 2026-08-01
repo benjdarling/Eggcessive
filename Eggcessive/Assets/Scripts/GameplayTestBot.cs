@@ -57,6 +57,8 @@ public sealed class GameplayTestBot : MonoBehaviour
     [Header("Strategy")]
     [SerializeField, Min(0)] private int minimumFeedBags = 1;
     [SerializeField, Min(1)] private int maximumShopPurchasesPerVisit = 12;
+    [SerializeField, Min(1)] private int automatedOwnedPenTarget = 3;
+    [SerializeField, Min(1f)] private float penNavigationInterval = 8f;
 
     [Header("Authored Status UI")]
     [SerializeField] private TMP_Text statusText = null;
@@ -78,6 +80,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     private bool isRunning;
     private Mouse physicalMouse;
     private Vector2 pointerVelocity;
+    private float nextPenNavigationTime;
 
     public bool IsRunning => isRunning;
     public static Mouse PointerMouse =>
@@ -267,6 +270,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         {
             collectionActionCount = 0;
             foodPlacementAttempt = 0;
+            nextPenNavigationTime = Time.unscaledTime + 0.5f;
         }
     }
 
@@ -277,6 +281,16 @@ public sealed class GameplayTestBot : MonoBehaviour
         if (FoodShopController.IsPlacementActive)
         {
             yield return TryPlaceFood();
+            yield break;
+        }
+
+        if (ShouldNavigateToAnotherPen(out int navigationTarget))
+        {
+            nextPenNavigationTime =
+                Time.unscaledTime + penNavigationInterval;
+            yield return ClickNamedButton(
+                $"Pen {navigationTarget + 1} Button",
+                $"ROUND  .  NAVIGATING TO PEN {navigationTarget + 1}");
             yield break;
         }
 
@@ -537,21 +551,21 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private IEnumerator UseVacuum()
     {
-        if (!TryFindClickableEgg(out ChickenEgg egg, out _))
+        if (!TryFindClickableEgg(
+                out ChickenEgg egg,
+                out Vector2 initialEggPoint))
         {
             SetStatus("VACUUM  .  WAITING FOR EGGS");
-            yield return new WaitForSecondsRealtime(0.16f);
+            yield return new WaitForSecondsRealtime(0.08f);
             yield break;
         }
 
         bool incubate = CanUseIncubator();
         SetStatus($"VACUUM  .  {(incubate ? "RIGHT SUCK TO INCUBATOR" : "CASH SUCK")}");
-        yield return MovePointerToEgg(egg);
-        if (!IsPointerOverEgg(egg))
-        {
-            yield return new WaitForSecondsRealtime(0.06f);
-            yield break;
-        }
+        // Vacuuming only needs the egg inside its cone. Moving directly to the
+        // validated screen point avoids spending up to 1.5 seconds waiting for
+        // pixel-perfect hover on a rolling egg.
+        yield return MovePointer(initialEggPoint);
 
         MouseButton button = incubate ? MouseButton.Right : MouseButton.Left;
         QueueMouseButton(button, true);
@@ -560,6 +574,15 @@ public sealed class GameplayTestBot : MonoBehaviour
         ChickenEgg trackedEgg = egg;
         while (vacuumTime < vacuumHoldTime)
         {
+            if (incubate && !CanContinueVacuumingToIncubator())
+            {
+                ForceMouseButton(button, false);
+                incubate = false;
+                button = MouseButton.Left;
+                ForceMouseButton(button, true);
+                SetStatus("VACUUM  .  INCUBATOR FULL  .  CASH SUCK");
+            }
+
             if (!TryGetEggScreenPoint(trackedEgg, out Vector2 liveEggPoint))
             {
                 trackedEgg = null;
@@ -584,9 +607,7 @@ public sealed class GameplayTestBot : MonoBehaviour
 
             vacuumTime += Time.unscaledDeltaTime;
 
-            if (idleTime >= 0.35f
-                && (EggCarryController.Instance == null
-                    || !EggCarryController.Instance.HasPendingCollection))
+            if (idleTime >= 0.14f)
             {
                 break;
             }
@@ -652,6 +673,42 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         FoodShopController foodShop = FoodShopController.Instance;
+        PenExpansionManager penManager = PenExpansionManager.Instance;
+        int nextPenIndex = penManager != null
+            ? penManager.NextUnownedPenIndex
+            : -1;
+        bool wantsAnotherPen = penManager != null
+            && penManager.OwnedPenCount < automatedOwnedPenTarget
+            && nextPenIndex >= 0;
+        if (wantsAnotherPen
+            && EggScoreHud.CurrentCents
+                >= penManager.GetPenCostCents(nextPenIndex)
+            && shopPurchaseCount < maximumShopPurchasesPerVisit)
+        {
+            int ownedBefore = penManager.OwnedPenCount;
+            Button buyPenButton = FindNamedButton("Buy New Pen Button");
+            if (IsUsable(buyPenButton))
+            {
+                yield return ClickButton(
+                    buyPenButton,
+                    $"SHOP  .  BUYING PEN {nextPenIndex + 1}");
+            }
+            else
+            {
+                // Keep automation functional if the HUD is being rebuilt on
+                // the same frame that the next pen becomes affordable.
+                penManager.TryPurchaseNextPen();
+                yield return new WaitForSecondsRealtime(actionPause);
+            }
+
+            if (penManager.OwnedPenCount > ownedBefore)
+            {
+                shopPurchaseCount++;
+                nextPenNavigationTime = Time.unscaledTime;
+                yield break;
+            }
+        }
+
         ProgressionNodeButton[] nodes =
             Object.FindObjectsByType<ProgressionNodeButton>(
                 FindObjectsInactive.Include,
@@ -723,6 +780,18 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield return ClickNamedButton(
                 "Done Shopping",
                 "SHOP - SAVING FOR INCUBATOR");
+            yield break;
+        }
+
+        if (wantsAnotherPen)
+        {
+            int cost = penManager.GetPenCostCents(nextPenIndex);
+            SetStatus(
+                $"SHOP  .  SAVING FOR PEN {nextPenIndex + 1}  "
+                + $"{EggScoreHud.CurrentCents}/{cost}");
+            yield return ClickNamedButton(
+                "Done Shopping",
+                $"SHOP  .  SAVING FOR PEN {nextPenIndex + 1}");
             yield break;
         }
 
@@ -917,6 +986,22 @@ public sealed class GameplayTestBot : MonoBehaviour
             && incubator.AvailableCapacity > 0;
     }
 
+    private static bool CanContinueVacuumingToIncubator()
+    {
+        EggCarryController collection = EggCarryController.Instance;
+        return collection != null
+            ? collection.HasVacuumIncubatorCapacity
+            : CanUseFocusedIncubatorFallback();
+    }
+
+    private static bool CanUseFocusedIncubatorFallback()
+    {
+        IncubatorController incubator = FindIncubator();
+        return incubator != null
+            && incubator.isActiveAndEnabled
+            && incubator.AvailableCapacity > 0;
+    }
+
     private static ProgressionNodeButton FindCrosshatcherPriorityNode(
         ProgressionNodeButton[] nodes)
     {
@@ -1043,18 +1128,122 @@ public sealed class GameplayTestBot : MonoBehaviour
 
     private static IncubatorController FindIncubator()
     {
-        return Object.FindFirstObjectByType<IncubatorController>();
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        IncubatorController focused = manager != null
+            ? manager.GetFocusedIncubator()
+            : null;
+        return focused != null
+            ? focused
+            : Object.FindFirstObjectByType<IncubatorController>();
     }
 
     private static CrosshatcherController FindCrosshatcher()
     {
-        return Object.FindFirstObjectByType<CrosshatcherController>();
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        CrosshatcherController focused = manager != null
+            ? manager.GetFocusedCrosshatcher()
+            : null;
+        return focused != null
+            ? focused
+            : Object.FindFirstObjectByType<CrosshatcherController>();
     }
 
     private static bool IsChickenCapReached()
     {
-        return ChickenController.ActiveInstances.Count
-            >= ChickenController.MaximumChickenCount;
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        return manager != null && manager.IsInitialized
+            ? manager.GetChickenCount(manager.FocusedPenIndex)
+                >= ChickenController.MaximumChickenCount
+            : ChickenController.ActiveInstances.Count
+                >= ChickenController.MaximumChickenCount;
+    }
+
+    private bool ShouldNavigateToAnotherPen(out int targetPenIndex)
+    {
+        targetPenIndex = -1;
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        if (manager == null
+            || !manager.IsInitialized
+            || manager.OwnedPenCount <= 1
+            || Time.unscaledTime < nextPenNavigationTime)
+        {
+            return false;
+        }
+
+        EggCarryController collection = EggCarryController.Instance;
+        if (collection != null
+            && (collection.HeldEgg != null
+                || collection.HeldChicken != null
+                || collection.HasPendingCollection))
+        {
+            return false;
+        }
+
+        int currentPenIndex = manager.FocusedPenIndex;
+        bool bestHasRobot = manager.HasRobotInPen(currentPenIndex);
+        long bestEarnings = manager.GetPenEarningsCents(currentPenIndex);
+        int currentScore = GetPenWorkScore(manager, currentPenIndex);
+        int bestScore = currentScore;
+        for (int index = 0; index < manager.OwnedPenCount; index++)
+        {
+            if (index == currentPenIndex)
+            {
+                continue;
+            }
+
+            bool candidateHasRobot = manager.HasRobotInPen(index);
+            long candidateEarnings = manager.GetPenEarningsCents(index);
+            int score = GetPenWorkScore(manager, index);
+            bool isHigherPriority =
+                (bestHasRobot && !candidateHasRobot)
+                || (bestHasRobot == candidateHasRobot
+                    && candidateEarnings < bestEarnings)
+                || (bestHasRobot == candidateHasRobot
+                    && candidateEarnings == bestEarnings
+                    && score > bestScore);
+            if (isHigherPriority)
+            {
+                bestHasRobot = candidateHasRobot;
+                bestEarnings = candidateEarnings;
+                bestScore = score;
+                targetPenIndex = index;
+            }
+        }
+
+        if (targetPenIndex < 0)
+        {
+            // Re-evaluate often enough to notice newly laid eggs without
+            // bouncing through empty pens and sacrificing production time.
+            nextPenNavigationTime = Time.unscaledTime + 0.5f;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static int GetPenWorkScore(
+        PenExpansionManager manager,
+        int penIndex)
+    {
+        int availableEggs = 0;
+        var eggs = ChickenEgg.ActiveInstances;
+        for (int index = eggs.Count - 1; index >= 0; index--)
+        {
+            ChickenEgg egg = eggs[index];
+            if (egg != null
+                && !egg.IsHeld
+                && !egg.IsCollected
+                && manager.GetClosestPenIndex(egg.transform.position)
+                    == penIndex)
+            {
+                availableEggs++;
+            }
+        }
+
+        // Robot coverage and earnings are compared first. Eggs are immediately
+        // actionable, while chickens break an exact performance tie toward a
+        // pen that will keep producing.
+        return availableEggs * 1000 + manager.GetChickenCount(penIndex);
     }
 
     private static bool NeedsHigherTierChickens()
@@ -2380,5 +2569,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         vacuumHoldTime = Mathf.Max(0.5f, vacuumHoldTime);
         minimumFeedBags = Mathf.Max(0, minimumFeedBags);
         maximumShopPurchasesPerVisit = Mathf.Max(1, maximumShopPurchasesPerVisit);
+        automatedOwnedPenTarget = Mathf.Max(1, automatedOwnedPenTarget);
+        penNavigationInterval = Mathf.Max(1f, penNavigationInterval);
     }
 }

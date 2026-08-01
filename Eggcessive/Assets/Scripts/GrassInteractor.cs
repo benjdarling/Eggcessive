@@ -15,6 +15,7 @@ public sealed class GrassInteractor : MonoBehaviour
 
     private Vector3 previousPosition;
     private float radiusScale = 1f;
+    private bool chickenOrEggInteractor;
 
     public static IReadOnlyList<GrassInteractor> ActiveInstances => ActiveInteractors;
     public Vector3 Position => transform.position;
@@ -31,6 +32,14 @@ public sealed class GrassInteractor : MonoBehaviour
     public float FlattenStrength => flattenStrength;
     public float VelocityDirectionInfluence => velocityDirectionInfluence;
     public float FalloffPower => falloffPower;
+    public bool IsChickenOrEggInteractor => chickenOrEggInteractor;
+
+    private void Awake()
+    {
+        chickenOrEggInteractor =
+            GetComponentInParent<ChickenController>() != null
+            || GetComponentInParent<ChickenEgg>() != null;
+    }
 
     public void SetRadiusScale(float scale)
     {

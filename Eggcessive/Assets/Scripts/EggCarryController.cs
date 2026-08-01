@@ -116,6 +116,10 @@ public sealed class EggCarryController : MonoBehaviour
     public string CurrentCollectionDetails => GetTierDetails(CurrentCollectionLevel);
     public string NextCollectionDetails => GetTierDetails(NextCollectionLevel);
     public bool HasPendingCollection => vacuumInFlight.Count > 0;
+    public bool HasVacuumIncubatorCapacity =>
+        incubator != null
+        && incubator.isActiveAndEnabled
+        && incubator.AvailableCapacity > vacuumIncubatorInFlight.Count;
     public int BasketEggCount => basketEggCount;
     public bool BasketContainsRareEggs =>
         basketEggTypes.Exists(type => type != ChickenEgg.EggType.Common);
@@ -159,6 +163,7 @@ public sealed class EggCarryController : MonoBehaviour
     private void OnEnable()
     {
         RoundSystem.PhaseChanged += HandleRoundPhaseChanged;
+        EggContainer.FocusedContainerChanged += HandleFocusedContainerChanged;
     }
 
     private void Start()
@@ -166,8 +171,10 @@ public sealed class EggCarryController : MonoBehaviour
         eggContainer = EggContainer.Instance != null
             ? EggContainer.Instance
             : FindFirstObjectByType<EggContainer>(FindObjectsInactive.Include);
-        incubator = FindFirstObjectByType<IncubatorController>(
-            FindObjectsInactive.Include);
+        incubator = PenExpansionManager.Instance != null
+            ? PenExpansionManager.Instance.GetFocusedIncubator()
+            : FindFirstObjectByType<IncubatorController>(
+                FindObjectsInactive.Include);
         ApplyCollectionLevel();
     }
 
@@ -176,9 +183,18 @@ public sealed class EggCarryController : MonoBehaviour
         hoveredHandEgg = null;
         hoveredHandChicken = null;
         RoundSystem.PhaseChanged -= HandleRoundPhaseChanged;
+        EggContainer.FocusedContainerChanged -= HandleFocusedContainerChanged;
         RoundSystem.Instance?.SetVacuumSfxActive(false);
         pickupOutline.Clear();
         ReleaseHandItems();
+    }
+
+    private void HandleFocusedContainerChanged(EggContainer container)
+    {
+        eggContainer = container;
+        incubator = PenExpansionManager.Instance != null
+            ? PenExpansionManager.Instance.GetFocusedIncubator()
+            : incubator;
     }
 
     private void OnDestroy()

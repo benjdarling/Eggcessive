@@ -266,6 +266,14 @@ public static class GameplayHudPrefabSetup
         SetDescendantActive(panel, "Score", false);
         SetDescendantActive(panel, "Incubator Shop", false);
 
+        PenHudController penHud = root.GetComponent<PenHudController>();
+        if (penHud == null)
+        {
+            penHud = root.AddComponent<PenHudController>();
+        }
+
+        ConfigurePenNavigation(panel, font, penHud);
+
         serializedController.FindProperty("handToolButton")
             .objectReferenceValue = handButton;
         serializedController.FindProperty("collectionToolButton")
@@ -286,6 +294,142 @@ public static class GameplayHudPrefabSetup
             .objectReferenceValue = foodIcon;
         serializedController.ApplyModifiedPropertiesWithoutUndo();
         EditorUtility.SetDirty(controller);
+        EditorUtility.SetDirty(penHud);
+    }
+
+    private static void ConfigurePenNavigation(
+        Transform parent,
+        TMP_FontAsset font,
+        PenHudController controller)
+    {
+        DestroyNamedDescendant(parent, "Pen Navigation");
+
+        RectTransform panel = CreateUiObject("Pen Navigation", parent);
+        SetTopRightRect(
+            panel,
+            new Vector2(-24f, -476f),
+            new Vector2(168f, 128f));
+        Image panelImage = panel.gameObject.AddComponent<Image>();
+        panelImage.sprite = GetUiSprite();
+        panelImage.type = Image.Type.Sliced;
+        panelImage.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+        ConfigureOutline(
+            panel.gameObject,
+            new Color(0.12f, 0.07f, 0.035f, 1f),
+            new Vector2(2f, -2f));
+        ConfigureShadow(
+            panel.gameObject,
+            new Color(0f, 0f, 0f, 0.5f),
+            new Vector2(3f, -4f));
+
+        TMP_Text title = CreateText(
+            "Title",
+            panel,
+            font,
+            "PENS",
+            14f,
+            TextAlignmentOptions.Center);
+        title.fontStyle = FontStyles.Bold;
+        title.color = new Color(1f, 0.87f, 0.27f, 1f);
+        RectTransform titleRect = title.rectTransform;
+        titleRect.anchorMin = new Vector2(0f, 1f);
+        titleRect.anchorMax = Vector2.one;
+        titleRect.pivot = new Vector2(0.5f, 1f);
+        titleRect.anchoredPosition = new Vector2(0f, -5f);
+        titleRect.sizeDelta = new Vector2(0f, 22f);
+
+        RectTransform content = CreateUiObject("Buttons", panel);
+        content.anchorMin = new Vector2(0f, 0f);
+        content.anchorMax = new Vector2(1f, 1f);
+        content.offsetMin = new Vector2(6f, 6f);
+        content.offsetMax = new Vector2(-6f, -30f);
+        VerticalLayoutGroup layout =
+            content.gameObject.AddComponent<VerticalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 0, 0);
+        layout.spacing = 6f;
+        layout.childAlignment = TextAnchor.UpperCenter;
+        layout.childControlWidth = true;
+        layout.childControlHeight = false;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = false;
+
+        RectTransform templateRect = CreateUiObject("Pen Button Template", content);
+        templateRect.sizeDelta = new Vector2(0f, 40f);
+        LayoutElement templateLayout =
+            templateRect.gameObject.AddComponent<LayoutElement>();
+        templateLayout.minHeight = 40f;
+        templateLayout.preferredHeight = 40f;
+        templateLayout.flexibleHeight = 0f;
+        Image background = templateRect.gameObject.AddComponent<Image>();
+        background.sprite = GetUiSprite();
+        background.type = Image.Type.Sliced;
+        background.color = new Color(0.22f, 0.34f, 0.25f, 1f);
+        Button button = templateRect.gameObject.AddComponent<Button>();
+        button.targetGraphic = background;
+        button.navigation = new Navigation { mode = Navigation.Mode.None };
+
+        TMP_Text penLabel = CreateText(
+            "Pen Label",
+            templateRect,
+            font,
+            "PEN 1",
+            12f,
+            TextAlignmentOptions.Center);
+        penLabel.fontStyle = FontStyles.Bold;
+        penLabel.rectTransform.anchorMin = new Vector2(0f, 0.38f);
+        penLabel.rectTransform.anchorMax = Vector2.one;
+        penLabel.rectTransform.offsetMin = new Vector2(2f, 0f);
+        penLabel.rectTransform.offsetMax = new Vector2(-2f, -1f);
+
+        TMP_Text purchaseLabel = CreateText(
+            "Purchase Label",
+            templateRect,
+            font,
+            "BUY  $25.00",
+            8f,
+            TextAlignmentOptions.Center);
+        purchaseLabel.color = new Color(1f, 0.89f, 0.46f, 1f);
+        purchaseLabel.rectTransform.anchorMin = Vector2.zero;
+        purchaseLabel.rectTransform.anchorMax = new Vector2(1f, 0.42f);
+        purchaseLabel.rectTransform.offsetMin = new Vector2(2f, 5f);
+        purchaseLabel.rectTransform.offsetMax = new Vector2(-2f, 0f);
+
+        RectTransform progress = CreateUiObject("Savings Progress", templateRect);
+        progress.anchorMin = new Vector2(0f, 0f);
+        progress.anchorMax = new Vector2(1f, 0f);
+        progress.pivot = new Vector2(0.5f, 0f);
+        progress.anchoredPosition = new Vector2(0f, 2f);
+        progress.sizeDelta = new Vector2(-6f, 3f);
+        Image progressTrack = progress.gameObject.AddComponent<Image>();
+        progressTrack.color = new Color(0.04f, 0.04f, 0.03f, 0.9f);
+        progressTrack.raycastTarget = false;
+
+        RectTransform fillRect = CreateUiObject("Fill", progress);
+        Stretch(fillRect, 0f);
+        Image fill = fillRect.gameObject.AddComponent<Image>();
+        fill.color = new Color(1f, 0.72f, 0.12f, 1f);
+        fill.type = Image.Type.Filled;
+        fill.fillMethod = Image.FillMethod.Horizontal;
+        fill.fillOrigin = (int)Image.OriginHorizontal.Left;
+        fill.fillAmount = 0f;
+        fill.raycastTarget = false;
+
+        PenButtonView view = templateRect.gameObject.AddComponent<PenButtonView>();
+        SerializedObject serializedView = new SerializedObject(view);
+        serializedView.FindProperty("button").objectReferenceValue = button;
+        serializedView.FindProperty("background").objectReferenceValue = background;
+        serializedView.FindProperty("penLabel").objectReferenceValue = penLabel;
+        serializedView.FindProperty("purchaseLabel").objectReferenceValue = purchaseLabel;
+        serializedView.FindProperty("progressRoot").objectReferenceValue = progress.gameObject;
+        serializedView.FindProperty("progressFill").objectReferenceValue = fill;
+        serializedView.ApplyModifiedPropertiesWithoutUndo();
+        templateRect.gameObject.SetActive(false);
+
+        SerializedObject serializedController = new SerializedObject(controller);
+        serializedController.FindProperty("buttonContent").objectReferenceValue = content;
+        serializedController.FindProperty("buttonTemplate").objectReferenceValue = view;
+        serializedController.ApplyModifiedPropertiesWithoutUndo();
+        SetLayerRecursively(panel.gameObject, 5);
     }
 
     private static TMP_Text CreateStatRow(
@@ -686,8 +830,10 @@ public static class GameplayHudPrefabSetup
             && FindDescendant(
                 toolPrefab.transform,
                 "Hand Tool Button") == null;
+        bool pensNeedMigration = toolPrefab != null
+            && FindDescendant(toolPrefab.transform, "Pen Navigation") == null;
 
-        if (roundNeedsMigration || toolsNeedMigration)
+        if (roundNeedsMigration || toolsNeedMigration || pensNeedMigration)
         {
             RebuildGameplayHudPrefabs();
         }

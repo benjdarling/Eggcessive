@@ -340,8 +340,7 @@ public sealed class CrosshatcherController : MonoBehaviour
 
     private void CompleteCrosshatch()
     {
-        if (ChickenController.ActiveInstances.Count
-            >= ChickenController.MaximumChickenCount)
+        if (PenExpansionManager.IsChickenCapReachedAt(transform.position))
         {
             // Keep the completed output pending until a slot is available. The
             // incubator can fill the last slot while this machine is processing.

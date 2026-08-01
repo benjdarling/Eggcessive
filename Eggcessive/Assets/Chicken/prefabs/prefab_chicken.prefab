@@ -273,6 +273,8 @@ MonoBehaviour:
   wanderRadius: 1
   navMeshSampleDistance: 0.75
   destinationAttempts: 12
+  wanderDestinationCandidates: 4
+  wanderCrowdRadius: 0.75
   moveSpeed: 0.6
   acceleration: 2
   angularSpeed: 360
@@ -282,6 +284,7 @@ MonoBehaviour:
   seekFoodBelowScore: 60
   returnToWanderingScore: 90
   foodSearchInterval: 1
+  foodSearchRadius: 1.5
   eatingDistance: 0.2
   foodPerBite: 10
   secondsPerBite: 0.65
@@ -292,6 +295,11 @@ MonoBehaviour:
   fullLeanTurnRate: 180
   leanSmoothTime: 0.08
   leanStrength: 1
+  maximumAiUpdatesPerTick: 64
+  aiSchedulerUpdateRateHz: 20
+  enableFarImpostor: 0
+  farImpostorMeshLod: 3
+  maximumEggPushChecksPerFixedUpdate: 8
   heldAttachBoneName: c_skull_01
   heldBlendShapeName: held
   heldBlendShapeWeight: 100

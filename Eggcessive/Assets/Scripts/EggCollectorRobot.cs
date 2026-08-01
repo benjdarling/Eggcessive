@@ -6,6 +6,8 @@ using UnityEngine.AI;
 [RequireComponent(typeof(NavMeshAgent))]
 public sealed class EggCollectorRobot : MonoBehaviour
 {
+    private static readonly List<EggCollectorRobot> ActiveRobots =
+        new List<EggCollectorRobot>();
     private const int MaximumReachabilityCandidates = 12;
     private const float DestinationRefreshInterval = 0.1f;
     private const float DestinationMoveThreshold = 0.05f;
@@ -44,6 +46,15 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     public int StoredEggs => storedEggs;
     public int Capacity => capacity;
+    public EggContainer TargetContainer => eggContainer;
+    public static IReadOnlyList<EggCollectorRobot> ActiveInstances =>
+        ActiveRobots;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        ActiveRobots.Clear();
+    }
 
     private void Awake()
     {
@@ -61,6 +72,19 @@ public sealed class EggCollectorRobot : MonoBehaviour
             obstructionMask &= ~(1 << eggLayer);
         }
         RefreshVisibleEggs();
+    }
+
+    private void OnEnable()
+    {
+        if (!ActiveRobots.Contains(this))
+        {
+            ActiveRobots.Add(this);
+        }
+    }
+
+    private void OnDisable()
+    {
+        ActiveRobots.Remove(this);
     }
 
     public void Configure(

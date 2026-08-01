@@ -59,6 +59,7 @@ public sealed class ChickenEgg : MonoBehaviour
     private bool usingFarImpostor;
     private int nextFarImpostorCheckFrame;
     private static Camera impostorCamera;
+    private bool penVisualsEnabled = true;
 
     public static IReadOnlyList<ChickenEgg> ActiveInstances => ActiveEggs;
     public bool IsHeld { get; private set; }
@@ -178,6 +179,46 @@ public sealed class ChickenEgg : MonoBehaviour
     private void Update()
     {
         UpdateFarImpostor(false);
+    }
+
+    public void SetPenVisualsEnabled(bool enabled)
+    {
+        if (penVisualsEnabled == enabled)
+        {
+            return;
+        }
+
+        penVisualsEnabled = enabled;
+        if (!enabled)
+        {
+            if (farImpostorRenderer != null)
+            {
+                farImpostorRenderer.enabled = false;
+            }
+
+            for (int index = 0; index < detailedRenderers.Length; index++)
+            {
+                if (detailedRenderers[index] != null)
+                {
+                    detailedRenderers[index].enabled = false;
+                }
+            }
+
+            for (int index = 0; index < detailedParticles.Length; index++)
+            {
+                if (detailedParticles[index] != null)
+                {
+                    detailedParticles[index].Stop(
+                        true,
+                        ParticleSystemStopBehavior.StopEmittingAndClear);
+                }
+            }
+
+            return;
+        }
+
+        SetFarImpostorActive(false, true);
+        UpdateFarImpostor(true);
     }
 
     public bool BeginCarry()
@@ -467,6 +508,11 @@ public sealed class ChickenEgg : MonoBehaviour
 
     private void UpdateFarImpostor(bool force)
     {
+        if (!penVisualsEnabled)
+        {
+            return;
+        }
+
         if (farImpostorRenderer == null)
         {
             return;
@@ -554,6 +600,11 @@ public sealed class ChickenEgg : MonoBehaviour
 
     private void SetFarImpostorActive(bool active, bool force)
     {
+        if (!penVisualsEnabled)
+        {
+            return;
+        }
+
         if (!force && usingFarImpostor == active)
         {
             return;

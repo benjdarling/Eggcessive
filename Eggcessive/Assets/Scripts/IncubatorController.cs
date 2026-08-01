@@ -61,7 +61,7 @@ public sealed class IncubatorController : MonoBehaviour
     public int StoredEggs => storedEggs;
     public int Capacity => GetCapacity(capacityLevel);
     public bool IsOffline =>
-        ChickenController.ActiveInstances.Count >= ChickenController.MaximumChickenCount;
+        PenExpansionManager.IsChickenCapReachedAt(transform.position);
     public int AvailableCapacity =>
         IsOffline ? 0 : Mathf.Max(0, Capacity - storedEggs);
     public float SecondsPerEgg => GetProductionTime(speedLevel);
