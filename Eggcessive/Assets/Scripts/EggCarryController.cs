@@ -17,7 +17,7 @@ public sealed class EggCarryController : MonoBehaviour
 
     private static readonly int[] UpgradeCosts =
     {
-        800, 1800, 3500, 6500, 11000, 17500, 27500, 45000, 75000
+        800, 1800, 4200, 8000, 9000, 17500, 27500, 45000, 75000, 120000
     };
 
     private static readonly string[] TierNames =
@@ -26,6 +26,7 @@ public sealed class EggCarryController : MonoBehaviour
         "Basket I",
         "Basket II",
         "Basket III",
+        "Basket IV",
         "Vacuum I",
         "Vacuum II",
         "Vacuum III",
@@ -34,12 +35,18 @@ public sealed class EggCarryController : MonoBehaviour
         "Smart Collector Bot"
     };
 
-    private static readonly int[] BasketCapacities = { 3, 4, 5 };
+    private static readonly int[] BasketCapacities = { 3, 4, 5, 6 };
     private static readonly float[] VacuumRanges = { 0.675f, 0.95f, 1.3f };
     private static readonly float[] VacuumPowers = { 0.5f, 0.825f, 1.25f };
     private static readonly float[] VacuumConeAngles = { 34f, 43f, 52f };
-    private static readonly float[] RobotSpeeds = { 2.4f, 3.4f, 4.6f };
-    private static readonly int[] RobotCapacities = { 6, 12, 24 };
+    private static readonly float[] RobotSpeeds =
+    {
+        2.4f, 4f, 6f, 8f, 10f, 12f
+    };
+    private static readonly int[] RobotCapacities =
+    {
+        6, 12, 18, 24, 32, 40
+    };
 
     [Header("Pickup")]
     [SerializeField, Min(0.1f)] private float pickupDistance = 100f;
@@ -54,13 +61,13 @@ public sealed class EggCarryController : MonoBehaviour
     [SerializeField] private PlayerTool selectedTool = PlayerTool.Hand;
 
     [Header("Collection Progression")]
-    [SerializeField, Range(0, 9)] private int collectionLevel;
-    [SerializeField, Range(0, 3)] private int basketUpgradeLevel;
+    [SerializeField, Range(0, MaximumCollectionLevel)] private int collectionLevel;
+    [SerializeField, Range(0, MaximumBasketLevel)] private int basketUpgradeLevel;
     [SerializeField, Range(0, 3)] private int vacuumPowerLevel;
     [SerializeField, Range(0, 3)] private int vacuumRangeLevel;
     [SerializeField] private bool robotUnlocked;
-    [SerializeField, Range(0, 3)] private int robotSpeedLevel;
-    [SerializeField, Range(0, 3)] private int robotCapacityLevel;
+    [SerializeField, Range(0, MaximumRobotLevel)] private int robotSpeedLevel;
+    [SerializeField, Range(0, MaximumRobotLevel)] private int robotCapacityLevel;
     [SerializeField, Range(0, 3)] private int robotSmartnessLevel;
     [SerializeField] private GameObject[] basketPrefabs = null;
     [SerializeField] private GameObject[] vacuumPrefabs = null;
@@ -98,7 +105,9 @@ public sealed class EggCarryController : MonoBehaviour
         new HashSet<ChickenEgg>();
     private bool automationPreservesRareEggs;
 
-    public const int MaximumCollectionLevel = 9;
+    public const int MaximumBasketLevel = 4;
+    public const int MaximumCollectionLevel = 10;
+    public const int MaximumRobotLevel = 6;
     public static EggCarryController Instance { get; private set; }
     public static event Action CollectionLevelChanged;
     public static event Action ToolSelectionChanged;
@@ -820,8 +829,13 @@ public sealed class EggCarryController : MonoBehaviour
         {
             activeCursorTool = InstantiateTierPrefab(
                 basketPrefabs,
-                basketUpgradeLevel - 1,
+                basketPrefabs != null && basketPrefabs.Length > 0
+                    ? Mathf.Min(
+                        basketUpgradeLevel - 1,
+                        basketPrefabs.Length - 1)
+                    : basketUpgradeLevel - 1,
                 "basket");
+            EnsureBasketEggSlotCapacity(BasketCapacity);
             CacheToolEggSlots();
             RefreshToolEggSlots();
         }
@@ -834,11 +848,6 @@ public sealed class EggCarryController : MonoBehaviour
                     0,
                     2),
                 "vacuum");
-        }
-
-        if (IsRobotMode)
-        {
-            SpawnRobot();
         }
 
         bool shouldShow = RoundSystem.Instance != null
@@ -871,17 +880,20 @@ public sealed class EggCarryController : MonoBehaviour
 
     private void SpawnRobot()
     {
+        if (robotPrefabs == null || robotPrefabs.Length == 0)
+        {
+            Debug.LogError("Missing authored robot prefabs.", this);
+            return;
+        }
+
         int index = Mathf.Clamp(
             Mathf.Max(
                 Mathf.Max(robotSpeedLevel, robotCapacityLevel),
                 robotSmartnessLevel) - 1,
             0,
-            2);
+            robotPrefabs.Length - 1);
 
-        if (robotPrefabs == null
-            || index < 0
-            || index >= robotPrefabs.Length
-            || robotPrefabs[index] == null)
+        if (robotPrefabs[index] == null)
         {
             Debug.LogError($"Missing authored robot tier {index + 1} prefab.", this);
             return;
@@ -905,9 +917,74 @@ public sealed class EggCarryController : MonoBehaviour
         activeRobot.Configure(
             eggContainer,
             incubator,
-            RobotSpeeds[Mathf.Clamp(robotSpeedLevel - 1, 0, 2)],
-            RobotCapacities[Mathf.Clamp(robotCapacityLevel - 1, 0, 2)],
+            RobotSpeeds[Mathf.Clamp(
+                robotSpeedLevel - 1,
+                0,
+                MaximumRobotLevel - 1)],
+            RobotCapacities[Mathf.Clamp(
+                robotCapacityLevel - 1,
+                0,
+                MaximumRobotLevel - 1)],
             robotSmartnessLevel);
+    }
+
+    public EggCollectorRobot CreatePenRobot(
+        EggContainer targetContainer,
+        IncubatorController targetIncubator,
+        int speedLevel,
+        int capacityLevel,
+        int smartnessLevel,
+        Transform parent)
+    {
+        int resolvedSpeed = Mathf.Clamp(speedLevel, 1, MaximumRobotLevel);
+        int resolvedCapacity = Mathf.Clamp(capacityLevel, 1, MaximumRobotLevel);
+        int resolvedSmartness = Mathf.Clamp(smartnessLevel, 0, 3);
+        if (robotPrefabs == null || robotPrefabs.Length == 0)
+        {
+            Debug.LogError("Missing authored robot prefabs.", this);
+            return null;
+        }
+
+        int prefabIndex = Mathf.Clamp(
+            Mathf.Max(
+                Mathf.Max(resolvedSpeed, resolvedCapacity),
+                resolvedSmartness) - 1,
+            0,
+            robotPrefabs.Length - 1);
+        if (robotPrefabs[prefabIndex] == null)
+        {
+            Debug.LogError(
+                $"Missing authored robot tier {prefabIndex + 1} prefab.",
+                this);
+            return null;
+        }
+
+        Vector3 spawnPosition = targetContainer != null
+            ? targetContainer.DepositPosition + Vector3.right * 0.45f
+            : Vector3.zero;
+        GameObject robotObject = Instantiate(
+            robotPrefabs[prefabIndex],
+            spawnPosition,
+            Quaternion.identity,
+            parent);
+        robotObject.name = $"{robotPrefabs[prefabIndex].name} (Pen Robot)";
+        EggCollectorRobot robot = robotObject.GetComponent<EggCollectorRobot>();
+        if (robot == null)
+        {
+            Debug.LogError(
+                $"{robotPrefabs[prefabIndex].name} needs an EggCollectorRobot.",
+                robotObject);
+            Destroy(robotObject);
+            return null;
+        }
+
+        robot.Configure(
+            targetContainer,
+            targetIncubator,
+            RobotSpeeds[resolvedSpeed - 1],
+            RobotCapacities[resolvedCapacity - 1],
+            resolvedSmartness);
+        return robot;
     }
 
     private void UpdateCursorGround(Vector2 pointerPosition)
@@ -1305,7 +1382,46 @@ public sealed class EggCarryController : MonoBehaviour
             }
         }
 
+        slots.Sort((left, right) => string.CompareOrdinal(left.name, right.name));
         activeToolEggSlots = slots.ToArray();
+    }
+
+    private void EnsureBasketEggSlotCapacity(int desiredCapacity)
+    {
+        if (activeCursorTool == null || desiredCapacity <= 0)
+        {
+            return;
+        }
+
+        var slots = new List<Transform>();
+        foreach (Transform child in activeCursorTool.GetComponentsInChildren<Transform>(true))
+        {
+            if (child.name.StartsWith("Egg Slot", StringComparison.Ordinal))
+            {
+                slots.Add(child);
+            }
+        }
+
+        if (slots.Count == 0)
+        {
+            return;
+        }
+
+        slots.Sort((left, right) => string.CompareOrdinal(left.name, right.name));
+        while (slots.Count < desiredCapacity)
+        {
+            Transform source = slots[slots.Count - 1];
+            Transform slot = Instantiate(source.gameObject, source.parent).transform;
+            slot.name = $"Egg Slot {slots.Count + 1}";
+            // Basket IV reuses the largest authored basket and places its sixth
+            // visible egg in the centre, slightly above the outer ring.
+            slot.localPosition = new Vector3(
+                0f,
+                source.localPosition.y + 0.05f,
+                0f);
+            slot.gameObject.SetActive(false);
+            slots.Add(slot);
+        }
     }
 
     private void RefreshToolEggSlots()
@@ -1323,7 +1439,9 @@ public sealed class EggCarryController : MonoBehaviour
 
     public void UpgradeBasket()
     {
-        basketUpgradeLevel = Mathf.Min(3, basketUpgradeLevel + 1);
+        basketUpgradeLevel = Mathf.Min(
+            MaximumBasketLevel,
+            basketUpgradeLevel + 1);
         selectedTool = PlayerTool.Collection;
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
@@ -1356,14 +1474,18 @@ public sealed class EggCarryController : MonoBehaviour
 
     public void UpgradeRobotSpeed()
     {
-        robotSpeedLevel = Mathf.Min(3, robotSpeedLevel + 1);
+        robotSpeedLevel = Mathf.Min(
+            MaximumRobotLevel,
+            robotSpeedLevel + 1);
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
 
     public void UpgradeRobotCapacity()
     {
-        robotCapacityLevel = Mathf.Min(3, robotCapacityLevel + 1);
+        robotCapacityLevel = Mathf.Min(
+            MaximumRobotLevel,
+            robotCapacityLevel + 1);
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
@@ -1379,7 +1501,7 @@ public sealed class EggCarryController : MonoBehaviour
     {
         if (HasRobot)
         {
-            return 7 + Mathf.Clamp(
+            return 8 + Mathf.Clamp(
                 Mathf.Max(robotSpeedLevel, robotCapacityLevel) - 1,
                 0,
                 2);
@@ -1387,13 +1509,16 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (HasVacuum)
         {
-            return 4 + Mathf.Clamp(
+            return 5 + Mathf.Clamp(
                 Mathf.Max(vacuumPowerLevel, vacuumRangeLevel) - 1,
                 0,
                 2);
         }
 
-        return Mathf.Clamp(basketUpgradeLevel, 0, 3);
+        return Mathf.Clamp(
+            basketUpgradeLevel,
+            0,
+            MaximumBasketLevel);
     }
 
     private void MigrateLegacyCollectionLevel()
@@ -1411,20 +1536,23 @@ public sealed class EggCarryController : MonoBehaviour
     private void ApplyLegacyCollectionLevel(int level)
     {
         level = Mathf.Clamp(level, 0, MaximumCollectionLevel);
-        basketUpgradeLevel = Mathf.Clamp(level, 0, 3);
+        basketUpgradeLevel = Mathf.Clamp(
+            level,
+            0,
+            MaximumBasketLevel);
 
-        if (level >= 4)
+        if (level >= 5)
         {
-            vacuumPowerLevel = Mathf.Clamp(level - 3, 1, 3);
+            vacuumPowerLevel = Mathf.Clamp(level - 4, 1, 3);
             vacuumRangeLevel = vacuumPowerLevel;
         }
 
-        if (level >= 7)
+        if (level >= 8)
         {
             robotUnlocked = true;
-            robotSpeedLevel = Mathf.Clamp(level - 6, 1, 3);
+            robotSpeedLevel = Mathf.Clamp(level - 7, 1, 3);
             robotCapacityLevel = robotSpeedLevel;
-            robotSmartnessLevel = level >= 9 ? 1 : 0;
+            robotSmartnessLevel = level >= 10 ? 1 : 0;
         }
     }
 
@@ -1437,19 +1565,19 @@ public sealed class EggCarryController : MonoBehaviour
             return "Pick up and carry one egg at a time";
         }
 
-        if (level <= 3)
+        if (level <= MaximumBasketLevel)
         {
             return $"CLICK EGGS > CONTAINER / INCUBATOR  |  CAP {BasketCapacities[level - 1]}";
         }
 
-        if (level <= 6)
+        if (level <= 7)
         {
-            int index = level - 4;
+            int index = level - 5;
             return $"LMB CASH / RMB INCUBATE  |  {VacuumRanges[index]:0.##}m  |  " +
                 $"{VacuumPowers[index]:0.##}x POWER";
         }
 
-        int robotIndex = level - 7;
+        int robotIndex = level - 8;
         return (robotIndex == 2 ? "SMART INCUBATOR  |  " : "AUTOMATIC  |  ") +
             $"CAP {RobotCapacities[robotIndex]}  |  " +
             $"{RobotSpeeds[robotIndex]:0.##} SPEED";
@@ -1467,11 +1595,20 @@ public sealed class EggCarryController : MonoBehaviour
         carryHeight = Mathf.Max(0f, carryHeight);
         followSpeed = Mathf.Max(0.01f, followSpeed);
         collectionLevel = Mathf.Clamp(collectionLevel, 0, MaximumCollectionLevel);
-        basketUpgradeLevel = Mathf.Clamp(basketUpgradeLevel, 0, 3);
+        basketUpgradeLevel = Mathf.Clamp(
+            basketUpgradeLevel,
+            0,
+            MaximumBasketLevel);
         vacuumPowerLevel = Mathf.Clamp(vacuumPowerLevel, 0, 3);
         vacuumRangeLevel = Mathf.Clamp(vacuumRangeLevel, 0, 3);
-        robotSpeedLevel = Mathf.Clamp(robotSpeedLevel, 0, 3);
-        robotCapacityLevel = Mathf.Clamp(robotCapacityLevel, 0, 3);
+        robotSpeedLevel = Mathf.Clamp(
+            robotSpeedLevel,
+            0,
+            MaximumRobotLevel);
+        robotCapacityLevel = Mathf.Clamp(
+            robotCapacityLevel,
+            0,
+            MaximumRobotLevel);
         robotSmartnessLevel = Mathf.Clamp(robotSmartnessLevel, 0, 3);
         toolHeight = Mathf.Max(0f, toolHeight);
         toolSmoothTime = Mathf.Max(0.01f, toolSmoothTime);

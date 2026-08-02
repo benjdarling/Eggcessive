@@ -78,6 +78,19 @@ public sealed class RoundSystem : MonoBehaviour
     private float lateTruckTargetIncreasePerRound = 3f;
     [SerializeField, Min(1)] private int maximumTruckEggTarget = 150;
 
+    [Header("Round Cash Quota")]
+    [Tooltip(
+        "Cash that must be earned during the active round from egg sales and " +
+        "truck bonuses. Spending and carried balance do not affect progress.")]
+    [SerializeField, Min(100)] private int baseRoundCashQuotaCents = 800;
+    [SerializeField, Range(1f, 2f)] private float earlyCashQuotaGrowth = 1.3f;
+    [SerializeField, Min(1)] private int earlyCashQuotaEndRound = 10;
+    [SerializeField, Range(1f, 2f)] private float midCashQuotaGrowth = 1.24f;
+    [SerializeField, Min(2)] private int midCashQuotaEndRound = 25;
+    [SerializeField, Range(1f, 2f)] private float lateCashQuotaGrowth = 1.18f;
+    [SerializeField, Min(100)]
+    private int maximumRoundCashQuotaCents = 2000000000;
+
     [Header("Truck")]
     [SerializeField, Range(0.1f, 0.5f)] private float truckVisualScale = 0.22f;
     [SerializeField, Min(0.1f)] private float truckDepartureDuration = 2.5f;
@@ -251,6 +264,7 @@ public sealed class RoundSystem : MonoBehaviour
     private int roundEggsIncubated;
     private int roundChickensHatched;
     private int finalChickenCount;
+    private int roundCashQuotaCents;
     private int roundEggTarget;
     private int eggsTowardTruck;
     private int trucksFilled;
@@ -284,6 +298,8 @@ public sealed class RoundSystem : MonoBehaviour
     private long shopDisplayedBalanceCents;
     private Tweener shopBalanceTween;
     private bool skipResultsAnimation;
+    private bool roundPassed;
+    private bool retryCurrentRound;
     private bool configured;
     private readonly List<Button> uiClickButtons = new List<Button>();
     private AudioSource buttonClickAudioSource;
@@ -310,11 +326,19 @@ public sealed class RoundSystem : MonoBehaviour
     private int pendingCoinAudioArrivals;
     private int pendingCashAudioArrivals;
     private float nextRewardLandingSoundTime;
+    private GameObject quotaDisplay;
+    private TMP_Text quotaTitleText;
+    private TMP_Text quotaValueText;
+    private Image quotaProgressFill;
+    private TMP_Text resultsSubtitleText;
+    private TMP_Text resultsQuotaLabelText;
 
     public static RoundSystem Instance { get; private set; }
     public RoundPhase Phase { get; private set; } = RoundPhase.Intermission;
     public float TimeRemaining => roundTimeRemaining;
     public int RoundNumber => roundNumber;
+    public int CashQuotaCents => roundCashQuotaCents;
+    public int CashQuotaProgressCents => roundCashMade;
     public int EggTarget => roundEggTarget;
     public int EggsTowardTruck => eggsTowardTruck;
     public int TrucksFilled => trucksFilled;
@@ -331,6 +355,9 @@ public sealed class RoundSystem : MonoBehaviour
     public bool IsRoundAcceptingEggs =>
         Phase == RoundPhase.InProgress || Phase == RoundPhase.Settling;
     public bool IsSuppliesShopOpen => Phase == RoundPhase.SuppliesShop;
+    public bool DidPassRound => roundPassed;
+    public bool IsCashQuotaMet => roundCashQuotaCents > 0
+        && roundCashMade >= roundCashQuotaCents;
 
     public static event Action<RoundPhase> PhaseChanged;
     public static event Action<int> RoundStarted;
@@ -401,6 +428,8 @@ public sealed class RoundSystem : MonoBehaviour
         gameplayHudCanvas = gameplayHud != null
             ? gameplayHud.GetComponent<Canvas>()
             : null;
+        ResolveResultsPresentationReferences();
+        EnsureQuotaHud();
         EggContainer.EggCollectedFromContainer += HandleEggCollected;
         ChickenController.EggLaid += HandleEggLaid;
         IncubatorController.ChickenHatched += HandleChickenHatched;
@@ -917,7 +946,13 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         PlaceTruckAt(truckStop);
-        roundNumber++;
+        bool isRetry = retryCurrentRound;
+        if (!isRetry)
+        {
+            roundNumber++;
+        }
+        retryCurrentRound = false;
+        roundPassed = false;
         roundTimeRemaining = roundDuration;
         roundElapsed = 0f;
         roundEggsCollected = 0;
@@ -925,7 +960,8 @@ public sealed class RoundSystem : MonoBehaviour
         roundEggsLaid = 0;
         roundEggsIncubated = 0;
         roundChickensHatched = 0;
-        roundEggTarget = CalculateEggTarget(roundNumber);
+        roundCashQuotaCents = CalculateRoundCashQuotaCents(roundNumber);
+        roundEggTarget = CalculateTruckEggTarget(roundNumber);
         eggsTowardTruck = 0;
         trucksFilled = 0;
         roundTruckCashMade = 0;
@@ -936,6 +972,7 @@ public sealed class RoundSystem : MonoBehaviour
         liveStatsDisplay.SetActive(true);
         RefreshTimer();
         RefreshLiveStats();
+        RefreshQuotaHud();
         RoundStarted?.Invoke(roundNumber);
 
         countdownText.text = "GO!";
@@ -1126,7 +1163,12 @@ public sealed class RoundSystem : MonoBehaviour
         SetPhase(RoundPhase.Intermission);
         intermissionTitle.text = roundNumber == 0
             ? "FIRST DELIVERY"
-            : $"ROUND {roundNumber + 1}";
+            : retryCurrentRound
+                ? $"RETRY ROUND {roundNumber}"
+                : $"ROUND {roundNumber + 1}";
+        SetButtonText(
+            readyButton,
+            retryCurrentRound ? "RETRY ROUND" : "READY");
         readyButton.interactable = true;
         RectTransform readyRect = readyButton.GetComponent<RectTransform>();
         bool canReturnToShop = roundNumber > 0;
@@ -1142,8 +1184,27 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void ShowResults()
     {
+        roundPassed = roundCashMade >= roundCashQuotaCents;
+        retryCurrentRound = !roundPassed;
         SetPhase(RoundPhase.Results);
-        resultsTitleText.text = $"ROUND {roundNumber} COMPLETE";
+        resultsTitleText.text = roundPassed
+            ? $"ROUND {roundNumber} PASSED"
+            : $"ROUND {roundNumber} FAILED";
+        resultsTitleText.color = roundPassed
+            ? new Color(0.42f, 0.94f, 0.5f)
+            : new Color(1f, 0.34f, 0.22f);
+        if (resultsSubtitleText != null)
+        {
+            resultsSubtitleText.text = roundPassed
+                ? $"QUOTA MET  {FormatMoney(roundCashMade)} / {FormatMoney(roundCashQuotaCents)}"
+                : $"QUOTA MISSED  {FormatMoney(roundCashMade)} / {FormatMoney(roundCashQuotaCents)}";
+            resultsSubtitleText.color = roundPassed
+                ? new Color(0.66f, 0.9f, 0.68f)
+                : new Color(1f, 0.62f, 0.42f);
+        }
+        SetButtonText(
+            resultsContinueButton,
+            roundPassed ? "NEXT ROUND" : "RETRY");
         intermissionScreen.SetActive(false);
         suppliesShopScreen.SetActive(false);
         resultsScreen.SetActive(true);
@@ -1199,10 +1260,8 @@ public sealed class RoundSystem : MonoBehaviour
             value => Mathf.RoundToInt(value).ToString());
         yield return CountResult(
             resultsQuotaText,
-            trucksFilled,
-            value => Mathf.RoundToInt(value).ToString());
-        resultsQuotaText.text =
-            $"{trucksFilled}  <size=16><color=#86A382>{FormatMoney(roundTruckCashMade)}</color></size>";
+            roundCashMade,
+            value => $"{FormatMoney(Mathf.RoundToInt(value))} / {FormatMoney(roundCashQuotaCents)}");
 
         resultsAnimation = null;
         resultsShopButton.gameObject.SetActive(true);
@@ -1546,6 +1605,291 @@ public sealed class RoundSystem : MonoBehaviour
         {
             gameplayHudCanvas.enabled = visible;
         }
+
+        if (quotaDisplay != null)
+        {
+            quotaDisplay.SetActive(visible);
+        }
+    }
+
+    private void ResolveResultsPresentationReferences()
+    {
+        if (resultsScreen == null)
+        {
+            return;
+        }
+
+        TMP_Text[] texts = resultsScreen.GetComponentsInChildren<TMP_Text>(true);
+        for (int index = 0; index < texts.Length; index++)
+        {
+            TMP_Text text = texts[index];
+            if (text == null)
+            {
+                continue;
+            }
+
+            if (text.name == "Results Subtitle")
+            {
+                resultsSubtitleText = text;
+            }
+            else if (text.name == "Cash Quota Label"
+                || text.name == "Truck Quota Label"
+                || text.name == "Egg Quota Label")
+            {
+                resultsQuotaLabelText = text;
+                resultsQuotaLabelText.text = "CASH QUOTA";
+            }
+        }
+    }
+
+    private void EnsureQuotaHud()
+    {
+        if (quotaDisplay != null || roundCanvasRect == null)
+        {
+            return;
+        }
+
+        quotaDisplay = new GameObject(
+            "Round Cash Quota",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image),
+            typeof(Outline),
+            typeof(Shadow));
+        quotaDisplay.layer = roundCanvasRect.gameObject.layer;
+        quotaDisplay.transform.SetParent(roundCanvasRect, false);
+        RectTransform root = quotaDisplay.GetComponent<RectTransform>();
+        root.anchorMin = new Vector2(0f, 1f);
+        root.anchorMax = new Vector2(0f, 1f);
+        root.pivot = new Vector2(0f, 1f);
+        root.anchoredPosition = new Vector2(24f, -24f);
+        root.sizeDelta = new Vector2(260f, 84f);
+
+        CopyQuotaPanelStyle(quotaDisplay);
+        TMP_FontAsset font = GetHudFont();
+        quotaTitleText = CreateRuntimeHudText(
+            "Quota Title",
+            quotaDisplay.transform,
+            font,
+            13f,
+            TextAlignmentOptions.Center);
+        SetRuntimeHudRect(
+            quotaTitleText.rectTransform,
+            new Vector2(10f, -5f),
+            new Vector2(240f, 20f));
+        quotaTitleText.text = "CASH QUOTA";
+        quotaTitleText.fontStyle = FontStyles.Bold;
+        quotaTitleText.color = Color.white;
+
+        quotaValueText = CreateRuntimeHudText(
+            "Quota Value",
+            quotaDisplay.transform,
+            font,
+            26f,
+            TextAlignmentOptions.Center);
+        SetRuntimeHudRect(
+            quotaValueText.rectTransform,
+            new Vector2(10f, -24f),
+            new Vector2(240f, 38f));
+        quotaValueText.fontStyle = FontStyles.Bold;
+
+        GameObject progressBackground = new GameObject(
+            "Quota Progress",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image));
+        progressBackground.layer = quotaDisplay.layer;
+        progressBackground.transform.SetParent(quotaDisplay.transform, false);
+        RectTransform progressRect =
+            progressBackground.GetComponent<RectTransform>();
+        SetRuntimeHudRect(
+            progressRect,
+            new Vector2(12f, -70f),
+            new Vector2(236f, 8f));
+        Image progressBackImage = progressBackground.GetComponent<Image>();
+        progressBackImage.color = new Color(0.035f, 0.035f, 0.025f, 1f);
+        progressBackImage.raycastTarget = false;
+
+        GameObject fill = new GameObject(
+            "Fill",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image));
+        fill.layer = quotaDisplay.layer;
+        fill.transform.SetParent(progressBackground.transform, false);
+        quotaProgressFill = fill.GetComponent<Image>();
+        quotaProgressFill.color = new Color(1f, 0.68f, 0.08f, 1f);
+        quotaProgressFill.raycastTarget = false;
+        SetQuotaProgressFill(0f);
+        quotaDisplay.SetActive(false);
+    }
+
+    private void CopyQuotaPanelStyle(GameObject target)
+    {
+        Image sourceImage = liveStatsDisplay != null
+            ? liveStatsDisplay.GetComponent<Image>()
+            : null;
+        Image targetImage = target.GetComponent<Image>();
+        if (sourceImage != null)
+        {
+            targetImage.sprite = sourceImage.sprite;
+            targetImage.type = sourceImage.type;
+            targetImage.material = sourceImage.material;
+            targetImage.color = sourceImage.color;
+        }
+        else
+        {
+            targetImage.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+        }
+        targetImage.raycastTarget = false;
+
+        Outline sourceOutline = liveStatsDisplay != null
+            ? liveStatsDisplay.GetComponent<Outline>()
+            : null;
+        Outline targetOutline = target.GetComponent<Outline>();
+        targetOutline.effectColor = sourceOutline != null
+            ? sourceOutline.effectColor
+            : new Color(0.12f, 0.07f, 0.035f, 1f);
+        targetOutline.effectDistance = sourceOutline != null
+            ? sourceOutline.effectDistance
+            : new Vector2(2f, -2f);
+        targetOutline.useGraphicAlpha = sourceOutline != null
+            && sourceOutline.useGraphicAlpha;
+
+        Shadow sourceShadow = null;
+        if (liveStatsDisplay != null)
+        {
+            Shadow[] shadows = liveStatsDisplay.GetComponents<Shadow>();
+            for (int index = 0; index < shadows.Length; index++)
+            {
+                if (shadows[index] != null
+                    && shadows[index].GetType() == typeof(Shadow))
+                {
+                    sourceShadow = shadows[index];
+                    break;
+                }
+            }
+        }
+
+        Shadow targetShadow = null;
+        Shadow[] targetShadows = target.GetComponents<Shadow>();
+        for (int index = 0; index < targetShadows.Length; index++)
+        {
+            if (targetShadows[index] != null
+                && targetShadows[index].GetType() == typeof(Shadow))
+            {
+                targetShadow = targetShadows[index];
+                break;
+            }
+        }
+        if (targetShadow == null)
+        {
+            targetShadow = target.AddComponent<Shadow>();
+        }
+        targetShadow.effectColor = sourceShadow != null
+            ? sourceShadow.effectColor
+            : new Color(0f, 0f, 0f, 0.5f);
+        targetShadow.effectDistance = sourceShadow != null
+            ? sourceShadow.effectDistance
+            : new Vector2(3f, -4f);
+        targetShadow.useGraphicAlpha = sourceShadow == null
+            || sourceShadow.useGraphicAlpha;
+    }
+
+    private TMP_FontAsset GetHudFont()
+    {
+        for (int index = 0; index < liveStatRowValues.Length; index++)
+        {
+            if (liveStatRowValues[index] != null
+                && liveStatRowValues[index].font != null)
+            {
+                return liveStatRowValues[index].font;
+            }
+        }
+
+        return liveStatsValueText != null && liveStatsValueText.font != null
+            ? liveStatsValueText.font
+            : TMP_Settings.defaultFontAsset;
+    }
+
+    private static TMP_Text CreateRuntimeHudText(
+        string objectName,
+        Transform parent,
+        TMP_FontAsset font,
+        float fontSize,
+        TextAlignmentOptions alignment)
+    {
+        GameObject textObject = new GameObject(
+            objectName,
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(TextMeshProUGUI));
+        textObject.layer = parent.gameObject.layer;
+        textObject.transform.SetParent(parent, false);
+        TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
+        text.font = font;
+        text.fontSize = fontSize;
+        text.alignment = alignment;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
+        text.overflowMode = TextOverflowModes.Truncate;
+        text.raycastTarget = false;
+        return text;
+    }
+
+    private static void SetRuntimeHudRect(
+        RectTransform rect,
+        Vector2 anchoredPosition,
+        Vector2 size)
+    {
+        rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
+        rect.anchoredPosition = anchoredPosition;
+        rect.sizeDelta = size;
+    }
+
+    private void RefreshQuotaHud()
+    {
+        if (quotaValueText == null)
+        {
+            return;
+        }
+
+        quotaValueText.text =
+            $"{FormatQuotaMoney(roundCashMade)} / {FormatQuotaMoney(roundCashQuotaCents)}";
+        bool met = roundCashQuotaCents > 0
+            && roundCashMade >= roundCashQuotaCents;
+        quotaValueText.color = met
+            ? new Color(0.42f, 0.94f, 0.5f)
+            : new Color(1f, 0.84f, 0.3f);
+        SetQuotaProgressFill(
+            roundCashQuotaCents > 0
+                ? roundCashMade / (float)roundCashQuotaCents
+                : 0f);
+    }
+
+    private void SetQuotaProgressFill(float amount)
+    {
+        if (quotaProgressFill == null)
+        {
+            return;
+        }
+
+        RectTransform fill = quotaProgressFill.rectTransform;
+        fill.anchorMin = Vector2.zero;
+        fill.anchorMax = new Vector2(Mathf.Clamp01(amount), 1f);
+        fill.offsetMin = Vector2.zero;
+        fill.offsetMax = Vector2.zero;
+    }
+
+    private static void SetButtonText(Button button, string value)
+    {
+        TMP_Text text = button != null
+            ? button.GetComponentInChildren<TMP_Text>(true)
+            : null;
+        if (text != null)
+        {
+            text.text = value;
+        }
     }
 
     private void RefreshTimer()
@@ -1577,7 +1921,7 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         roundEggsCollected++;
-        roundCashMade += cents;
+        roundCashMade = SaturatingAdd(roundCashMade, cents);
 
         bool isPrimaryPen = PenExpansionManager.Instance == null
             || PenExpansionManager.Instance.GetPenIndex(container) <= 0;
@@ -1594,6 +1938,7 @@ public sealed class RoundSystem : MonoBehaviour
 
         RefreshTimer();
         RefreshLiveStats();
+        RefreshQuotaHud();
     }
 
     private void CompleteTruckQuota()
@@ -1604,8 +1949,8 @@ public sealed class RoundSystem : MonoBehaviour
             * 75f
             * trucksFilled
             * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
-        roundTruckCashMade += bonus;
-        roundCashMade += bonus;
+        roundTruckCashMade = SaturatingAdd(roundTruckCashMade, bonus);
+        roundCashMade = SaturatingAdd(roundCashMade, bonus);
         EggScoreHud.AddCents(bonus);
 
         if (truck != null)
@@ -1637,8 +1982,8 @@ public sealed class RoundSystem : MonoBehaviour
             * 75f
             * trucksFilled
             * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
-        roundTruckCashMade += bonus;
-        roundCashMade += bonus;
+        roundTruckCashMade = SaturatingAdd(roundTruckCashMade, bonus);
+        roundCashMade = SaturatingAdd(roundCashMade, bonus);
         EggScoreHud.AddCents(bonus);
         ShowTruckBonusReward(
             rewardPosition + Vector3.up * 0.45f,
@@ -1646,6 +1991,7 @@ public sealed class RoundSystem : MonoBehaviour
             trucksFilled);
         RefreshTimer();
         RefreshLiveStats();
+        RefreshQuotaHud();
     }
 
     private IEnumerator ReplaceFilledTrucks()
@@ -3054,7 +3400,7 @@ public sealed class RoundSystem : MonoBehaviour
         statsRect.anchorMin = Vector2.one;
         statsRect.anchorMax = Vector2.one;
         statsRect.pivot = Vector2.one;
-        statsRect.anchoredPosition = new Vector2(-24f, -62f);
+        statsRect.anchoredPosition = new Vector2(-24f, -24f);
         statsRect.sizeDelta = new Vector2(260f, 170f);
 
         Image outer = liveStatsDisplay.GetComponent<Image>();
@@ -3346,7 +3692,32 @@ public sealed class RoundSystem : MonoBehaviour
     }
 #endif
 
-    private int CalculateEggTarget(int round)
+    private int CalculateRoundCashQuotaCents(int round)
+    {
+        int safeRound = Mathf.Max(1, round);
+        int earlyGrowthSteps = Mathf.Min(
+            safeRound - 1,
+            earlyCashQuotaEndRound - 1);
+        int midGrowthSteps = Mathf.Clamp(
+            safeRound - earlyCashQuotaEndRound,
+            0,
+            midCashQuotaEndRound - earlyCashQuotaEndRound);
+        int lateGrowthSteps = Mathf.Max(0, safeRound - midCashQuotaEndRound);
+        double target = baseRoundCashQuotaCents
+            * Math.Pow(earlyCashQuotaGrowth, earlyGrowthSteps)
+            * Math.Pow(midCashQuotaGrowth, midGrowthSteps)
+            * Math.Pow(lateCashQuotaGrowth, lateGrowthSteps);
+
+        // Whole-dollar targets are easier to scan during a fast 30-second round.
+        double roundedToDollar = Math.Round(
+            target / 100d,
+            MidpointRounding.AwayFromZero) * 100d;
+        return (int)Math.Min(
+            maximumRoundCashQuotaCents,
+            Math.Max(100d, roundedToDollar));
+    }
+
+    private int CalculateTruckEggTarget(int round)
     {
         int safeRound = Mathf.Max(1, round);
         int exponentialRound = Mathf.Min(
@@ -3366,6 +3737,34 @@ public sealed class RoundSystem : MonoBehaviour
             Mathf.CeilToInt(target),
             1,
             maximumTruckEggTarget);
+    }
+
+    private static int SaturatingAdd(int current, int amount)
+    {
+        return (int)Math.Min(
+            int.MaxValue,
+            Math.Max(0L, (long)current + Mathf.Max(0, amount)));
+    }
+
+    private static string FormatQuotaMoney(int cents)
+    {
+        double dollars = Math.Max(0, cents) / 100d;
+        if (dollars < 100d)
+        {
+            return $"${dollars:0.00}";
+        }
+
+        if (dollars < 1000d)
+        {
+            return $"${dollars:0}";
+        }
+
+        if (dollars < 1000000d)
+        {
+            return $"${dollars / 1000d:0.#}K";
+        }
+
+        return $"${dollars / 1000000d:0.##}M";
     }
 
     private static int CountChickens()
@@ -3626,11 +4025,11 @@ public sealed class RoundSystem : MonoBehaviour
 
         liveStatsDisplay = CreateUiObject("Live Round Stats", canvasObject.transform).gameObject;
         RectTransform liveStatsRect = liveStatsDisplay.GetComponent<RectTransform>();
-        liveStatsRect.anchorMin = new Vector2(0.915f, 1f);
-        liveStatsRect.anchorMax = new Vector2(0.915f, 1f);
-        liveStatsRect.pivot = new Vector2(0.5f, 1f);
-        liveStatsRect.anchoredPosition = new Vector2(0f, -78f);
-        liveStatsRect.sizeDelta = new Vector2(210f, 128f);
+        liveStatsRect.anchorMin = Vector2.one;
+        liveStatsRect.anchorMax = Vector2.one;
+        liveStatsRect.pivot = Vector2.one;
+        liveStatsRect.anchoredPosition = new Vector2(-24f, -24f);
+        liveStatsRect.sizeDelta = new Vector2(260f, 170f);
         Image liveStatsBackground = liveStatsDisplay.AddComponent<Image>();
         liveStatsBackground.color = new Color(0.055f, 0.065f, 0.055f, 0.82f);
         liveStatsBackground.raycastTarget = false;
@@ -3711,7 +4110,7 @@ public sealed class RoundSystem : MonoBehaviour
         resultsPerMinuteText = CreateResultStat(card, "Eggs Per Minute", "EGGS PER MINUTE", 0f);
         resultsHatchedText = CreateResultStat(card, "Chickens Hatched", "CHICKENS HATCHED", -45f);
         resultsChickenCountText = CreateResultStat(card, "Chicken Count", "CHICKEN COUNT", -90f);
-        resultsQuotaText = CreateResultStat(card, "Truck Quota", "TRUCKS / CASH", -135f);
+        resultsQuotaText = CreateResultStat(card, "Cash Quota", "CASH QUOTA", -135f);
 
         resultsShopButton = CreateButton(
             "Open Supplies Shop",
@@ -3872,13 +4271,6 @@ public sealed class RoundSystem : MonoBehaviour
             250f);
         CreateProgressionHeader(
             treeContent,
-            "TECH",
-            "T",
-            new Vector2(65f, 650f),
-            new Color(0.12f, 0.65f, 0.38f),
-            420f);
-        CreateProgressionHeader(
-            treeContent,
             "COLLECTION",
             "C",
             new Vector2(690f, 650f),
@@ -3956,101 +4348,15 @@ public sealed class RoundSystem : MonoBehaviour
             valuePrevious = position;
         }
 
-        upgradeIncubatorButton = CreateProgressionNode(
-            "Upgrade Incubator",
-            treeContent,
-            new Vector2(-80f, 550f),
-            ProgressionSystem.UpgradeId.IncubatorInstall,
-            incubationColor,
-            0,
-            150f);
-        CreateTreeConnector(
-            treeContent,
-            new Vector2(65f, 620f),
-            new Vector2(-80f, 550f),
-            incubationColor);
-        Vector2 capacityPrevious = new Vector2(-80f, 515f);
-        Vector2 speedPrevious = new Vector2(-80f, 515f);
-        for (int tier = 2; tier <= IncubatorController.MaximumLevel; tier++)
-        {
-            float y = 430f - (tier - 2) * 95f;
-            Vector2 capacityPosition = new Vector2(-135f, y);
-            Vector2 speedPosition = new Vector2(-20f, y);
-            CreateTreeConnector(treeContent, capacityPrevious, capacityPosition, incubationColor);
-            CreateTreeConnector(treeContent, speedPrevious, speedPosition, incubationColor);
-            CreateProgressionNode(
-                $"Upgrade Incubator Capacity {tier}",
-                treeContent,
-                capacityPosition,
-                ProgressionSystem.UpgradeId.IncubatorCapacity,
-                incubationColor,
-                tier);
-            CreateProgressionNode(
-                $"Upgrade Incubator Speed {tier}",
-                treeContent,
-                speedPosition,
-                ProgressionSystem.UpgradeId.IncubatorSpeed,
-                incubationColor,
-                tier);
-            capacityPrevious = capacityPosition;
-            speedPrevious = speedPosition;
-        }
-
-        Vector2 crosshatcherRoot = new Vector2(190f, 550f);
-        CreateTreeConnector(
-            treeContent,
-            new Vector2(65f, 620f),
-            crosshatcherRoot,
-            crosshatcherColor);
-        CreateProgressionNode(
-            "Install Crosshatcher",
-            treeContent,
-            crosshatcherRoot,
-            ProgressionSystem.UpgradeId.CrosshatcherInstall,
-            crosshatcherColor,
-            0,
-            180f);
-        Vector2 crosshatcherSpeedPrevious = new Vector2(
-            crosshatcherRoot.x,
-            crosshatcherRoot.y - 35f);
-        Vector2 crosshatcherQualityPrevious = crosshatcherSpeedPrevious;
-
-        for (int tier = 2; tier <= CrosshatcherController.MaximumLevel; tier++)
-        {
-            float y = 430f - (tier - 2) * 95f;
-            Vector2 speedPosition = new Vector2(135f, y);
-            Vector2 qualityPosition = new Vector2(250f, y);
-            CreateTreeConnector(
-                treeContent,
-                crosshatcherSpeedPrevious,
-                speedPosition,
-                crosshatcherColor);
-            CreateTreeConnector(
-                treeContent,
-                crosshatcherQualityPrevious,
-                qualityPosition,
-                crosshatcherColor);
-            CreateProgressionNode(
-                $"Upgrade Crosshatcher Speed {tier}",
-                treeContent,
-                speedPosition,
-                ProgressionSystem.UpgradeId.CrosshatcherSpeed,
-                crosshatcherColor,
-                tier);
-            CreateProgressionNode(
-                $"Upgrade Crosshatcher Quality {tier}",
-                treeContent,
-                qualityPosition,
-                ProgressionSystem.UpgradeId.CrosshatcherQuality,
-                crosshatcherColor,
-                tier);
-            crosshatcherSpeedPrevious = speedPosition;
-            crosshatcherQualityPrevious = qualityPosition;
-        }
+        // Incubators and crosshatchers are purchased and upgraded from the
+        // focused pen's local HUD, not from the global supplies tree.
+        upgradeIncubatorButton = null;
 
         Vector2 basketPrevious = new Vector2(690f, 620f);
         Vector2 basketOnePosition = Vector2.zero;
-        for (int tier = 1; tier <= 3; tier++)
+        for (int tier = 1;
+            tier <= EggCarryController.MaximumBasketLevel;
+            tier++)
         {
             Vector2 position = new Vector2(640f, 550f - (tier - 1) * 95f);
             CreateTreeConnector(treeContent, basketPrevious, position, collectionColor);
@@ -4069,11 +4375,25 @@ public sealed class RoundSystem : MonoBehaviour
             basketPrevious = position;
         }
 
-        Vector2 vacuumPowerPrevious = basketPrevious;
-        Vector2 vacuumPowerOnePosition = Vector2.zero;
-        for (int tier = 1; tier <= 3; tier++)
+        Vector2 vacuumUnlockPosition = new Vector2(530f, 150f);
+        CreateTreeConnector(
+            treeContent,
+            basketPrevious,
+            vacuumUnlockPosition,
+            collectionColor);
+        CreateProgressionNode(
+            "Unlock Egg Vacuum",
+            treeContent,
+            vacuumUnlockPosition,
+            ProgressionSystem.UpgradeId.VacuumUnlock,
+            collectionColor,
+            0,
+            170f);
+
+        Vector2 vacuumPowerPrevious = vacuumUnlockPosition;
+        for (int tier = 2; tier <= 3; tier++)
         {
-            Vector2 position = new Vector2(530f, 250f - (tier - 1) * 95f);
+            Vector2 position = new Vector2(530f, 55f - (tier - 2) * 95f);
             CreateTreeConnector(treeContent, vacuumPowerPrevious, position, collectionColor);
             CreateProgressionNode(
                 $"Upgrade Vacuum Power {tier}",
@@ -4082,17 +4402,13 @@ public sealed class RoundSystem : MonoBehaviour
                 ProgressionSystem.UpgradeId.VacuumPower,
                 collectionColor,
                 tier);
-            if (tier == 1)
-            {
-                vacuumPowerOnePosition = position;
-            }
             vacuumPowerPrevious = position;
         }
 
-        Vector2 vacuumRangePrevious = vacuumPowerOnePosition;
-        for (int tier = 1; tier <= 3; tier++)
+        Vector2 vacuumRangePrevious = vacuumUnlockPosition;
+        for (int tier = 2; tier <= 3; tier++)
         {
-            Vector2 position = new Vector2(640f, 155f - (tier - 1) * 95f);
+            Vector2 position = new Vector2(640f, 55f - (tier - 2) * 95f);
             CreateTreeConnector(treeContent, vacuumRangePrevious, position, collectionColor);
             CreateProgressionNode(
                 $"Upgrade Vacuum Range {tier}",
@@ -4104,62 +4420,8 @@ public sealed class RoundSystem : MonoBehaviour
             vacuumRangePrevious = position;
         }
 
-        Button robotUnlock = CreateProgressionNode(
-            "Unlock Collector Robot",
-            treeContent,
-            new Vector2(800f, 460f),
-            ProgressionSystem.UpgradeId.RobotUnlock,
-            robotColor,
-            0,
-            160f);
-        CreateTreeConnector(
-            treeContent,
-            basketOnePosition,
-            robotUnlock.transform.GetComponent<RectTransform>().anchoredPosition,
-            robotColor);
-
-        Vector2 robotRoot = new Vector2(800f, 425f);
-        Vector2 robotSpeedPrevious = robotRoot;
-        Vector2 robotCapacityPrevious = robotRoot;
-        Vector2 robotLogicPrevious = robotRoot;
-        for (int tier = 2; tier <= 3; tier++)
-        {
-            float y = 275f - (tier - 2) * 95f;
-            Vector2 speedPosition = new Vector2(735f, y);
-            Vector2 capacityPosition = new Vector2(845f, y);
-            CreateTreeConnector(treeContent, robotSpeedPrevious, speedPosition, robotColor);
-            CreateTreeConnector(treeContent, robotCapacityPrevious, capacityPosition, robotColor);
-            CreateProgressionNode(
-                $"Upgrade Robot Speed {tier}",
-                treeContent,
-                speedPosition,
-                ProgressionSystem.UpgradeId.RobotSpeed,
-                robotColor,
-                tier);
-            CreateProgressionNode(
-                $"Upgrade Robot Capacity {tier}",
-                treeContent,
-                capacityPosition,
-                ProgressionSystem.UpgradeId.RobotCapacity,
-                robotColor,
-                tier);
-            robotSpeedPrevious = speedPosition;
-            robotCapacityPrevious = capacityPosition;
-        }
-
-        for (int tier = 1; tier <= 3; tier++)
-        {
-            Vector2 position = new Vector2(790f, 85f - (tier - 1) * 95f);
-            CreateTreeConnector(treeContent, robotLogicPrevious, position, robotColor);
-            CreateProgressionNode(
-                $"Upgrade Robot Logic {tier}",
-                treeContent,
-                position,
-                ProgressionSystem.UpgradeId.RobotSmartness,
-                robotColor,
-                tier);
-            robotLogicPrevious = position;
-        }
+        // Collector robots are also local pen equipment. Basket and vacuum
+        // progression remain global and stay in this tree.
 
         CreateProgressionPreview(
             card,
@@ -4278,6 +4540,7 @@ public sealed class RoundSystem : MonoBehaviour
         treeContent.sizeDelta = new Vector2(1800f, treeContent.sizeDelta.y);
         EnsureRobotRarityLogicTier(treeContent);
         EnsureVacuumUnlockNode(treeContent);
+        EnsureBasketCapacityTierFour(treeContent);
         ApplyProgressionTreeLayout(treeContent);
         ApplySuppliesShopVisualPolish(card, treeContent);
     }
@@ -4401,13 +4664,7 @@ public sealed class RoundSystem : MonoBehaviour
 
         if (techGroup != null)
         {
-            CreateTreePanel(
-                techGroup,
-                "Active Tree Frame",
-                new Vector2(175f, 105f),
-                new Vector2(1450f, 1090f),
-                new Color(0.045f, 0.13f, 0.065f, 0.98f),
-                new Color(0.28f, 0.6f, 0.13f, 1f));
+            techGroup.gameObject.SetActive(false);
         }
 
         if (collectionGroup != null)
@@ -4431,11 +4688,12 @@ public sealed class RoundSystem : MonoBehaviour
             "FOOD Branch",
             new Color(0.65f, 0.28f, 0.055f, 1f),
             new Color(0.9f, 0.47f, 0.1f, 1f));
-        StyleTreeHeader(
-            treeContent,
-            "TECH Branch",
-            new Color(0.18f, 0.43f, 0.1f, 1f),
-            new Color(0.43f, 0.73f, 0.16f, 1f));
+        RectTransform techHeader =
+            treeContent.Find("TECH Branch") as RectTransform;
+        if (techHeader != null)
+        {
+            techHeader.gameObject.SetActive(false);
+        }
         StyleTreeHeader(
             treeContent,
             "COLLECTION Branch",
@@ -4467,19 +4725,16 @@ public sealed class RoundSystem : MonoBehaviour
         RectTransform[] headers =
         {
             treeContent.Find("FOOD Branch") as RectTransform,
-            treeContent.Find("TECH Branch") as RectTransform,
             treeContent.Find("COLLECTION Branch") as RectTransform
         };
         RectTransform[] groups =
         {
             foodGroup,
-            techGroup,
             collectionGroup
         };
         Color[] tabColors =
         {
             new Color(0.65f, 0.28f, 0.055f, 1f),
-            new Color(0.18f, 0.43f, 0.1f, 1f),
             new Color(0.12f, 0.34f, 0.57f, 1f)
         };
 
@@ -4912,11 +5167,6 @@ public sealed class RoundSystem : MonoBehaviour
             470f);
         SetRuntimeTreeHeader(
             treeContent,
-            "TECH Branch",
-            new Vector2(170f, 650f),
-            470f);
-        SetRuntimeTreeHeader(
-            treeContent,
             "COLLECTION Branch",
             new Vector2(655f, 650f),
             470f);
@@ -4947,6 +5197,25 @@ public sealed class RoundSystem : MonoBehaviour
         for (int index = 0; index < nodes.Length; index++)
         {
             ProgressionNodeButton node = nodes[index];
+            bool localPenEquipment = node != null
+                && node.UpgradeId is
+                    ProgressionSystem.UpgradeId.IncubatorInstall
+                    or ProgressionSystem.UpgradeId.IncubatorCapacity
+                    or ProgressionSystem.UpgradeId.IncubatorSpeed
+                    or ProgressionSystem.UpgradeId.CrosshatcherInstall
+                    or ProgressionSystem.UpgradeId.CrosshatcherSpeed
+                    or ProgressionSystem.UpgradeId.CrosshatcherQuality
+                    or ProgressionSystem.UpgradeId.RobotUnlock
+                    or ProgressionSystem.UpgradeId.RobotSpeed
+                    or ProgressionSystem.UpgradeId.RobotCapacity
+                    or ProgressionSystem.UpgradeId.RobotSmartness;
+            if (localPenEquipment)
+            {
+                node.gameObject.SetActive(false);
+                Destroy(node.gameObject);
+                continue;
+            }
+
             bool obsoleteVacuumEntry =
                 node != null
                 && node.TargetLevel == 1
@@ -5061,83 +5330,11 @@ public sealed class RoundSystem : MonoBehaviour
             previousValue = position;
         }
 
-        Vector2 incubatorRoot = new Vector2(-210f, 510f);
-        SetRuntimeNodePosition(
-            nodes,
-            ProgressionSystem.UpgradeId.IncubatorInstall,
-            0,
-            incubatorRoot);
-        Vector2 previousCapacity = incubatorRoot;
-        Vector2 previousIncubatorSpeed = incubatorRoot;
-        for (int tier = 2; tier <= IncubatorController.MaximumLevel; tier++)
-        {
-            float y = 365f - (tier - 2) * 104f;
-            Vector2 capacityPosition = new Vector2(-340f, y);
-            Vector2 speedPosition = new Vector2(-80f, y);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.IncubatorCapacity,
-                tier,
-                capacityPosition);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.IncubatorSpeed,
-                tier,
-                speedPosition);
-            CreateRuntimeTreeConnector(
-                techGroup,
-                previousCapacity,
-                capacityPosition,
-                incubationColor);
-            CreateRuntimeTreeConnector(
-                techGroup,
-                previousIncubatorSpeed,
-                speedPosition,
-                incubationColor);
-            previousCapacity = capacityPosition;
-            previousIncubatorSpeed = speedPosition;
-        }
-
-        Vector2 crosshatcherRoot = new Vector2(560f, 510f);
-        SetRuntimeNodePosition(
-            nodes,
-            ProgressionSystem.UpgradeId.CrosshatcherInstall,
-            0,
-            crosshatcherRoot);
-        Vector2 previousCrossSpeed = crosshatcherRoot;
-        Vector2 previousCrossQuality = crosshatcherRoot;
-        for (int tier = 2; tier <= CrosshatcherController.MaximumLevel; tier++)
-        {
-            float y = 365f - (tier - 2) * 104f;
-            Vector2 speedPosition = new Vector2(430f, y);
-            Vector2 qualityPosition = new Vector2(690f, y);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.CrosshatcherSpeed,
-                tier,
-                speedPosition);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.CrosshatcherQuality,
-                tier,
-                qualityPosition);
-            CreateRuntimeTreeConnector(
-                techGroup,
-                previousCrossSpeed,
-                speedPosition,
-                crosshatcherColor);
-            CreateRuntimeTreeConnector(
-                techGroup,
-                previousCrossQuality,
-                qualityPosition,
-                crosshatcherColor);
-            previousCrossSpeed = speedPosition;
-            previousCrossQuality = qualityPosition;
-        }
-
         Vector2 basketOne = new Vector2(-300f, 510f);
         Vector2 previousBasket = Vector2.zero;
-        for (int tier = 1; tier <= 3; tier++)
+        for (int tier = 1;
+            tier <= EggCarryController.MaximumBasketLevel;
+            tier++)
         {
             Vector2 position = new Vector2(
                 basketOne.x,
@@ -5159,7 +5356,7 @@ public sealed class RoundSystem : MonoBehaviour
             previousBasket = position;
         }
 
-        Vector2 vacuumUnlock = new Vector2(-300f, 70f);
+        Vector2 vacuumUnlock = new Vector2(-300f, -55f);
         SetRuntimeNodePosition(
             nodes,
             ProgressionSystem.UpgradeId.VacuumUnlock,
@@ -5176,7 +5373,7 @@ public sealed class RoundSystem : MonoBehaviour
         {
             Vector2 position = new Vector2(
                 -420f,
-                -90f - (tier - 2) * 125f);
+                -215f - (tier - 2) * 125f);
             SetRuntimeNodePosition(
                 nodes,
                 ProgressionSystem.UpgradeId.VacuumPower,
@@ -5195,7 +5392,7 @@ public sealed class RoundSystem : MonoBehaviour
         {
             Vector2 position = new Vector2(
                 -180f,
-                -90f - (tier - 2) * 125f);
+                -215f - (tier - 2) * 125f);
             SetRuntimeNodePosition(
                 nodes,
                 ProgressionSystem.UpgradeId.VacuumRange,
@@ -5209,62 +5406,8 @@ public sealed class RoundSystem : MonoBehaviour
             previousVacuumRange = position;
         }
 
-        Vector2 robotUnlock = new Vector2(520f, 510f);
-        SetRuntimeNodePosition(
-            nodes,
-            ProgressionSystem.UpgradeId.RobotUnlock,
-            0,
-            robotUnlock);
-
-        Vector2 previousRobotSpeed = robotUnlock;
-        Vector2 previousRobotCapacity = robotUnlock;
-        for (int tier = 2; tier <= 3; tier++)
-        {
-            float y = 345f - (tier - 2) * 125f;
-            Vector2 speedPosition = new Vector2(300f, y);
-            Vector2 capacityPosition = new Vector2(520f, y);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.RobotSpeed,
-                tier,
-                speedPosition);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.RobotCapacity,
-                tier,
-                capacityPosition);
-            CreateRuntimeTreeConnector(
-                collectionGroup,
-                previousRobotSpeed,
-                speedPosition,
-                robotColor);
-            CreateRuntimeTreeConnector(
-                collectionGroup,
-                previousRobotCapacity,
-                capacityPosition,
-                robotColor);
-            previousRobotSpeed = speedPosition;
-            previousRobotCapacity = capacityPosition;
-        }
-
-        Vector2 previousRobotLogic = robotUnlock;
-        for (int tier = 1; tier <= 3; tier++)
-        {
-            Vector2 position = new Vector2(
-                740f,
-                345f - (tier - 1) * 125f);
-            SetRuntimeNodePosition(
-                nodes,
-                ProgressionSystem.UpgradeId.RobotSmartness,
-                tier,
-                position);
-            CreateRuntimeTreeConnector(
-                collectionGroup,
-                previousRobotLogic,
-                position,
-                robotColor);
-            previousRobotLogic = position;
-        }
+        // Per-pen machines and robots are deliberately absent from this
+        // global supplies layout.
     }
 
     private static RectTransform EnsureSupplyShopTreeGroup(
@@ -5491,6 +5634,46 @@ public sealed class RoundSystem : MonoBehaviour
         vacuumNode?.SetUpgrade(
             ProgressionSystem.UpgradeId.VacuumUnlock,
             0);
+    }
+
+    private static void EnsureBasketCapacityTierFour(RectTransform treeContent)
+    {
+        ProgressionNodeButton tierThree = null;
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node == null
+                || node.UpgradeId
+                    != ProgressionSystem.UpgradeId.BasketCapacity)
+            {
+                continue;
+            }
+
+            if (node.TargetLevel == EggCarryController.MaximumBasketLevel)
+            {
+                return;
+            }
+
+            if (node.TargetLevel
+                == EggCarryController.MaximumBasketLevel - 1)
+            {
+                tierThree = node;
+            }
+        }
+
+        if (tierThree == null)
+        {
+            return;
+        }
+
+        GameObject clone = Instantiate(
+            tierThree.gameObject,
+            tierThree.transform.parent);
+        clone.name = "Upgrade Basket Capacity 4";
+        clone.GetComponent<ProgressionNodeButton>()?.SetTargetLevel(
+            EggCarryController.MaximumBasketLevel);
     }
 
     private static void SetChildRect(
@@ -6162,6 +6345,17 @@ public sealed class RoundSystem : MonoBehaviour
         maximumTruckEggTarget = Mathf.Max(
             baseTruckEggTarget,
             maximumTruckEggTarget);
+        baseRoundCashQuotaCents = Mathf.Max(100, baseRoundCashQuotaCents);
+        earlyCashQuotaGrowth = Mathf.Clamp(earlyCashQuotaGrowth, 1f, 2f);
+        earlyCashQuotaEndRound = Mathf.Max(1, earlyCashQuotaEndRound);
+        midCashQuotaGrowth = Mathf.Clamp(midCashQuotaGrowth, 1f, 2f);
+        midCashQuotaEndRound = Mathf.Max(
+            earlyCashQuotaEndRound + 1,
+            midCashQuotaEndRound);
+        lateCashQuotaGrowth = Mathf.Clamp(lateCashQuotaGrowth, 1f, 2f);
+        maximumRoundCashQuotaCents = Mathf.Max(
+            baseRoundCashQuotaCents,
+            maximumRoundCashQuotaCents);
         truckVisualScale = Mathf.Clamp(truckVisualScale, 0.1f, 0.5f);
         truckDepartureDuration = Mathf.Max(0.1f, truckDepartureDuration);
         cursorMovementMaximumPitch = Mathf.Max(

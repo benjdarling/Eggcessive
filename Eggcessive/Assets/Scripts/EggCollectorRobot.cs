@@ -11,6 +11,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const int MaximumReachabilityCandidates = 12;
     private const float DestinationRefreshInterval = 0.1f;
     private const float DestinationMoveThreshold = 0.05f;
+    private const float MaximumCollectionTripDuration = 3.5f;
 
     [SerializeField] private Transform[] visibleEggSlots = null;
     [SerializeField, Min(0.01f)] private float pickupDistance = 0.24f;
@@ -26,6 +27,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private int capacity = 3;
     private int storedEggs;
     private int smartnessLevel;
+    private int targetPenIndex = -1;
     private readonly List<int> storedEggValues = new List<int>();
     private readonly List<ChickenEgg.EggType> storedEggTypes =
         new List<ChickenEgg.EggType>();
@@ -33,6 +35,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool deliveringToIncubator;
     private float nextTargetRefreshTime;
     private float noTargetTime;
+    private float collectionTripStartTime;
     private NavMeshPath reachabilityPath;
     private readonly ChickenEgg[] nearestEggCandidates =
         new ChickenEgg[MaximumReachabilityCandidates];
@@ -96,6 +99,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
     {
         eggContainer = targetContainer;
         incubator = targetIncubator;
+        targetPenIndex = PenExpansionManager.Instance != null
+            ? PenExpansionManager.Instance.GetPenIndex(targetContainer)
+            : -1;
         capacity = Mathf.Max(1, eggCapacity);
         smartnessLevel = Mathf.Clamp(deliverySmartnessLevel, 0, 3);
         agent.speed = Mathf.Max(0.1f, movementSpeed);
@@ -124,7 +130,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
-        if (storedEggs >= capacity)
+        if (storedEggs >= capacity
+            || (storedEggs > 0
+                && Time.time - collectionTripStartTime
+                    >= MaximumCollectionTripDuration))
         {
             BeginDelivery();
             return;
@@ -166,6 +175,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         targetEgg = null;
         StopMoving();
         storedEggs = 0;
+        collectionTripStartTime = 0f;
         storedEggValues.Clear();
         storedEggTypes.Clear();
         delivering = false;
@@ -181,6 +191,11 @@ public sealed class EggCollectorRobot : MonoBehaviour
         if (egg == null || !egg.TryCollect())
         {
             return;
+        }
+
+        if (storedEggs <= 0)
+        {
+            collectionTripStartTime = Time.time;
         }
 
         storedEggs++;
@@ -256,6 +271,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
 
         delivering = storedEggs > 0;
+        if (!delivering)
+        {
+            collectionTripStartTime = 0f;
+        }
         noTargetTime = 0f;
         RefreshVisibleEggs();
     }
@@ -306,6 +325,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool CanDeliverToIncubator()
     {
         return smartnessLevel > 0
+            && (RoundSystem.Instance == null
+                || RoundSystem.Instance.IsCashQuotaMet)
             && incubator != null
             && incubator.isActiveAndEnabled
             && incubator.AvailableCapacity > 0
@@ -337,7 +358,11 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
             if (egg == null
                 || egg.IsCollected
-                || egg.IsHeld)
+                || egg.IsHeld
+                || (targetPenIndex >= 0
+                    && PenExpansionManager.Instance != null
+                    && PenExpansionManager.Instance.GetClosestPenIndex(
+                        egg.transform.position) != targetPenIndex))
             {
                 continue;
             }

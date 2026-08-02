@@ -13037,6 +13037,13 @@ MonoBehaviour:
   earlyTruckTargetRounds: 10
   lateTruckTargetIncreasePerRound: 3
   maximumTruckEggTarget: 150
+  baseRoundCashQuotaCents: 800
+  earlyCashQuotaGrowth: 1.3
+  earlyCashQuotaEndRound: 10
+  midCashQuotaGrowth: 1.24
+  midCashQuotaEndRound: 25
+  lateCashQuotaGrowth: 1.18
+  maximumRoundCashQuotaCents: 2000000000
   truckVisualScale: 0.22
   truckDepartureDuration: 2.5
   intermissionScreen: {fileID: 7682059428011074818}
@@ -17618,7 +17625,7 @@ GameObject:
   - component: {fileID: 2778517437071597155}
   - component: {fileID: 7657257079101054289}
   m_Layer: 0
-  m_Name: Truck Quota
+  m_Name: Cash Quota
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -22961,7 +22968,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 1, y: 1}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: -24, y: -62}
+  m_AnchoredPosition: {x: -24, y: -24}
   m_SizeDelta: {x: 260, y: 170}
   m_Pivot: {x: 1, y: 1}
 --- !u!222 &5642333208421776188
@@ -23607,7 +23614,7 @@ GameObject:
   - component: {fileID: 7903849246235149264}
   - component: {fileID: 5314363077990870840}
   m_Layer: 0
-  m_Name: Truck Quota Dots
+  m_Name: Cash Quota Dots
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -24400,7 +24407,7 @@ GameObject:
   m_Component:
   - component: {fileID: 3437511220986779827}
   m_Layer: 0
-  m_Name: Truck Quota Row
+  m_Name: Cash Quota Row
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -45812,7 +45819,7 @@ GameObject:
   - component: {fileID: 8616927726285592179}
   - component: {fileID: 3864797065770462686}
   m_Layer: 0
-  m_Name: Truck Quota Label
+  m_Name: Cash Quota Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -45865,7 +45872,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: TRUCKS / CASH
+  m_text: CASH QUOTA
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}

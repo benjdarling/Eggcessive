@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Action = System.Action;
+using DitzelGames.FastIK;
 using GatorDragonGames.JigglePhysics;
 using UnityEngine;
 using UnityEngine.AI;
@@ -21,7 +22,7 @@ public sealed class ChickenController : MonoBehaviour
         Cosmic
     }
 
-    public const int MaximumChickenCount = 100;
+    public const int MaximumChickenCount = 50;
     public static event Action EggLaid;
 
     private enum ChickenState
@@ -49,6 +50,7 @@ public sealed class ChickenController : MonoBehaviour
     private const int MaximumSeparationSamples = 128;
     private const float EggSpawnFrame = 9f;
     private const float DefaultLayEggFrameCount = 22f;
+    private const float MissingNavMeshWarningDelay = 2f;
     private const string WingFlutterLayerName = "Wing Flutter Layer";
     private static bool hasWarnedAboutMissingNavMesh;
     private static int aiSchedulerFrame = -1;
@@ -86,7 +88,7 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0f)] private float returnToWanderingScore = 90f;
     [SerializeField, Min(0.01f)] private float foodSearchInterval = 1f;
     [Tooltip("Hungry chickens ignore feed farther away than this planar distance.")]
-    [SerializeField, Min(0.01f)] private float foodSearchRadius = 1.5f;
+    [SerializeField, Min(0.01f)] private float foodSearchRadius = 2f;
     [SerializeField, Min(0.01f)] private float eatingDistance = 0.2f;
     [SerializeField, Min(0.01f)] private float foodPerBite = 10f;
     [SerializeField, Min(0.01f)] private float secondsPerBite = 0.65f;
@@ -122,10 +124,10 @@ public sealed class ChickenController : MonoBehaviour
     [Header("Performance")]
     [Tooltip(
         "Maximum chickens allowed to run an AI decision update per scheduler tick.")]
-    [SerializeField, Min(1)] private int maximumAiUpdatesPerTick = 64;
+    [SerializeField, Min(1)] private int maximumAiUpdatesPerTick = 32;
     [Tooltip(
         "How often the shared scheduler processes the next fixed-size chicken batch.")]
-    [SerializeField, Range(1f, 60f)] private float aiSchedulerUpdateRateHz = 20f;
+    [SerializeField, Range(1f, 60f)] private float aiSchedulerUpdateRateHz = 10f;
     [Tooltip("Temporarily disabled while distant chickens use generated Mesh LODs only.")]
     [SerializeField] private bool enableFarImpostor = false;
     [Tooltip(
@@ -250,6 +252,7 @@ public sealed class ChickenController : MonoBehaviour
     private bool wingMicroTwitchActive;
     private Vector3 previousPlanarForward;
     private bool navigationReady;
+    private float navigationRetryStartedAt;
     private Transform eggSpawnBone;
     private Transform heldAttachBone;
     private bool eggSpawnedDuringLay;
@@ -348,6 +351,11 @@ public sealed class ChickenController : MonoBehaviour
             {
                 animator.enabled = false;
             }
+
+            // Hidden pens do not render any chicken detail, so none of their
+            // jiggle, wattle, tail or wind simulation should keep scheduling
+            // LateUpdate work either.
+            SetSecondaryMotionEnabled(false);
 
             for (int index = 0;
                  index < farDisabledBehaviours.Length;
@@ -502,6 +510,7 @@ public sealed class ChickenController : MonoBehaviour
     private void OnEnable()
     {
         ActiveChickens.Add(this);
+        navigationRetryStartedAt = Time.time;
         SetFarImpostorActive(false, true);
         ScheduleInitialEgg();
         ScheduleNextBlink();
@@ -952,6 +961,7 @@ public sealed class ChickenController : MonoBehaviour
             }
 
             navigationReady = false;
+            navigationRetryStartedAt = Time.time;
             state = ChickenState.Idle;
             return;
         }
@@ -1225,6 +1235,7 @@ public sealed class ChickenController : MonoBehaviour
         }
 
         navigationReady = false;
+        navigationRetryStartedAt = Time.time;
         isTraversingIncubatorExit = true;
         state = ChickenState.LeavingIncubator;
         stateEndTime = Time.time
@@ -1483,9 +1494,14 @@ public sealed class ChickenController : MonoBehaviour
             return;
         }
 
-        if (!hasWarnedAboutMissingNavMesh)
+        if (!hasWarnedAboutMissingNavMesh
+            && Time.time - navigationRetryStartedAt >= MissingNavMeshWarningDelay)
         {
-            Debug.LogWarning("Chickens could not find a NavMesh. Ensure the pen NavMesh is being built.", this);
+            Debug.LogWarning(
+                "A chicken still could not find a NavMesh after retrying for "
+                + $"{MissingNavMeshWarningDelay:0.#} seconds. Ensure its pen "
+                + "NavMesh covers the chicken's position.",
+                this);
             hasWarnedAboutMissingNavMesh = true;
         }
     }
@@ -2465,6 +2481,12 @@ public sealed class ChickenController : MonoBehaviour
         {
             behaviours.Add(motionLean);
         }
+
+        // FastIK components live on child bones rather than the controller
+        // object. Include every solver so invisible pens do not continue
+        // running hundreds of IK LateUpdates per frame.
+        behaviours.AddRange(GetComponentsInChildren<FastIKFabric>(true));
+        behaviours.AddRange(GetComponentsInChildren<FastIKLook>(true));
 
         farDisabledBehaviours = behaviours.ToArray();
         farDisabledBehaviourDefaults =

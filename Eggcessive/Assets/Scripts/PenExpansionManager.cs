@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,8 +7,85 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class PenExpansionManager : MonoBehaviour
 {
+    public enum EquipmentType
+    {
+        Incubator,
+        Crosshatcher,
+        Robot
+    }
+
+    public enum EquipmentUpgrade
+    {
+        IncubatorCapacity,
+        IncubatorSpeed,
+        CrosshatcherSpeed,
+        CrosshatcherQuality,
+        RobotSpeed,
+        RobotCapacity,
+        RobotSmartness
+    }
+
     private const float RuntimeGroundMaskPixelsPerMetre = 16f;
     private const int MaximumRuntimeGroundMaskResolution = 1024;
+    private const int IncubatorInstallCost = 400;
+    private const int CrosshatcherInstallCost = 15000;
+    private const int RobotInstallCost = 120000;
+
+    private static readonly int[] IncubatorCapacityCosts =
+    {
+        1000, 2600, 6500, 15000, 34000, 76000, 170000, 380000, 850000
+    };
+
+    private static readonly int[] IncubatorSpeedCosts =
+    {
+        1400, 3800, 9500, 23000, 55000, 130000, 310000, 740000, 1800000
+    };
+
+    private static readonly int[] CrosshatcherSpeedCosts =
+    {
+        22000, 50000, 110000, 240000, 520000,
+        1100000, 2300000, 4800000, 10000000
+    };
+
+    private static readonly int[] CrosshatcherQualityCosts =
+    {
+        30000, 70000, 160000, 360000, 800000,
+        1750000, 3800000, 8200000, 18000000
+    };
+
+    private static readonly int[] RobotSpeedCosts =
+    {
+        180000, 520000, 1600000, 4200000, 9500000
+    };
+
+    private static readonly int[] RobotCapacityCosts =
+    {
+        240000, 750000, 2400000, 6500000, 15000000
+    };
+
+    private static readonly int[] RobotSmartnessCosts =
+    {
+        600000, 3500000, 12000000
+    };
+
+    private static readonly EquipmentUpgrade[] IncubatorUpgrades =
+    {
+        EquipmentUpgrade.IncubatorCapacity,
+        EquipmentUpgrade.IncubatorSpeed
+    };
+
+    private static readonly EquipmentUpgrade[] CrosshatcherUpgrades =
+    {
+        EquipmentUpgrade.CrosshatcherSpeed,
+        EquipmentUpgrade.CrosshatcherQuality
+    };
+
+    private static readonly EquipmentUpgrade[] RobotUpgrades =
+    {
+        EquipmentUpgrade.RobotSpeed,
+        EquipmentUpgrade.RobotCapacity,
+        EquipmentUpgrade.RobotSmartness
+    };
 
     private sealed class PenSlot
     {
@@ -17,9 +95,15 @@ public sealed class PenExpansionManager : MonoBehaviour
         public GameObject runtimeRoot;
         public Transform terrain;
         public InteractiveGrassSystem grass;
+        public DebugChickenSpawner spawner;
         public EggContainer eggContainer;
         public IncubatorController incubator;
         public CrosshatcherController crosshatcher;
+        public EggCollectorRobot robot;
+        public bool robotOwned;
+        public int robotSpeedLevel;
+        public int robotCapacityLevel;
+        public int robotSmartnessLevel;
         public PenTruckController truck;
     }
 
@@ -64,12 +148,14 @@ public sealed class PenExpansionManager : MonoBehaviour
     private Vector3 baseCameraPivotPosition;
     private int focusedPenIndex;
     private float nextVisualRefreshTime;
+    private Coroutine penPurchaseFinalization;
 
     public static PenExpansionManager Instance { get; private set; }
     public event Action StateChanged;
     public bool IsInitialized { get; private set; }
     public int PenCount => slots.Count;
     public int FocusedPenIndex => focusedPenIndex;
+    public bool IsPenPurchaseInProgress => penPurchaseFinalization != null;
     public int OwnedPenCount
     {
         get
@@ -114,6 +200,16 @@ public sealed class PenExpansionManager : MonoBehaviour
         InitializePens();
     }
 
+    private void OnEnable()
+    {
+        RoundSystem.PhaseChanged += HandleRoundPhaseChanged;
+    }
+
+    private void OnDisable()
+    {
+        RoundSystem.PhaseChanged -= HandleRoundPhaseChanged;
+    }
+
     private void Update()
     {
         if (!IsInitialized || Time.unscaledTime < nextVisualRefreshTime)
@@ -148,6 +244,19 @@ public sealed class PenExpansionManager : MonoBehaviour
         if (Instance == this)
         {
             Instance = null;
+        }
+    }
+
+    private void HandleRoundPhaseChanged(RoundSystem.RoundPhase phase)
+    {
+        if (phase == RoundSystem.RoundPhase.InProgress)
+        {
+            return;
+        }
+
+        for (int index = 0; index < slots.Count; index++)
+        {
+            slots[index].robot?.FinalizeRound();
         }
     }
 
@@ -222,6 +331,13 @@ public sealed class PenExpansionManager : MonoBehaviour
         return count;
     }
 
+    public DebugChickenSpawner GetChickenSpawner(int penIndex)
+    {
+        return IsValidIndex(penIndex) && slots[penIndex].owned
+            ? slots[penIndex].spawner
+            : null;
+    }
+
     public long GetPenEarningsCents(int penIndex)
     {
         return IsValidIndex(penIndex)
@@ -232,25 +348,16 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     public bool HasRobotInPen(int penIndex)
     {
-        if (!IsValidIndex(penIndex)
-            || slots[penIndex].eggContainer == null)
-        {
-            return false;
-        }
+        return IsValidIndex(penIndex)
+            && slots[penIndex].robotOwned
+            && slots[penIndex].robot != null;
+    }
 
-        IReadOnlyList<EggCollectorRobot> robots =
-            EggCollectorRobot.ActiveInstances;
-        for (int index = robots.Count - 1; index >= 0; index--)
-        {
-            EggCollectorRobot robot = robots[index];
-            if (robot != null
-                && robot.TargetContainer == slots[penIndex].eggContainer)
-            {
-                return true;
-            }
-        }
-
-        return false;
+    public EggCollectorRobot GetRobotInPen(int penIndex)
+    {
+        return IsValidIndex(penIndex) && slots[penIndex].robotOwned
+            ? slots[penIndex].robot
+            : null;
     }
 
     public static bool IsChickenCapReachedAt(Vector3 worldPosition)
@@ -296,22 +403,265 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     public void SynchronizeEquipmentAcrossPens()
     {
-        if (!IsInitialized)
+        // Equipment is intentionally local to each pen. Kept as a no-op for
+        // compatibility with older scene shop components.
+    }
+
+    public bool IsEquipmentOwned(int penIndex, EquipmentType type)
+    {
+        if (!IsValidIndex(penIndex) || !slots[penIndex].owned)
         {
-            return;
+            return false;
         }
 
-        for (int index = 0; index < slots.Count; index++)
+        PenSlot slot = slots[penIndex];
+        return type switch
         {
-            PenSlot slot = slots[index];
-            if (!slot.owned)
+            EquipmentType.Incubator => slot.incubator != null
+                && slot.incubator.gameObject.activeSelf,
+            EquipmentType.Crosshatcher => slot.crosshatcher != null
+                && slot.crosshatcher.gameObject.activeSelf,
+            EquipmentType.Robot => slot.robotOwned,
+            _ => false
+        };
+    }
+
+    public int GetEquipmentPurchaseCost(EquipmentType type)
+    {
+        return type switch
+        {
+            EquipmentType.Incubator => IncubatorInstallCost,
+            EquipmentType.Crosshatcher => CrosshatcherInstallCost,
+            EquipmentType.Robot => RobotInstallCost,
+            _ => 0
+        };
+    }
+
+    public int GetUpgradeLevel(int penIndex, EquipmentUpgrade upgrade)
+    {
+        if (!IsValidIndex(penIndex))
+        {
+            return 0;
+        }
+
+        PenSlot slot = slots[penIndex];
+        return upgrade switch
+        {
+            EquipmentUpgrade.IncubatorCapacity =>
+                IsEquipmentOwned(penIndex, EquipmentType.Incubator)
+                    ? slot.incubator.CapacityLevel : 0,
+            EquipmentUpgrade.IncubatorSpeed =>
+                IsEquipmentOwned(penIndex, EquipmentType.Incubator)
+                    ? slot.incubator.SpeedLevel : 0,
+            EquipmentUpgrade.CrosshatcherSpeed =>
+                IsEquipmentOwned(penIndex, EquipmentType.Crosshatcher)
+                    ? slot.crosshatcher.SpeedLevel : 0,
+            EquipmentUpgrade.CrosshatcherQuality =>
+                IsEquipmentOwned(penIndex, EquipmentType.Crosshatcher)
+                    ? slot.crosshatcher.QualityLevel : 0,
+            EquipmentUpgrade.RobotSpeed => slot.robotOwned
+                ? slot.robotSpeedLevel : 0,
+            EquipmentUpgrade.RobotCapacity => slot.robotOwned
+                ? slot.robotCapacityLevel : 0,
+            EquipmentUpgrade.RobotSmartness => slot.robotOwned
+                ? slot.robotSmartnessLevel : 0,
+            _ => 0
+        };
+    }
+
+    public int GetMaximumUpgradeLevel(EquipmentUpgrade upgrade)
+    {
+        return upgrade switch
+        {
+            EquipmentUpgrade.IncubatorCapacity
+                or EquipmentUpgrade.IncubatorSpeed =>
+                    IncubatorController.MaximumLevel,
+            EquipmentUpgrade.CrosshatcherSpeed
+                or EquipmentUpgrade.CrosshatcherQuality =>
+                    CrosshatcherController.MaximumLevel,
+            EquipmentUpgrade.RobotSpeed
+                or EquipmentUpgrade.RobotCapacity =>
+                    EggCarryController.MaximumRobotLevel,
+            _ => 3
+        };
+    }
+
+    public int GetUpgradeCost(int penIndex, EquipmentUpgrade upgrade)
+    {
+        EquipmentType owner = GetUpgradeOwner(upgrade);
+        if (!IsEquipmentOwned(penIndex, owner))
+        {
+            return 0;
+        }
+
+        int level = GetUpgradeLevel(penIndex, upgrade);
+        int maximum = GetMaximumUpgradeLevel(upgrade);
+        if (level >= maximum)
+        {
+            return 0;
+        }
+
+        int[] costs = upgrade switch
+        {
+            EquipmentUpgrade.IncubatorCapacity => IncubatorCapacityCosts,
+            EquipmentUpgrade.IncubatorSpeed => IncubatorSpeedCosts,
+            EquipmentUpgrade.CrosshatcherSpeed => CrosshatcherSpeedCosts,
+            EquipmentUpgrade.CrosshatcherQuality => CrosshatcherQualityCosts,
+            EquipmentUpgrade.RobotSpeed => RobotSpeedCosts,
+            EquipmentUpgrade.RobotCapacity => RobotCapacityCosts,
+            EquipmentUpgrade.RobotSmartness => RobotSmartnessCosts,
+            _ => null
+        };
+        int costIndex = upgrade == EquipmentUpgrade.RobotSmartness
+            ? level
+            : level - 1;
+        return costs != null && costIndex >= 0 && costIndex < costs.Length
+            ? costs[costIndex]
+            : 0;
+    }
+
+    public bool TryPurchaseEquipment(EquipmentType type)
+    {
+        return TryPurchaseEquipment(focusedPenIndex, type);
+    }
+
+    public bool TryPurchaseEquipment(int penIndex, EquipmentType type)
+    {
+        if (!IsValidIndex(penIndex)
+            || !slots[penIndex].owned
+            || IsEquipmentOwned(penIndex, type)
+            || (type == EquipmentType.Incubator
+                && slots[penIndex].incubator == null)
+            || (type == EquipmentType.Crosshatcher
+                && slots[penIndex].crosshatcher == null)
+            || (type == EquipmentType.Robot
+                && EggCarryController.Instance == null))
+        {
+            return false;
+        }
+
+        int cost = GetEquipmentPurchaseCost(type);
+        if (!EggScoreHud.TrySpendCents(cost))
+        {
+            StateChanged?.Invoke();
+            return false;
+        }
+
+        PenSlot slot = slots[penIndex];
+        switch (type)
+        {
+            case EquipmentType.Incubator:
+                slot.incubator?.InstallOrUpgrade(1, 1);
+                break;
+            case EquipmentType.Crosshatcher:
+                slot.crosshatcher?.InstallOrUpgrade(1, 1);
+                break;
+            case EquipmentType.Robot:
+                slot.robotOwned = true;
+                slot.robotSpeedLevel = 1;
+                slot.robotCapacityLevel = 1;
+                slot.robotSmartnessLevel = 0;
+                RefreshRobot(slot);
+                break;
+        }
+
+        RoundSystem.Instance?.PlayCashRegisterSfx();
+        StateChanged?.Invoke();
+        return IsEquipmentOwned(penIndex, type);
+    }
+
+    public bool TryUpgradeEquipment(EquipmentUpgrade upgrade)
+    {
+        return TryUpgradeEquipment(focusedPenIndex, upgrade);
+    }
+
+    public bool TryUpgradeEquipment(int penIndex, EquipmentUpgrade upgrade)
+    {
+        int cost = GetUpgradeCost(penIndex, upgrade);
+        if (cost <= 0 || !EggScoreHud.TrySpendCents(cost))
+        {
+            StateChanged?.Invoke();
+            return false;
+        }
+
+        PenSlot slot = slots[penIndex];
+        switch (upgrade)
+        {
+            case EquipmentUpgrade.IncubatorCapacity:
+                slot.incubator.InstallOrUpgrade(
+                    slot.incubator.CapacityLevel + 1,
+                    slot.incubator.SpeedLevel);
+                break;
+            case EquipmentUpgrade.IncubatorSpeed:
+                slot.incubator.InstallOrUpgrade(
+                    slot.incubator.CapacityLevel,
+                    slot.incubator.SpeedLevel + 1);
+                break;
+            case EquipmentUpgrade.CrosshatcherSpeed:
+                slot.crosshatcher.InstallOrUpgrade(
+                    slot.crosshatcher.SpeedLevel + 1,
+                    slot.crosshatcher.QualityLevel);
+                break;
+            case EquipmentUpgrade.CrosshatcherQuality:
+                slot.crosshatcher.InstallOrUpgrade(
+                    slot.crosshatcher.SpeedLevel,
+                    slot.crosshatcher.QualityLevel + 1);
+                break;
+            case EquipmentUpgrade.RobotSpeed:
+                slot.robotSpeedLevel++;
+                RefreshRobot(slot);
+                break;
+            case EquipmentUpgrade.RobotCapacity:
+                slot.robotCapacityLevel++;
+                RefreshRobot(slot);
+                break;
+            case EquipmentUpgrade.RobotSmartness:
+                slot.robotSmartnessLevel++;
+                RefreshRobot(slot);
+                break;
+        }
+
+        RoundSystem.Instance?.PlayCashRegisterSfx();
+        StateChanged?.Invoke();
+        return true;
+    }
+
+    public bool HasAffordableUpgrade(int penIndex, EquipmentType type)
+    {
+        EquipmentUpgrade[] upgrades = GetUpgrades(type);
+        long balance = EggScoreHud.CurrentCents;
+        for (int index = 0; index < upgrades.Length; index++)
+        {
+            int cost = GetUpgradeCost(penIndex, upgrades[index]);
+            if (cost > 0 && balance >= cost)
             {
-                continue;
+                return true;
             }
-
-            SynchronizeIncubator(slot.incubator);
-            SynchronizeCrosshatcher(slot.crosshatcher);
         }
+
+        return false;
+    }
+
+    public static EquipmentUpgrade[] GetUpgrades(EquipmentType type)
+    {
+        return type switch
+        {
+            EquipmentType.Incubator => IncubatorUpgrades,
+            EquipmentType.Crosshatcher => CrosshatcherUpgrades,
+            _ => RobotUpgrades
+        };
+    }
+
+    private static EquipmentType GetUpgradeOwner(EquipmentUpgrade upgrade)
+    {
+        return upgrade switch
+        {
+            EquipmentUpgrade.IncubatorCapacity
+                or EquipmentUpgrade.IncubatorSpeed => EquipmentType.Incubator,
+            EquipmentUpgrade.CrosshatcherSpeed
+                or EquipmentUpgrade.CrosshatcherQuality => EquipmentType.Crosshatcher,
+            _ => EquipmentType.Robot
+        };
     }
 
     public bool TryPurchaseNextPen()
@@ -320,7 +670,28 @@ public sealed class PenExpansionManager : MonoBehaviour
         return nextIndex >= 0 && TryActivatePen(nextIndex);
     }
 
+    public bool TryDebugActivateNextPen()
+    {
+        int nextIndex = NextUnownedPenIndex;
+        return nextIndex >= 0
+            && TryActivatePen(
+                nextIndex,
+                spendCurrency: false,
+                requireRoundInProgress: false);
+    }
+
     public bool TryActivatePen(int index)
+    {
+        return TryActivatePen(
+            index,
+            spendCurrency: true,
+            requireRoundInProgress: true);
+    }
+
+    private bool TryActivatePen(
+        int index,
+        bool spendCurrency,
+        bool requireRoundInProgress)
     {
         if (!IsValidIndex(index))
         {
@@ -330,7 +701,20 @@ public sealed class PenExpansionManager : MonoBehaviour
         PenSlot slot = slots[index];
         if (!slot.owned)
         {
-            if (!EggScoreHud.TrySpendCents(slot.costCents))
+            if (requireRoundInProgress
+                && RoundSystem.Instance != null
+                && !RoundSystem.Instance.IsRoundInProgress)
+            {
+                return false;
+            }
+
+            if (penPurchaseFinalization != null)
+            {
+                return false;
+            }
+
+            if (spendCurrency
+                && !EggScoreHud.TrySpendCents(slot.costCents))
             {
                 StateChanged?.Invoke();
                 return false;
@@ -338,9 +722,12 @@ public sealed class PenExpansionManager : MonoBehaviour
 
             CreatePurchasedPen(index, slot);
             slot.owned = true;
-            RefreshEdgeBuffers();
-            RefreshWorldGroundCoverage();
-            RoundSystem.Instance?.PlayCashRegisterSfx();
+            penPurchaseFinalization = StartCoroutine(
+                FinalizePurchasedPen(slot));
+            if (spendCurrency)
+            {
+                RoundSystem.Instance?.PlayCashRegisterSfx();
+            }
         }
 
         FocusPen(index);
@@ -408,6 +795,9 @@ public sealed class PenExpansionManager : MonoBehaviour
             // below, so synchronize once to keep visual and collision coverage
             // identical from the first frame.
             Physics.SyncTransforms();
+            volumeTemplate
+                .GetComponent<DebugChickenSpawner>()
+                ?.RebuildPenNavMesh();
             grassTemplate.ConfigureRuntimePen(
                 terrainTemplate,
                 Vector3.zero,
@@ -418,6 +808,10 @@ public sealed class PenExpansionManager : MonoBehaviour
         SynchronizeGroundMaskRects();
 
         slots.Clear();
+        bool starterIncubatorInstalled = incubatorTemplate != null
+            && incubatorTemplate.gameObject.activeSelf;
+        bool starterCrosshatcherInstalled = crosshatcherTemplate != null
+            && crosshatcherTemplate.gameObject.activeSelf;
         for (int index = 0; index < penCount; index++)
         {
             slots.Add(new PenSlot
@@ -427,6 +821,9 @@ public sealed class PenExpansionManager : MonoBehaviour
                 horizontalOffset = index * penSpacing,
                 terrain = index == 0 ? terrainTemplate : null,
                 grass = index == 0 ? grassTemplate : null,
+                spawner = index == 0
+                    ? volumeTemplate.GetComponent<DebugChickenSpawner>()
+                    : null,
                 eggContainer = index == 0 ? containerTemplate : null,
                 incubator = index == 0 ? incubatorTemplate : null,
                 crosshatcher = index == 0 ? crosshatcherTemplate : null
@@ -434,6 +831,14 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
 
         focusedPenIndex = 0;
+        if (incubatorTemplate != null && !starterIncubatorInstalled)
+        {
+            incubatorTemplate.gameObject.SetActive(false);
+        }
+        if (crosshatcherTemplate != null && !starterCrosshatcherInstalled)
+        {
+            crosshatcherTemplate.gameObject.SetActive(false);
+        }
         EggContainer.SetFocusedContainer(containerTemplate);
         CreateEdgeBuffers();
         RefreshWorldGroundCoverage();
@@ -538,21 +943,28 @@ public sealed class PenExpansionManager : MonoBehaviour
         Material groundMaterial =
             ApplyWorldGroundMaterial(terrain);
 
-        GameObject volume = Instantiate(
-            volumeTemplate,
-            volumeTemplate.transform.position + worldOffset,
-            volumeTemplate.transform.rotation,
-            penRoot.transform);
+        // Make the new terrain visible to the NavMesh bake performed by the
+        // cloned spawner's Awake. This avoids baking it a second time below.
+        Physics.SyncTransforms();
+        GameObject volume;
+        DebugChickenSpawner.BeginSuppressAutomaticNavMeshBuild();
+        try
+        {
+            volume = Instantiate(
+                volumeTemplate,
+                volumeTemplate.transform.position + worldOffset,
+                volumeTemplate.transform.rotation,
+                penRoot.transform);
+        }
+        finally
+        {
+            DebugChickenSpawner.EndSuppressAutomaticNavMeshBuild();
+        }
         volume.name = $"VolumePen_{index + 1}";
         DebugChickenSpawner clonedSpawner =
             volume.GetComponent<DebugChickenSpawner>();
         if (clonedSpawner != null)
         {
-            // Awake has already built this pen's NavMesh. The original spawner
-            // remains the sole owner of F5 performance spawning, while every
-            // purchased pen receives its own small starter flock.
-            clonedSpawner.SpawnStarterChickens(
-                starterChickensPerPurchasedPen);
             clonedSpawner.enabled = false;
         }
 
@@ -584,15 +996,62 @@ public sealed class PenExpansionManager : MonoBehaviour
             terrain,
             worldOffset,
             groundMaterial,
-            true);
+            true,
+            false);
 
         slot.runtimeRoot = penRoot;
         slot.terrain = terrain;
         slot.grass = grass;
+        slot.spawner = clonedSpawner;
         slot.eggContainer = container;
         slot.incubator = incubator;
         slot.crosshatcher = crosshatcher;
         slot.truck = truck;
+    }
+
+    private IEnumerator FinalizePurchasedPen(PenSlot slot)
+    {
+        // Return control immediately after the purchase click, then divide the
+        // expensive grass, edge-buffer and world-mask work across frames.
+        yield return null;
+        if (slot.spawner != null)
+        {
+            DebugChickenSpawner sourceSpawner = volumeTemplate != null
+                ? volumeTemplate.GetComponent<DebugChickenSpawner>()
+                : null;
+            if (!slot.spawner.TryUseNavMeshDataFrom(sourceSpawner))
+            {
+                // This should only be needed if the authored pen's bake failed.
+                slot.spawner.RebuildPenNavMesh();
+            }
+
+            // Let the newly registered NavMesh instance enter the navigation
+            // world before sampling it for starter chicken positions.
+            yield return null;
+            if (!slot.spawner.HasChickenNavMeshInVolume())
+            {
+                // Customised pen geometry cannot safely share the authored
+                // bake. Rebuild only this exceptional case, then sample again.
+                slot.spawner.RebuildPenNavMesh();
+                yield return null;
+            }
+
+            slot.spawner.SpawnStarterChickens(
+                starterChickensPerPurchasedPen);
+        }
+
+        yield return null;
+        if (slot.grass != null)
+        {
+            yield return slot.grass.GenerateGrassTimeSliced();
+        }
+
+        yield return null;
+        yield return RefreshEdgeBuffersTimeSliced();
+        yield return null;
+        yield return RefreshWorldGroundCoverageTimeSliced();
+        penPurchaseFinalization = null;
+        StateChanged?.Invoke();
     }
 
     private IncubatorController CloneIncubator(
@@ -611,7 +1070,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             incubatorTemplate.transform.rotation,
             parent);
         clone.name = $"Incubator_{index + 1}";
-        SynchronizeIncubator(clone);
+        clone.gameObject.SetActive(false);
         return clone;
     }
 
@@ -631,7 +1090,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             crosshatcherTemplate.transform.rotation,
             parent);
         clone.name = $"Crosshatcher_{index + 1}";
-        SynchronizeCrosshatcher(clone);
+        clone.gameObject.SetActive(false);
         return clone;
     }
 
@@ -673,6 +1132,35 @@ public sealed class PenExpansionManager : MonoBehaviour
         {
             target.gameObject.SetActive(false);
         }
+    }
+
+    private void RefreshRobot(PenSlot slot)
+    {
+        if (slot == null || !slot.robotOwned)
+        {
+            return;
+        }
+
+        if (slot.robot != null)
+        {
+            slot.robot.FinalizeRound();
+            Destroy(slot.robot.gameObject);
+            slot.robot = null;
+        }
+
+        EggCarryController collection = EggCarryController.Instance;
+        if (collection == null)
+        {
+            return;
+        }
+
+        slot.robot = collection.CreatePenRobot(
+            slot.eggContainer,
+            slot.incubator,
+            slot.robotSpeedLevel,
+            slot.robotCapacityLevel,
+            slot.robotSmartnessLevel,
+            slot.runtimeRoot != null ? slot.runtimeRoot.transform : null);
     }
 
     private void RefreshDistantVisuals()
@@ -843,11 +1331,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
     }
 
-    private void RefreshEdgeBuffers()
+    private IEnumerator RefreshEdgeBuffersTimeSliced()
     {
         if (leftBuffer == null || rightBuffer == null)
         {
-            return;
+            yield break;
         }
 
         int firstOwnedIndex = 0;
@@ -863,15 +1351,37 @@ public sealed class PenExpansionManager : MonoBehaviour
             lastOwnedIndex = Mathf.Max(lastOwnedIndex, index);
         }
 
-        PositionBuffer(leftBuffer, (firstOwnedIndex - 1) * penSpacing);
-        PositionBuffer(rightBuffer, (lastOwnedIndex + 1) * penSpacing);
+        InteractiveGrassSystem movedGrass = PositionBuffer(
+            leftBuffer,
+            (firstOwnedIndex - 1) * penSpacing);
+        if (movedGrass != null)
+        {
+            yield return movedGrass.GenerateGrassTimeSliced();
+        }
+
+        movedGrass = PositionBuffer(
+            rightBuffer,
+            (lastOwnedIndex + 1) * penSpacing);
+        if (movedGrass != null)
+        {
+            yield return movedGrass.GenerateGrassTimeSliced();
+        }
     }
 
-    private void PositionBuffer(PenBuffer buffer, float horizontalOffset)
+    private InteractiveGrassSystem PositionBuffer(
+        PenBuffer buffer,
+        float horizontalOffset)
     {
         Vector3 worldOffset = Vector3.right * horizontalOffset;
+        Vector3 targetTerrainPosition = terrainTemplate.position + worldOffset;
+        if ((buffer.terrain.position - targetTerrainPosition).sqrMagnitude
+            <= 0.000001f)
+        {
+            return null;
+        }
+
         buffer.terrain.SetPositionAndRotation(
-            terrainTemplate.position + worldOffset,
+            targetTerrainPosition,
             terrainTemplate.rotation);
         if (buffer.grass != null)
         {
@@ -882,8 +1392,12 @@ public sealed class PenExpansionManager : MonoBehaviour
                 buffer.terrain,
                 worldOffset,
                 buffer.groundMaterial,
-                true);
+                true,
+                false);
+            return buffer.grass;
         }
+
+        return null;
     }
 
     private Material ApplyWorldGroundMaterial(Transform terrain)
@@ -924,6 +1438,58 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private void RefreshWorldGroundCoverage()
     {
+        if (!TryPrepareWorldGroundCoverage(
+                out List<Transform> terrains,
+                out List<InteractiveGrassSystem> grassSystems,
+                out Vector4 worldRect,
+                out int maskResolution))
+        {
+            return;
+        }
+
+        Texture2D nextMask = grassTemplate.CreateRuntimeGroundMask(
+            worldRect,
+            maskResolution,
+            false,
+            grassSystems);
+        ApplyWorldGroundMask(nextMask, worldRect, terrains);
+    }
+
+    private IEnumerator RefreshWorldGroundCoverageTimeSliced()
+    {
+        if (!TryPrepareWorldGroundCoverage(
+                out List<Transform> terrains,
+                out List<InteractiveGrassSystem> grassSystems,
+                out Vector4 worldRect,
+                out int maskResolution))
+        {
+            yield break;
+        }
+
+        Texture2D nextMask = null;
+        yield return grassTemplate.CreateRuntimeGroundMaskTimeSliced(
+            worldRect,
+            maskResolution,
+            false,
+            grassSystems,
+            generatedMask => nextMask = generatedMask);
+        if (nextMask != null)
+        {
+            ApplyWorldGroundMask(nextMask, worldRect, terrains);
+        }
+    }
+
+    private bool TryPrepareWorldGroundCoverage(
+        out List<Transform> terrains,
+        out List<InteractiveGrassSystem> grassSystems,
+        out Vector4 worldRect,
+        out int maskResolution)
+    {
+        terrains = new List<Transform>();
+        grassSystems = new List<InteractiveGrassSystem>();
+        worldRect = default;
+        maskResolution = 0;
+
         if (worldGroundMaterial == null)
         {
             ApplyWorldGroundMaterial(terrainTemplate);
@@ -931,11 +1497,9 @@ public sealed class PenExpansionManager : MonoBehaviour
 
         if (worldGroundMaterial == null)
         {
-            return;
+            return false;
         }
 
-        var terrains = new List<Transform>();
-        var grassSystems = new List<InteractiveGrassSystem>();
         AddWorldGroundSource(terrainTemplate, grassTemplate, terrains, grassSystems);
         AddWorldGroundSource(
             leftBuffer != null ? leftBuffer.terrain : null,
@@ -962,28 +1526,32 @@ public sealed class PenExpansionManager : MonoBehaviour
 
         if (!TryGetCombinedTerrainBounds(terrains, out Bounds bounds))
         {
-            return;
+            return false;
         }
 
-        Vector4 worldRect = BoundsToWorldRect(bounds);
-        int maskResolution = Mathf.Clamp(
+        worldRect = BoundsToWorldRect(bounds);
+        maskResolution = Mathf.Clamp(
             Mathf.NextPowerOfTwo(
                 Mathf.CeilToInt(
                     Mathf.Max(worldRect.z, worldRect.w)
                     * RuntimeGroundMaskPixelsPerMetre)),
             256,
             MaximumRuntimeGroundMaskResolution);
+        return true;
+    }
+
+    private void ApplyWorldGroundMask(
+        Texture2D nextMask,
+        Vector4 worldRect,
+        List<Transform> terrains)
+    {
         if (worldGroundMask != null)
         {
             runtimeGroundMasks.Remove(worldGroundMask);
             Destroy(worldGroundMask);
         }
 
-        worldGroundMask = grassTemplate.CreateRuntimeGroundMask(
-            worldRect,
-            maskResolution,
-            false,
-            grassSystems);
+        worldGroundMask = nextMask;
         worldGroundMask.name = "Continuous World Ground Mask";
         runtimeGroundMasks.Add(worldGroundMask);
         worldGroundMaterial.SetTexture("_LayerMask", worldGroundMask);

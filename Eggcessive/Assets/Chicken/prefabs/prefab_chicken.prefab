@@ -284,7 +284,7 @@ MonoBehaviour:
   seekFoodBelowScore: 60
   returnToWanderingScore: 90
   foodSearchInterval: 1
-  foodSearchRadius: 1.5
+  foodSearchRadius: 2
   eatingDistance: 0.2
   foodPerBite: 10
   secondsPerBite: 0.65
@@ -295,8 +295,8 @@ MonoBehaviour:
   fullLeanTurnRate: 180
   leanSmoothTime: 0.08
   leanStrength: 1
-  maximumAiUpdatesPerTick: 64
-  aiSchedulerUpdateRateHz: 20
+  maximumAiUpdatesPerTick: 32
+  aiSchedulerUpdateRateHz: 10
   enableFarImpostor: 0
   farImpostorMeshLod: 3
   maximumEggPushChecksPerFixedUpdate: 8

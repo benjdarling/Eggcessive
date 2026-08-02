@@ -8,8 +8,9 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(BoxCollider))]
 public class DebugChickenSpawner : MonoBehaviour
 {
-    private const int PerformanceTestChickenCount = 100;
     private const int PerformanceTestSpawnsPerFrame = 10;
+    private const float SpawnNavMeshSampleDistance = 0.75f;
+    private static int automaticNavMeshBuildSuppressionDepth;
 
     [Header("Spawn Settings")]
     [SerializeField] private GameObject chickenPrefab = null;
@@ -29,12 +30,14 @@ public class DebugChickenSpawner : MonoBehaviour
     private readonly List<Vector3> spawnedPositions = new List<Vector3>();
     private BoxCollider spawnVolume;
     private Coroutine performanceTestSpawnCoroutine;
+    private bool hasReportedMissingSpawnNavMesh;
 
     private void Awake()
     {
         spawnVolume = GetComponent<BoxCollider>();
 
-        if (buildNavMeshAtRuntime)
+        if (buildNavMeshAtRuntime
+            && automaticNavMeshBuildSuppressionDepth == 0)
         {
             BuildPenNavMesh();
         }
@@ -54,39 +57,68 @@ public class DebugChickenSpawner : MonoBehaviour
     private void Update()
     {
         Keyboard keyboard = Keyboard.current;
-        if (keyboard == null || !keyboard.f5Key.wasPressedThisFrame)
+        if (keyboard == null)
         {
             return;
         }
 
-        if (performanceTestSpawnCoroutine != null)
+        if (keyboard.f6Key.wasPressedThisFrame)
         {
-            return;
+            PenExpansionManager manager = PenExpansionManager.Instance;
+            bool added = manager != null
+                && manager.TryDebugActivateNextPen();
+            Debug.Log(
+                added
+                    ? $"F6 debug pen: activated Pen {manager.FocusedPenIndex + 1} without spending cash."
+                    : "F6 debug pen: no pen could be activated right now.",
+                this);
         }
 
-        performanceTestSpawnCoroutine =
-            StartCoroutine(PopulatePerformanceTestChickens());
+        if (keyboard.f5Key.wasPressedThisFrame
+            && performanceTestSpawnCoroutine == null)
+        {
+            performanceTestSpawnCoroutine =
+                StartCoroutine(FillFocusedPenToChickenCap());
+        }
     }
 
-    private IEnumerator PopulatePerformanceTestChickens()
+    private IEnumerator FillFocusedPenToChickenCap()
     {
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        int penIndex = manager != null && manager.IsInitialized
+            ? manager.FocusedPenIndex
+            : 0;
+        while (manager != null && manager.IsPenPurchaseInProgress)
+        {
+            yield return null;
+        }
+
+        DebugChickenSpawner targetSpawner = manager != null
+            ? manager.GetChickenSpawner(penIndex)
+            : this;
+        if (targetSpawner == null)
+        {
+            targetSpawner = this;
+        }
+
         int spawnedThisFrame = 0;
-        int existingCount = PenExpansionManager.Instance != null
-            ? PenExpansionManager.Instance.GetChickenCount(
-                PenExpansionManager.Instance.GetClosestPenIndex(
-                    spawnVolume.bounds.center))
+        int existingCount = manager != null
+            ? manager.GetChickenCount(penIndex)
             : ChickenController.ActiveInstances.Count;
-        int spawnCount = Mathf.Min(
-            PerformanceTestChickenCount,
-            Mathf.Max(
-                0,
-                ChickenController.MaximumChickenCount - existingCount));
+        int requestedSpawnCount = Mathf.Max(
+            0,
+            ChickenController.MaximumChickenCount - existingCount);
+        int successfulSpawnCount = 0;
 
         for (int spawnedCount = 0;
-            spawnedCount < spawnCount;
+            spawnedCount < requestedSpawnCount;
             spawnedCount++)
         {
-            SpawnChicken();
+            if (targetSpawner.SpawnChicken())
+            {
+                successfulSpawnCount++;
+            }
+
             spawnedThisFrame++;
 
             if (spawnedThisFrame >= PerformanceTestSpawnsPerFrame)
@@ -98,9 +130,10 @@ public class DebugChickenSpawner : MonoBehaviour
 
         performanceTestSpawnCoroutine = null;
         Debug.Log(
-            $"F5 chicken performance test: spawned {spawnCount} chickens "
-            + "in the original gameplay pen. Total: "
-            + $"{ChickenController.ActiveInstances.Count}.",
+            $"F5 chicken performance test: spawned {successfulSpawnCount} chickens "
+            + $"in Pen {penIndex + 1}. Pen total: "
+            + $"{(manager != null ? manager.GetChickenCount(penIndex) : ChickenController.ActiveInstances.Count)}"
+            + $"/{ChickenController.MaximumChickenCount}.",
             this);
     }
 
@@ -124,9 +157,9 @@ public class DebugChickenSpawner : MonoBehaviour
         }
     }
 
-    private void SpawnChicken()
+    private bool SpawnChicken()
     {
-        SpawnChicken(spawnVolume.bounds);
+        return SpawnChicken(spawnVolume.bounds);
     }
 
     public void SpawnStarterChickens(int count)
@@ -151,29 +184,60 @@ public class DebugChickenSpawner : MonoBehaviour
         }
     }
 
-    private void SpawnChicken(Bounds penBounds)
+    public bool HasChickenNavMeshInVolume()
     {
-        Vector3 position = FindSpawnPosition(penBounds);
+        if (spawnVolume == null)
+        {
+            spawnVolume = GetComponent<BoxCollider>();
+        }
+
+        return spawnVolume != null
+            && TryFindSpawnPosition(spawnVolume.bounds, out _);
+    }
+
+    private bool SpawnChicken(Bounds penBounds)
+    {
+        if (!TryFindSpawnPosition(penBounds, out Vector3 position))
+        {
+            if (!hasReportedMissingSpawnNavMesh)
+            {
+                Debug.LogError(
+                    $"Could not find a chicken NavMesh inside {name}; no chicken was spawned.",
+                    this);
+                hasReportedMissingSpawnNavMesh = true;
+            }
+
+            return false;
+        }
+
         float yRotation = Random.Range(-180f, 180f);
 
         Instantiate(chickenPrefab, position, Quaternion.Euler(0f, yRotation, 0f));
         spawnedPositions.Add(position);
+        return true;
     }
 
-    private Vector3 FindSpawnPosition(Bounds penBounds)
+    private bool TryFindSpawnPosition(Bounds penBounds, out Vector3 position)
     {
-        Vector3 bestPosition = GetRandomPointInBounds(penBounds);
-        float bestNearestDistance = NearestSpawnDistanceSquared(bestPosition);
+        Vector3 bestPosition = default;
+        float bestNearestDistance = float.NegativeInfinity;
         float minimumSpacingSquared = minimumSpacing * minimumSpacing;
+        bool foundNavMeshPosition = false;
 
         for (int attempt = 0; attempt < placementAttempts; attempt++)
         {
-            Vector3 candidate = GetRandomPointInBounds(penBounds);
+            if (!TryGetRandomPointInBounds(penBounds, out Vector3 candidate))
+            {
+                continue;
+            }
+
+            foundNavMeshPosition = true;
             float nearestDistance = NearestSpawnDistanceSquared(candidate);
 
             if (nearestDistance >= minimumSpacingSquared)
             {
-                return candidate;
+                position = candidate;
+                return true;
             }
 
             if (nearestDistance > bestNearestDistance)
@@ -185,16 +249,17 @@ public class DebugChickenSpawner : MonoBehaviour
 
         // A crowded volume may not have room for the requested spacing. Use the
         // best candidate found so the spawner still reaches its target count.
-        return bestPosition;
+        position = bestPosition;
+        return foundNavMeshPosition;
     }
 
-    private Vector3 GetRandomPointInBounds(Bounds bounds)
+    private bool TryGetRandomPointInBounds(Bounds bounds, out Vector3 position)
     {
         float insetX = Mathf.Min(0.2f, bounds.size.x * 0.1f);
         float insetZ = Mathf.Min(0.2f, bounds.size.z * 0.1f);
         Vector3 worldPoint = new Vector3(
             Random.Range(bounds.min.x + insetX, bounds.max.x - insetX),
-            bounds.max.y,
+            bounds.center.y,
             Random.Range(bounds.min.z + insetZ, bounds.max.z - insetZ));
 
         NavMeshQueryFilter queryFilter = new NavMeshQueryFilter
@@ -203,18 +268,97 @@ public class DebugChickenSpawner : MonoBehaviour
             areaMask = NavMesh.AllAreas
         };
 
-        if (NavMesh.SamplePosition(worldPoint, out NavMeshHit hit, 0.5f, queryFilter))
+        if (NavMesh.SamplePosition(
+                worldPoint,
+                out NavMeshHit hit,
+                SpawnNavMeshSampleDistance,
+                queryFilter)
+            && hit.position.x >= bounds.min.x
+            && hit.position.x <= bounds.max.x
+            && hit.position.z >= bounds.min.z
+            && hit.position.z <= bounds.max.z)
         {
-            return hit.position;
+            position = hit.position;
+            return true;
         }
 
-        return worldPoint;
+        position = default;
+        return false;
+    }
+
+    public void RebuildPenNavMesh()
+    {
+        if (!buildNavMeshAtRuntime)
+        {
+            return;
+        }
+
+        if (spawnVolume == null)
+        {
+            spawnVolume = GetComponent<BoxCollider>();
+        }
+
+        BuildPenNavMesh();
+    }
+
+    public bool TryUseNavMeshDataFrom(DebugChickenSpawner source)
+    {
+        if (!buildNavMeshAtRuntime || source == null)
+        {
+            return false;
+        }
+
+        if (spawnVolume == null)
+        {
+            spawnVolume = GetComponent<BoxCollider>();
+        }
+
+        NavMeshSurface sourceSurface = source.GetComponent<NavMeshSurface>();
+        if (sourceSurface == null || sourceSurface.navMeshData == null)
+        {
+            return false;
+        }
+
+        // Every runtime pen is an offset copy of the authored pen. NavMeshData
+        // is local to its surface transform, so the original bake can be
+        // instanced at the cloned volume without rebuilding identical geometry.
+        NavMeshSurface surface = ConfigurePenNavMeshSurface();
+        surface.RemoveData();
+        surface.navMeshData = sourceSurface.navMeshData;
+        if (surface.isActiveAndEnabled)
+        {
+            surface.AddData();
+        }
+
+        return surface.navMeshData != null;
+    }
+
+    public static void BeginSuppressAutomaticNavMeshBuild()
+    {
+        automaticNavMeshBuildSuppressionDepth++;
+    }
+
+    public static void EndSuppressAutomaticNavMeshBuild()
+    {
+        automaticNavMeshBuildSuppressionDepth = Mathf.Max(
+            0,
+            automaticNavMeshBuildSuppressionDepth - 1);
     }
 
     private void BuildPenNavMesh()
     {
-        NavMeshSurface surface = GetComponent<NavMeshSurface>();
+        NavMeshSurface surface = ConfigurePenNavMeshSurface();
+        surface.BuildNavMesh();
 
+        if (surface.navMeshData == null)
+        {
+            Debug.LogError($"Could not build a NavMesh inside {name}.", this);
+        }
+    }
+
+    private NavMeshSurface ConfigurePenNavMeshSurface()
+    {
+        NavMeshSurface surface = GetComponent<NavMeshSurface>();
         if (surface == null)
         {
             surface = gameObject.AddComponent<NavMeshSurface>();
@@ -235,12 +379,7 @@ public class DebugChickenSpawner : MonoBehaviour
         surface.ignoreNavMeshObstacle = true;
         surface.minRegionArea = 0f;
         surface.buildHeightMesh = true;
-        surface.BuildNavMesh();
-
-        if (surface.navMeshData == null)
-        {
-            Debug.LogError($"Could not build a NavMesh inside {name}.", this);
-        }
+        return surface;
     }
 
     private static Bounds TransformWorldBoundsToLocal(Bounds worldBounds, Transform target)

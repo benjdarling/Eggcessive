@@ -580,12 +580,13 @@ public sealed class FoodShopController : MonoBehaviour
                 new Vector2(0f, rightHudRect.offsetMax.y);
         }
 
-        foodIconButton.transform.SetParent(rightHudPanel, false);
+        Transform toolPaletteParent = rightHudPanel.parent;
+        foodIconButton.transform.SetParent(toolPaletteParent, false);
         RectTransform iconRect = foodIconButton.GetComponent<RectTransform>();
-        iconRect.anchorMin = Vector2.one;
-        iconRect.anchorMax = Vector2.one;
-        iconRect.pivot = Vector2.one;
-        iconRect.anchoredPosition = new Vector2(-24f, -396f);
+        iconRect.anchorMin = Vector2.zero;
+        iconRect.anchorMax = Vector2.zero;
+        iconRect.pivot = Vector2.zero;
+        iconRect.anchoredPosition = new Vector2(172f, 24f);
         iconRect.sizeDelta = new Vector2(64f, 64f);
         foodToolImage = foodIconButton.GetComponent<Image>();
         StyleToolButtonFrame(foodIconButton, foodToolImage);
@@ -610,18 +611,18 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         handToolButton = CreateToolButton(
-            rightHudPanel,
+            toolPaletteParent,
             "Hand Tool Button",
-            new Vector2(-24f, -248f),
+            new Vector2(24f, 24f),
             "HAND",
             "1",
             new Color(0.18f, 0.48f, 0.34f, 1f),
             out handToolImage,
             out _);
         collectionToolButton = CreateToolButton(
-            rightHudPanel,
+            toolPaletteParent,
             "Collection Tool Button",
-            new Vector2(-24f, -322f),
+            new Vector2(98f, 24f),
             "BASKET",
             "2",
             new Color(0.15f, 0.39f, 0.63f, 1f),
@@ -688,9 +689,9 @@ public sealed class FoodShopController : MonoBehaviour
             typeof(Button));
         buttonObject.transform.SetParent(parent, false);
         RectTransform rect = buttonObject.GetComponent<RectTransform>();
-        rect.anchorMin = Vector2.one;
-        rect.anchorMax = Vector2.one;
-        rect.pivot = Vector2.one;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.zero;
+        rect.pivot = Vector2.zero;
         rect.anchoredPosition = position;
         rect.sizeDelta = new Vector2(64f, 64f);
         image = buttonObject.GetComponent<Image>();

@@ -121,7 +121,7 @@ public sealed class ProgressionSystem : MonoBehaviour
         1f, 1.5f, 2.25f, 3.5f, 5.5f, 8.5f, 13f, 20f, 30f
     };
 
-    private static readonly int[] BasketCosts = { 800, 1800, 4200 };
+    private static readonly int[] BasketCosts = { 800, 1800, 4200, 8000 };
     private static readonly int[] VacuumPowerCosts = { 9000, 28000, 85000 };
     private static readonly int[] VacuumRangeCosts = { 14000, 42000, 130000 };
     private static readonly int[] RobotSpeedCosts = { 180000, 520000, 1600000 };
@@ -308,11 +308,11 @@ public sealed class ProgressionSystem : MonoBehaviour
                 return new NodeState(
                     "Egg Basket",
                     "B",
-                    basketLevel >= 3
-                        ? "5 egg capacity"
-                        : $"Next: {new[] { 3, 4, 5 }[Mathf.Clamp(basketLevel, 0, 2)]} egg capacity",
+                    basketLevel >= EggCarryController.MaximumBasketLevel
+                        ? "6 egg capacity"
+                        : $"Next: {new[] { 3, 4, 5, 6 }[Mathf.Clamp(basketLevel, 0, 3)]} egg capacity",
                     basketLevel,
-                    3,
+                    EggCarryController.MaximumBasketLevel,
                     GetArrayCost(BasketCosts, basketLevel),
                     true,
                     collection != null && !collection.HasVacuum);
@@ -328,7 +328,8 @@ public sealed class ProgressionSystem : MonoBehaviour
                     1,
                     VacuumPowerCosts[0],
                     true,
-                    collection != null && basketLevel >= 3);
+                    collection != null
+                        && basketLevel >= EggCarryController.MaximumBasketLevel);
 
             case UpgradeId.VacuumPower:
                 return new NodeState(
@@ -340,8 +341,9 @@ public sealed class ProgressionSystem : MonoBehaviour
                     vacuumPower,
                     3,
                     GetArrayCost(VacuumPowerCosts, vacuumPower),
-                    basketLevel >= 3,
-                    collection != null && basketLevel >= 3);
+                    basketLevel >= EggCarryController.MaximumBasketLevel,
+                    collection != null
+                        && basketLevel >= EggCarryController.MaximumBasketLevel);
 
             case UpgradeId.VacuumRange:
                 return new NodeState(
@@ -537,8 +539,11 @@ public sealed class ProgressionSystem : MonoBehaviour
             case UpgradeId.BasketCapacity:
             {
                 int current = collection != null ? collection.BasketUpgradeLevel : 0;
-                int target = Mathf.Clamp(targetLevel, 1, 3);
-                int[] capacities = { 3, 4, 5 };
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    1,
+                    EggCarryController.MaximumBasketLevel);
+                int[] capacities = { 3, 4, 5, 6 };
                 return new NodeState(
                     $"Basket Capacity {target}",
                     "B",
@@ -566,7 +571,8 @@ public sealed class ProgressionSystem : MonoBehaviour
                     GetArrayCost(VacuumPowerCosts, target - 1),
                     true,
                     collection != null
-                        && collection.BasketUpgradeLevel >= 3
+                        && collection.BasketUpgradeLevel
+                            >= EggCarryController.MaximumBasketLevel
                         && current >= target - 1);
             }
             case UpgradeId.VacuumRange:
@@ -640,6 +646,21 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     public bool TryPurchase(UpgradeId id, out string message)
     {
+        if (id is UpgradeId.IncubatorInstall
+            or UpgradeId.IncubatorCapacity
+            or UpgradeId.IncubatorSpeed
+            or UpgradeId.CrosshatcherInstall
+            or UpgradeId.CrosshatcherSpeed
+            or UpgradeId.CrosshatcherQuality
+            or UpgradeId.RobotUnlock
+            or UpgradeId.RobotSpeed
+            or UpgradeId.RobotCapacity
+            or UpgradeId.RobotSmartness)
+        {
+            message = "Use the focused pen's tech HUD";
+            return false;
+        }
+
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsSuppliesShopOpen)
         {
             message = "Upgrades are purchased between rounds";

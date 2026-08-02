@@ -1,10 +1,13 @@
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
 public sealed class PenHudController : MonoBehaviour
 {
+    public static PenHudController Instance { get; private set; }
+
     [SerializeField] private RectTransform buttonContent;
     [SerializeField] private PenButtonView buttonTemplate;
 
@@ -17,14 +20,33 @@ public sealed class PenHudController : MonoBehaviour
     private const float ButtonSpacing = 6f;
     private const float PanelChromeHeight = 42f;
 
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        Instance = null;
+    }
+
     private void Awake()
     {
+        Instance = this;
         ConfigureSingleColumnLayout();
+        PenEquipmentHudController equipmentHud =
+            GetComponent<PenEquipmentHudController>();
+        if (equipmentHud == null)
+        {
+            equipmentHud = gameObject.AddComponent<PenEquipmentHudController>();
+        }
+
+        TMP_Text styleSource = buttonTemplate != null
+            ? buttonTemplate.GetComponentInChildren<TMP_Text>(true)
+            : null;
+        equipmentHud.Initialize(transform, panelRoot, styleSource);
     }
 
     private void OnEnable()
     {
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
+        RoundSystem.PhaseChanged += HandleRoundPhaseChanged;
         if (manager != null)
         {
             manager.StateChanged -= Refresh;
@@ -49,9 +71,36 @@ public sealed class PenHudController : MonoBehaviour
     private void OnDisable()
     {
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
+        RoundSystem.PhaseChanged -= HandleRoundPhaseChanged;
         if (manager != null)
         {
             manager.StateChanged -= Refresh;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+    }
+
+    public static void ShowPenEarnings(int penIndex, int cents)
+    {
+        if (Instance == null || cents <= 0)
+        {
+            return;
+        }
+
+        for (int index = 0; index < Instance.buttons.Count; index++)
+        {
+            PenButtonView view = Instance.buttons[index];
+            if (view != null && view.PenIndex == penIndex)
+            {
+                view.ShowEarnings(cents);
+                return;
+            }
         }
     }
 
@@ -156,12 +205,21 @@ public sealed class PenHudController : MonoBehaviour
         if (buyButton != null && nextIndex >= 0)
         {
             int cost = manager.GetPenCostCents(nextIndex);
+            bool purchaseAvailable = RoundSystem.Instance == null
+                || RoundSystem.Instance.IsRoundInProgress;
             buyButton.RefreshPurchase(
                 nextIndex,
-                balance >= cost,
+                purchaseAvailable
+                    && !manager.IsPenPurchaseInProgress
+                    && balance >= cost,
                 cost,
                 balance);
         }
+    }
+
+    private void HandleRoundPhaseChanged(RoundSystem.RoundPhase phase)
+    {
+        Refresh();
     }
 
     private void HandleBalanceChanged(long balance)

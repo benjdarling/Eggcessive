@@ -1480,11 +1480,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CameraDistanceZoom
   targetCamera: {fileID: 330585545}
-  secondStepDistance: 8
-  thirdStepDistance: 10
-  smoothTime: 0.25
-  maximumZoomSpeed: 30
-  ignoreScrollOverUi: 1
+  fixedDistance: 7
 --- !u!114 &759980840
 MonoBehaviour:
   m_ObjectHideFlags: 0

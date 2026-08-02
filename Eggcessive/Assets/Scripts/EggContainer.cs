@@ -1,13 +1,11 @@
 using System;
 using System.Collections.Generic;
-using TMPro;
 using UnityEngine;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Collider))]
 public sealed class EggContainer : MonoBehaviour
 {
-    private const int InactiveRewardSortingOrder = 2000;
     private static readonly List<EggContainer> ActiveContainers =
         new List<EggContainer>();
 
@@ -21,8 +19,6 @@ public sealed class EggContainer : MonoBehaviour
     public Vector3 RewardPosition => transform.position + Vector3.up * 0.22f;
     public long TotalDepositedCents { get; private set; }
 
-    private TMP_Text inactiveRewardText;
-    private long inactiveRewardCents;
     private bool isFocused;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -45,26 +41,6 @@ public sealed class EggContainer : MonoBehaviour
         }
 
         GetComponent<Collider>().isTrigger = true;
-    }
-
-    private void LateUpdate()
-    {
-        if (inactiveRewardText == null || !inactiveRewardText.gameObject.activeSelf)
-        {
-            return;
-        }
-
-        Camera camera = Camera.main;
-        if (camera != null)
-        {
-            Vector3 direction = inactiveRewardText.transform.position
-                - camera.transform.position;
-            if (direction.sqrMagnitude > 0.0001f)
-            {
-                inactiveRewardText.transform.rotation =
-                    Quaternion.LookRotation(direction.normalized, Vector3.up);
-            }
-        }
     }
 
     private void OnDestroy()
@@ -103,16 +79,6 @@ public sealed class EggContainer : MonoBehaviour
     public void SetFocused(bool focused)
     {
         isFocused = focused;
-        if (!focused)
-        {
-            return;
-        }
-
-        inactiveRewardCents = 0;
-        if (inactiveRewardText != null)
-        {
-            inactiveRewardText.gameObject.SetActive(false);
-        }
     }
 
     private void OnTriggerEnter(Collider other)
@@ -198,59 +164,27 @@ public sealed class EggContainer : MonoBehaviour
 
         int value = Mathf.Max(1, valueCents);
         TotalDepositedCents += value;
-        if (isFocused)
+        PenExpansionManager penManager = PenExpansionManager.Instance;
+        int penIndex = penManager != null
+            ? penManager.GetPenIndex(this)
+            : -1;
+        bool isCurrentLocalPen = penIndex >= 0
+            ? penIndex == penManager.FocusedPenIndex
+            : isFocused;
+
+        if (isCurrentLocalPen)
         {
             RoundSystem.Instance?.ShowContainerCoinReward(RewardPosition, value);
         }
-        else
+        else if (penIndex >= 0)
         {
-            ShowInactiveReward(value);
+            PenHudController.ShowPenEarnings(penIndex, value);
         }
 
         EggScoreHud.AddCents(value);
         EggCollected?.Invoke(value);
         EggCollectedFromContainer?.Invoke(this, value);
         return true;
-    }
-
-    private void ShowInactiveReward(int valueCents)
-    {
-        inactiveRewardCents += valueCents;
-        EnsureInactiveRewardText();
-        inactiveRewardText.text = $"+{FormatMoney(inactiveRewardCents)}";
-        inactiveRewardText.gameObject.SetActive(true);
-    }
-
-    private void EnsureInactiveRewardText()
-    {
-        if (inactiveRewardText != null)
-        {
-            return;
-        }
-
-        GameObject textObject = new GameObject("Inactive Pen Earnings");
-        textObject.transform.SetParent(transform, false);
-        textObject.transform.localPosition = new Vector3(0f, 0.65f, 0f);
-        textObject.transform.localScale = Vector3.one * 0.1f;
-        inactiveRewardText = textObject.AddComponent<TextMeshPro>();
-        inactiveRewardText.font = TMP_Settings.defaultFontAsset;
-        inactiveRewardText.fontSize = 3f;
-        inactiveRewardText.alignment = TextAlignmentOptions.Center;
-        inactiveRewardText.color = new Color(1f, 0.86f, 0.22f, 1f);
-        inactiveRewardText.fontStyle = FontStyles.Bold;
-        inactiveRewardText.textWrappingMode = TextWrappingModes.NoWrap;
-        MeshRenderer textRenderer = textObject.GetComponent<MeshRenderer>();
-        if (textRenderer != null)
-        {
-            // Coin and cash-note reward particle renderers use order 1000.
-            // Keep the accumulated off-screen pen reward readable above them.
-            textRenderer.sortingOrder = InactiveRewardSortingOrder;
-        }
-    }
-
-    private static string FormatMoney(long cents)
-    {
-        return $"${cents / 100:N0}.{Math.Abs(cents % 100):D2}";
     }
 
     private void OnValidate()
