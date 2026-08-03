@@ -334,6 +334,7 @@ public sealed class RoundSystem : MonoBehaviour
     private float nextRewardLandingSoundTime;
     private readonly int[] roundCashContributionsCents =
         new int[8];
+    private readonly int[] roundEggContributions = new int[8];
     private TMP_Text resultsSubtitleText;
     private TMP_Text resultsQuotaLabelText;
 
@@ -360,6 +361,33 @@ public sealed class RoundSystem : MonoBehaviour
         Phase == RoundPhase.InProgress || Phase == RoundPhase.Settling;
     public bool IsSuppliesShopOpen => Phase == RoundPhase.SuppliesShop;
     public bool DidPassRound => roundPassed;
+
+    public long GetPenCashPerMinuteCents(int penIndex)
+    {
+        if (penIndex < 0
+            || penIndex >= roundCashContributionsCents.Length
+            || roundElapsed <= 0.01f)
+        {
+            return 0L;
+        }
+
+        double centsPerMinute = roundCashContributionsCents[penIndex]
+            * 60d
+            / roundElapsed;
+        return (long)Math.Min(long.MaxValue, Math.Round(centsPerMinute));
+    }
+
+    public float GetPenEggsPerMinute(int penIndex)
+    {
+        if (penIndex < 0
+            || penIndex >= roundEggContributions.Length
+            || roundElapsed <= 0.01f)
+        {
+            return 0f;
+        }
+
+        return roundEggContributions[penIndex] * 60f / roundElapsed;
+    }
     public bool IsCashQuotaMet => roundCashQuotaCents > 0
         && roundCashMade >= roundCashQuotaCents;
 
@@ -970,6 +998,10 @@ public sealed class RoundSystem : MonoBehaviour
             roundCashContributionsCents,
             0,
             roundCashContributionsCents.Length);
+        Array.Clear(
+            roundEggContributions,
+            0,
+            roundEggContributions.Length);
         roundEggsLaid = 0;
         roundEggsIncubated = 0;
         roundChickensHatched = 0;
@@ -1030,7 +1062,7 @@ public sealed class RoundSystem : MonoBehaviour
         {
             roundNumberText.text = $"ROUND {roundNumber}";
         }
-        timerText.text = "FINALISING";
+        timerText.text = "--:--";
         StartCoroutine(FinalizeRoundAfterSettlement());
     }
 
@@ -1771,6 +1803,13 @@ public sealed class RoundSystem : MonoBehaviour
         int penIndex = PenExpansionManager.Instance != null
             ? PenExpansionManager.Instance.GetPenIndex(container)
             : 0;
+        int safePenIndex = Mathf.Clamp(
+            penIndex,
+            0,
+            roundEggContributions.Length - 1);
+        roundEggContributions[safePenIndex] = SaturatingAdd(
+            roundEggContributions[safePenIndex],
+            1);
         AddPenCashContribution(penIndex, cents);
         bool isPrimaryPen = penIndex <= 0;
         if (isPrimaryPen && IsRoundAcceptingEggs && roundEggTarget > 0)
@@ -3230,7 +3269,7 @@ public sealed class RoundSystem : MonoBehaviour
         string[] values =
         {
             roundEggsCollected.ToString(),
-            $"{eggsPerMinute:0.0}",
+            $"{eggsPerMinute:0}",
             FormatMoney(EggScoreHud.CurrentCents),
             CountChickens().ToString(),
             trucksFilled.ToString()
@@ -5402,6 +5441,8 @@ public sealed class RoundSystem : MonoBehaviour
     private static void EnsureRobotRarityLogicTier(RectTransform treeContent)
     {
         ProgressionNodeButton tierTwo = null;
+        ProgressionNodeButton tierThree = null;
+        ProgressionNodeButton tierFour = null;
         ProgressionNodeButton[] nodes =
             treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
         for (int index = 0; index < nodes.Length; index++)
@@ -5412,56 +5453,73 @@ public sealed class RoundSystem : MonoBehaviour
                 continue;
             }
 
-            if (node.TargetLevel == 3)
+            if (node.TargetLevel == 4)
             {
-                return;
+                tierFour = node;
             }
-
-            if (node.TargetLevel == 2)
+            else if (node.TargetLevel == 3)
+            {
+                tierThree = node;
+            }
+            else if (node.TargetLevel == 2)
             {
                 tierTwo = node;
             }
         }
 
-        if (tierTwo == null)
+        if (tierFour != null || tierTwo == null)
         {
             return;
         }
 
-        GameObject clone = Instantiate(tierTwo.gameObject, tierTwo.transform.parent);
-        clone.name = "Upgrade Robot Logic 3";
-        RectTransform cloneRect = clone.transform as RectTransform;
-        RectTransform tierTwoRect = tierTwo.transform as RectTransform;
-        if (cloneRect != null && tierTwoRect != null)
+        if (tierThree == null)
         {
-            cloneRect.anchoredPosition =
-                tierTwoRect.anchoredPosition + Vector2.down * 95f;
-
-            GameObject connectorObject = new GameObject(
-                "Branch Connector",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(Image));
-            RectTransform connector = connectorObject.transform as RectTransform;
-            connector.SetParent(treeContent, false);
-            Vector2 start = tierTwoRect.anchoredPosition;
-            Vector2 end = cloneRect.anchoredPosition;
-            Vector2 direction = end - start;
-            SetRuntimeRect(
-                connector,
-                (start + end) * 0.5f,
-                new Vector2(direction.magnitude, 4f));
-            connector.localRotation = Quaternion.Euler(
-                0f,
-                0f,
-                Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg);
-            Image connectorImage = connectorObject.GetComponent<Image>();
-            connectorImage.color = new Color(0.37f, 0.25f, 0.62f, 0.45f);
-            connectorImage.raycastTarget = false;
-            connector.SetAsFirstSibling();
+            GameObject tierThreeObject = Instantiate(
+                tierTwo.gameObject,
+                tierTwo.transform.parent);
+            tierThreeObject.name = "Upgrade Robot Logic 3";
+            tierThree = tierThreeObject.GetComponent<ProgressionNodeButton>();
+            tierThree?.SetTargetLevel(3);
+            PositionLogicTier(treeContent, tierTwo, tierThree);
         }
 
-        clone.GetComponent<ProgressionNodeButton>()?.SetTargetLevel(3);
+        if (tierThree == null)
+        {
+            return;
+        }
+
+        GameObject tierFourObject = Instantiate(
+            tierThree.gameObject,
+            tierThree.transform.parent);
+        tierFourObject.name = "Upgrade Robot Logic 4 - Chicken Arms";
+        tierFour = tierFourObject.GetComponent<ProgressionNodeButton>();
+        tierFour?.SetTargetLevel(4);
+        PositionLogicTier(treeContent, tierThree, tierFour);
+    }
+
+    private static void PositionLogicTier(
+        RectTransform treeContent,
+        ProgressionNodeButton previous,
+        ProgressionNodeButton next)
+    {
+        RectTransform previousRect = previous != null
+            ? previous.transform as RectTransform
+            : null;
+        RectTransform nextRect = next != null
+            ? next.transform as RectTransform
+            : null;
+        if (previousRect == null || nextRect == null)
+        {
+            return;
+        }
+
+        nextRect.anchoredPosition =
+            previousRect.anchoredPosition + Vector2.down * 95f;
+        CreateRuntimeTreeConnector(
+            treeContent,
+            previousRect.anchoredPosition,
+            nextRect.anchoredPosition,
+            new Color(0.37f, 0.25f, 0.62f, 1f));
     }
 
     private static void EnsureVacuumUnlockNode(RectTransform treeContent)

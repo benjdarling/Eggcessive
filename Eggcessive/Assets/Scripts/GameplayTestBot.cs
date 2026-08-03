@@ -52,7 +52,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     private const float EfficientCollectionRatio = 0.72f;
     private const int MaximumEfficientRoundLeftovers = 2;
     private const int MaximumDesiredFeedPiles = 16;
-    private const int ChickensPerDesiredFoodPile = 4;
+    private const int ChickensPerDesiredFoodPile = 10;
     private const int ManualCollectionBacklogLoads = 2;
 
     [Header("Operation")]
@@ -67,7 +67,7 @@ public sealed class GameplayTestBot : MonoBehaviour
     [Header("Strategy")]
     [SerializeField, Min(0)] private int minimumFeedBags = 1;
     [SerializeField, Min(1)] private int maximumShopPurchasesPerVisit = 12;
-    [SerializeField, Min(1)] private int automatedOwnedPenTarget = 3;
+    [SerializeField, Min(1)] private int automatedOwnedPenTarget = 8;
     [SerializeField, Min(1f)] private float penNavigationInterval = 8f;
 
     [Header("Authored Status UI")]
@@ -321,12 +321,35 @@ public sealed class GameplayTestBot : MonoBehaviour
         }
 
         PenExpansionManager penManager = PenExpansionManager.Instance;
-        if (TryGetAffordablePenPurchase(
+        int focusedPenIndex = penManager != null
+            ? penManager.FocusedPenIndex
+            : -1;
+        bool autoFeederRequired = IsAutoFeederRequiredForFocusedPen(
+            penManager);
+        bool focusedPenReadyForExpansion =
+            IsFocusedPenReadyForExpansion(penManager);
+        if (autoFeederRequired)
+        {
+            Button autoFeederAction =
+                equipmentHud?.GetRecommendedAutomationButton();
+            if (IsUsable(autoFeederAction))
+            {
+                yield return ClickButton(
+                    autoFeederAction,
+                    $"ROUND  .  BUYING REQUIRED AUTO-FEEDER FOR PEN {focusedPenIndex + 1}");
+                yield break;
+            }
+        }
+
+        if (focusedPenReadyForExpansion
+            && TryGetAffordablePenPurchase(
                 penManager,
                 out int nextPenIndex))
         {
             int ownedBefore = penManager.OwnedPenCount;
-            Button buyPenButton = FindNamedButton("Buy New Pen Button");
+            Button buyPenButton = PenHudController.Instance != null
+                ? PenHudController.Instance.GetPurchaseButton()
+                : null;
             if (IsUsable(buyPenButton))
             {
                 yield return ClickButton(
@@ -352,7 +375,8 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        if (ShouldNavigateToAnotherPen(out int navigationTarget))
+        if (focusedPenReadyForExpansion
+            && ShouldNavigateToAnotherPen(out int navigationTarget))
         {
             nextPenNavigationTime =
                 Time.unscaledTime + penNavigationInterval;
@@ -362,13 +386,14 @@ public sealed class GameplayTestBot : MonoBehaviour
             yield break;
         }
 
-        int focusedPenIndex = penManager != null
-            ? penManager.FocusedPenIndex
-            : -1;
         EggCarryController collection = EggCarryController.Instance;
         int desiredPileCount = GetDesiredFeedPileCount(focusedPenIndex);
         if (foodShop != null
             && foodShop.OwnedFoodCount > 0
+            && (penManager == null
+                || !penManager.IsEquipmentOwned(
+                    focusedPenIndex,
+                    PenExpansionManager.EquipmentType.AutoFeeder))
             && !ShouldPauseFeedForEggBacklog(
                 penManager,
                 focusedPenIndex,
@@ -381,10 +406,26 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         Button localEquipmentAction =
             equipmentHud?.GetRecommendedAutomationButton();
+        bool missingCorePenEquipment = penManager != null
+            && (!penManager.IsEquipmentOwned(
+                    focusedPenIndex,
+                    PenExpansionManager.EquipmentType.Incubator)
+                || !penManager.IsEquipmentOwned(
+                    focusedPenIndex,
+                    PenExpansionManager.EquipmentType.Crosshatcher)
+                || EggCarryController.Instance != null
+                    && EggCarryController.Instance.BasketUpgradeLevel
+                        >= EggCarryController.MaximumBasketLevel
+                    && EggCarryController.Instance.HasVacuum
+                    && HasRecommendedPremiumEggProgression()
+                    && !penManager.IsEquipmentOwned(
+                        focusedPenIndex,
+                        PenExpansionManager.EquipmentType.Robot));
         bool canManageLocalTech = RoundSystem.Instance == null
             || RoundSystem.Instance.IsCashQuotaMet
             || penManager == null
-            || GetAvailableEggCount(penManager, focusedPenIndex) <= 0;
+            || GetAvailableEggCount(penManager, focusedPenIndex) <= 0
+            || missingCorePenEquipment;
         if (canManageLocalTech && IsUsable(localEquipmentAction))
         {
             yield return ClickButton(
@@ -465,28 +506,22 @@ public sealed class GameplayTestBot : MonoBehaviour
             $"CROSSHATCHER {occupiedBefore}/2  .  LOADING {chicken.Breed.ToString().ToUpperInvariant()}");
         yield return MovePointerToChickenPickup(chicken, pickupTarget);
 
-        if (!IsPointerOverChickenPickup(chicken, pickupTarget))
+        if (chicken == null
+            || pickupTarget == null
+            || !pickupTarget.CanPickUp)
         {
             yield return new WaitForSecondsRealtime(0.06f);
             yield break;
         }
 
-        QueueMouseButton(MouseButton.Left, true);
-        float pickupWait = 0f;
-
-        while (collection.HeldChicken != chicken && pickupWait < 0.4f)
+        // An exact automation pickup keeps nearby eggs from stealing the hand
+        // click in a crowded, capped pen. The pointer still shows the action.
+        QueueMouseButton(MouseButton.Left, false);
+        if (!collection.TryBeginCarryChicken(chicken))
         {
-            if (!TryGetChickenPickupScreenPoint(
-                    chicken,
-                    pickupTarget,
-                    out Vector2 livePoint))
-            {
-                break;
-            }
-
-            MovePointerSpring(livePoint, MouseButton.Left);
-            pickupWait += Time.unscaledDeltaTime;
-            yield return null;
+            SetStatus("CROSSHATCHER  .  CHICKEN BECAME UNAVAILABLE");
+            yield return new WaitForSecondsRealtime(0.06f);
+            yield break;
         }
 
         if (collection.HeldChicken != chicken
@@ -501,7 +536,14 @@ public sealed class GameplayTestBot : MonoBehaviour
 
         yield return MovePointer(machinePoint, MouseButton.Left);
         yield return new WaitForSecondsRealtime(pointerDwellTime);
+        bool delivered = collection.TryDeliverHeldChickenToCrosshatcher(
+            crosshatcher);
         QueueMouseButton(MouseButton.Left, false);
+
+        if (!delivered)
+        {
+            SetStatus("CROSSHATCHER  .  DELIVERY SLOT BECAME UNAVAILABLE");
+        }
 
         float acceptanceWait = 0f;
         while (crosshatcher != null
@@ -848,7 +890,8 @@ public sealed class GameplayTestBot : MonoBehaviour
             : -1;
         bool wantsAnotherPen = penManager != null
             && penManager.OwnedPenCount < automatedOwnedPenTarget
-            && nextPenIndex >= 0;
+            && nextPenIndex >= 0
+            && IsFocusedPenReadyForExpansion(penManager);
         ProgressionNodeButton[] nodes =
             Object.FindObjectsByType<ProgressionNodeButton>(
                 FindObjectsInactive.Include,
@@ -859,8 +902,10 @@ public sealed class GameplayTestBot : MonoBehaviour
             GetDesiredTotalFeedPileCount() - availableFoodPiles);
         int totalFoodSupply = availableFoodPiles
             + (foodShop != null ? foodShop.OwnedFoodCount : 0);
+        bool hasAnyAutoFeeder = HasAnyOwnedAutoFeeder(penManager);
 
         if (foodShop != null
+            && !hasAnyAutoFeeder
             && totalFoodSupply <= 0
             && desiredFeedInventory > 0)
         {
@@ -880,6 +925,199 @@ public sealed class GameplayTestBot : MonoBehaviour
                     yield break;
                 }
             }
+        }
+
+        EggCarryController collection = EggCarryController.Instance;
+        if (collection != null
+            && !collection.HasVacuum
+            && collection.BasketUpgradeLevel
+                < EggCarryController.MaximumBasketLevel)
+        {
+            ProgressionNodeButton nextBasket =
+                FindVacuumPriorityNode(nodes);
+            if (nextBasket != null)
+            {
+                yield return EnsureShopTabVisible(nextBasket);
+                Button basketButton = nextBasket.GetComponent<Button>();
+                if (CanPurchaseProgressionNode(basketButton))
+                {
+                    yield return ClickButton(
+                        basketButton,
+                        $"SHOP  .  PRIORITISING BASKET LEVEL {collection.BasketUpgradeLevel + 1}");
+                    Button previewBuy = FindNamedButton("Preview Buy");
+                    if (IsUsable(previewBuy))
+                    {
+                        shopPurchaseCount++;
+                        yield return ClickButton(
+                            previewBuy,
+                            $"SHOP  .  BUYING BASKET LEVEL {collection.BasketUpgradeLevel + 1}");
+                        yield break;
+                    }
+                }
+
+                ProgressionSystem.NodeState basketState =
+                    nextBasket.GetNodeState();
+                SetStatus(
+                    $"SHOP  .  SAVING FOR BASKET LEVEL "
+                    + $"{collection.BasketUpgradeLevel + 1}  "
+                    + $"{EggScoreHud.CurrentCents}/{basketState.Cost}");
+                yield return ClickNamedButton(
+                    "Done Shopping",
+                    $"SHOP  .  SAVING FOR BASKET LEVEL "
+                    + $"{collection.BasketUpgradeLevel + 1}");
+                yield break;
+            }
+        }
+
+        if (collection != null
+            && !collection.HasVacuum
+            && collection.BasketUpgradeLevel
+                >= EggCarryController.MaximumBasketLevel)
+        {
+            ProgressionNodeButton vacuumUnlock =
+                FindVacuumPriorityNode(nodes);
+            if (vacuumUnlock != null)
+            {
+                yield return EnsureShopTabVisible(vacuumUnlock);
+                Button vacuumButton = vacuumUnlock.GetComponent<Button>();
+                if (CanPurchaseProgressionNode(vacuumButton))
+                {
+                    yield return ClickButton(
+                        vacuumButton,
+                        "SHOP  .  PRIORITISING EGG VACUUM");
+                    Button previewBuy = FindNamedButton("Preview Buy");
+                    if (IsUsable(previewBuy))
+                    {
+                        shopPurchaseCount++;
+                        yield return ClickButton(
+                            previewBuy,
+                            "SHOP  .  BUYING EGG VACUUM");
+                        yield break;
+                    }
+                }
+
+                ProgressionSystem.NodeState vacuumState =
+                    vacuumUnlock.GetNodeState();
+                SetStatus(
+                    $"SHOP  .  SAVING FOR EGG VACUUM  "
+                    + $"{EggScoreHud.CurrentCents}/{vacuumState.Cost}");
+                yield return ClickNamedButton(
+                    "Done Shopping",
+                    "SHOP  .  SAVING FOR EGG VACUUM");
+                yield break;
+            }
+        }
+
+        int desiredFeedTier = GetDesiredFeedTier(RoundSystem.Instance);
+        ProgressionNodeButton feedSpeedPriorityNode =
+            foodShop != null
+            && foodShop.UnlockedFeedTier < desiredFeedTier
+                ? FindAffordableProgressionNode(
+                    nodes,
+                    ProgressionSystem.UpgradeId.FeedSpeed)
+                : null;
+        if ((hasAnyAutoFeeder || totalFoodSupply > 0)
+            && feedSpeedPriorityNode != null
+            && shopPurchaseCount < maximumShopPurchasesPerVisit)
+        {
+            yield return EnsureShopTabVisible(feedSpeedPriorityNode);
+            Button feedSpeedUpgrade =
+                feedSpeedPriorityNode.GetComponent<Button>();
+            if (CanPurchaseProgressionNode(feedSpeedUpgrade))
+            {
+                yield return ClickButton(
+                    feedSpeedUpgrade,
+                    $"SHOP  .  PRIORITISING FEED POWER {foodShop.UnlockedFeedTier + 1}/{desiredFeedTier}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        $"SHOP  .  UPGRADING FEED POWER {foodShop.UnlockedFeedTier + 1}/{desiredFeedTier}");
+                    yield break;
+                }
+            }
+        }
+
+        // Buy only a compact spread of the strongest available feed. This
+        // preserves round time for vacuuming instead of spending it placing a
+        // large number of weak individual piles.
+        if (foodShop != null
+            && !hasAnyAutoFeeder
+            && foodShop.OwnedFoodCount < desiredFeedInventory)
+        {
+            Button buyFeed = FindNamedButton("Buy Feed");
+            if (CanPurchaseProgressionNode(buyFeed))
+            {
+                yield return ClickButton(
+                    buyFeed,
+                    $"SHOP  .  RESTOCKING FEED {foodShop.OwnedFoodCount + 1}/{desiredFeedInventory}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        $"SHOP  .  BUYING FEED BAG {foodShop.OwnedFoodCount + 1}/{desiredFeedInventory}");
+                    yield break;
+                }
+            }
+        }
+
+        ProgressionNodeButton premiumPriority =
+            FindPremiumEggPriorityNode(nodes);
+        if (premiumPriority != null)
+        {
+            yield return EnsureShopTabVisible(premiumPriority);
+            Button premiumButton = premiumPriority.GetComponent<Button>();
+            if (CanPurchaseProgressionNode(premiumButton))
+            {
+                yield return ClickButton(
+                    premiumButton,
+                    $"SHOP  .  PRIORITISING {premiumButton.name.ToUpperInvariant()}");
+                Button previewBuy = FindNamedButton("Preview Buy");
+                if (IsUsable(previewBuy))
+                {
+                    shopPurchaseCount++;
+                    yield return ClickButton(
+                        previewBuy,
+                        $"SHOP  .  BUYING {premiumButton.name.ToUpperInvariant()}");
+                    yield break;
+                }
+            }
+        }
+
+        if (IsAutoFeederRequiredForFocusedPen(penManager))
+        {
+            int penIndex = penManager.FocusedPenIndex;
+            int cost = penManager.GetEquipmentPurchaseCost(
+                PenExpansionManager.EquipmentType.AutoFeeder);
+            SetStatus(
+                $"SHOP  .  SAVING FOR PEN {penIndex + 1} AUTO-FEEDER  "
+                + $"{EggScoreHud.CurrentCents}/{cost}");
+            yield return ClickNamedButton(
+                "Done Shopping",
+                $"SHOP  .  AUTO-FEEDER REQUIRED FOR PEN {penIndex + 1}");
+            yield break;
+        }
+
+        if (collection != null
+            && collection.HasVacuum
+            && collection.BasketUpgradeLevel
+                >= EggCarryController.MaximumBasketLevel
+            && IsRobotRequiredForFocusedPen(penManager))
+        {
+            int penIndex = penManager.FocusedPenIndex;
+            int cost = penManager.GetEquipmentPurchaseCost(
+                PenExpansionManager.EquipmentType.Robot);
+            SetStatus(
+                $"SHOP  .  SAVING FOR PEN {penIndex + 1} ROBOT  "
+                + $"{EggScoreHud.CurrentCents}/{cost}");
+            yield return ClickNamedButton(
+                "Done Shopping",
+                $"SHOP  .  ROBOT REQUIRED BEFORE PEN EXPANSION");
+            yield break;
         }
 
         if (wantsAnotherPen)
@@ -912,55 +1150,6 @@ public sealed class GameplayTestBot : MonoBehaviour
                     yield return ClickButton(
                         previewBuy,
                         $"SHOP  â€¢  BUYING {priorityUpgrade.name.ToUpperInvariant()}");
-                    yield break;
-                }
-            }
-        }
-
-        ProgressionNodeButton feedSpeedPriorityNode =
-            FindAffordableProgressionNode(
-                nodes,
-                ProgressionSystem.UpgradeId.FeedSpeed);
-        if (totalFoodSupply > 0
-            && feedSpeedPriorityNode != null
-            && shopPurchaseCount < maximumShopPurchasesPerVisit)
-        {
-            yield return EnsureShopTabVisible(
-                feedSpeedPriorityNode);
-            Button feedSpeedUpgrade =
-                feedSpeedPriorityNode.GetComponent<Button>();
-            if (CanPurchaseProgressionNode(feedSpeedUpgrade))
-            {
-                yield return ClickButton(
-                    feedSpeedUpgrade,
-                    $"SHOP - PRIORITISING {feedSpeedUpgrade.name.ToUpperInvariant()}");
-                Button previewBuy = FindNamedButton("Preview Buy");
-                if (IsUsable(previewBuy))
-                {
-                    shopPurchaseCount++;
-                    yield return ClickButton(
-                        previewBuy,
-                        $"SHOP - BUYING {feedSpeedUpgrade.name.ToUpperInvariant()}");
-                    yield break;
-                }
-            }
-        }
-
-        if (foodShop != null
-            && foodShop.OwnedFoodCount < desiredFeedInventory)
-        {
-            Button buyFeed = FindNamedButton("Buy Feed");
-
-            if (CanPurchaseProgressionNode(buyFeed))
-            {
-                yield return ClickButton(buyFeed, "SHOP  .  SELECTING FEED BAG");
-                Button previewBuy = FindNamedButton("Preview Buy");
-                if (IsUsable(previewBuy))
-                {
-                    shopPurchaseCount++;
-                    yield return ClickButton(
-                        previewBuy,
-                        "SHOP  .  BUYING FEED BAG");
                     yield break;
                 }
             }
@@ -1207,6 +1396,93 @@ public sealed class GameplayTestBot : MonoBehaviour
         return bestNode;
     }
 
+    private static ProgressionNodeButton FindPremiumEggPriorityNode(
+        ProgressionNodeButton[] nodes)
+    {
+        ProgressionSystem progression = ProgressionSystem.Instance;
+        if (progression == null || nodes == null)
+        {
+            return null;
+        }
+
+        int roundNumber = RoundSystem.Instance != null
+            ? RoundSystem.Instance.RoundNumber
+            : 0;
+        int desiredPremiumLevel = GetDesiredPremiumEggLevel(roundNumber);
+        int desiredValueLevel = GetDesiredEggValueLevel(roundNumber);
+        int premiumLevel = progression.RareEggChanceLevel;
+        int valueLevel = progression.EggValueLevel;
+
+        ProgressionSystem.UpgradeId upgradeId;
+        int targetLevel;
+        if (premiumLevel < 2)
+        {
+            upgradeId = ProgressionSystem.UpgradeId.RareEggChance;
+            targetLevel = premiumLevel + 1;
+        }
+        else if (valueLevel < desiredValueLevel
+            && (valueLevel + 1 < premiumLevel
+                || premiumLevel >= desiredPremiumLevel))
+        {
+            upgradeId = ProgressionSystem.UpgradeId.EggValue;
+            targetLevel = valueLevel + 1;
+        }
+        else if (premiumLevel < desiredPremiumLevel)
+        {
+            upgradeId = ProgressionSystem.UpgradeId.RareEggChance;
+            targetLevel = premiumLevel + 1;
+        }
+        else if (valueLevel < desiredValueLevel)
+        {
+            upgradeId = ProgressionSystem.UpgradeId.EggValue;
+            targetLevel = valueLevel + 1;
+        }
+        else
+        {
+            return null;
+        }
+
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node != null
+                && node.UpgradeId == upgradeId
+                && node.TargetLevel == targetLevel)
+            {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    public static bool HasRecommendedPremiumEggProgression()
+    {
+        ProgressionSystem progression = ProgressionSystem.Instance;
+        if (progression == null)
+        {
+            return false;
+        }
+
+        int roundNumber = RoundSystem.Instance != null
+            ? RoundSystem.Instance.RoundNumber
+            : 0;
+        return progression.RareEggChanceLevel
+                >= GetDesiredPremiumEggLevel(roundNumber)
+            && progression.EggValueLevel
+                >= GetDesiredEggValueLevel(roundNumber);
+    }
+
+    private static int GetDesiredPremiumEggLevel(int roundNumber)
+    {
+        return Mathf.Clamp(2 + Mathf.Max(0, roundNumber) / 4, 2, 6);
+    }
+
+    private static int GetDesiredEggValueLevel(int roundNumber)
+    {
+        return Mathf.Clamp(1 + Mathf.Max(0, roundNumber) / 4, 1, 5);
+    }
+
     private static IncubatorController FindIncubator()
     {
         PenExpansionManager manager = PenExpansionManager.Instance;
@@ -1441,6 +1717,72 @@ public sealed class GameplayTestBot : MonoBehaviour
                 >= manager.GetPenCostCents(nextPenIndex);
     }
 
+    private static bool IsAutoFeederRequiredForFocusedPen(
+        PenExpansionManager manager)
+    {
+        if (manager == null || manager.FocusedPenIndex < 0)
+        {
+            return false;
+        }
+
+        int penIndex = manager.FocusedPenIndex;
+        return manager.IsEquipmentOwned(
+                penIndex,
+                PenExpansionManager.EquipmentType.Robot)
+            && !manager.IsEquipmentOwned(
+                penIndex,
+                PenExpansionManager.EquipmentType.AutoFeeder);
+    }
+
+    private static bool IsRobotRequiredForFocusedPen(
+        PenExpansionManager manager)
+    {
+        return manager != null
+            && manager.FocusedPenIndex >= 0
+            && manager.IsPenOwned(manager.FocusedPenIndex)
+            && !manager.IsEquipmentOwned(
+                manager.FocusedPenIndex,
+                PenExpansionManager.EquipmentType.Robot);
+    }
+
+    private static bool IsFocusedPenReadyForExpansion(
+        PenExpansionManager manager)
+    {
+        if (manager == null || manager.FocusedPenIndex < 0)
+        {
+            return false;
+        }
+
+        int penIndex = manager.FocusedPenIndex;
+        return manager.IsEquipmentOwned(
+                penIndex,
+                PenExpansionManager.EquipmentType.Robot)
+            && manager.IsEquipmentOwned(
+                penIndex,
+                PenExpansionManager.EquipmentType.AutoFeeder);
+    }
+
+    private static bool HasAnyOwnedAutoFeeder(
+        PenExpansionManager manager)
+    {
+        if (manager == null)
+        {
+            return false;
+        }
+
+        for (int penIndex = 0; penIndex < manager.PenCount; penIndex++)
+        {
+            if (manager.IsEquipmentOwned(
+                    penIndex,
+                    PenExpansionManager.EquipmentType.AutoFeeder))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool ShouldPauseFeedForEggBacklog(
         PenExpansionManager manager,
         int penIndex,
@@ -1571,6 +1913,17 @@ public sealed class GameplayTestBot : MonoBehaviour
             Mathf.Max(baseline, roundScaledFloor),
             baseline,
             Mathf.Max(MaximumDesiredFeedPiles, baseline));
+
+        if (!round.DidPassRound)
+        {
+            // A missed quota with functioning collection is a production
+            // problem. Cover the full flock next round instead of increasing
+            // feed by only one pile every few rounds.
+            desiredFeedPiles = Mathf.Max(
+                desiredFeedPiles,
+                GetMaximumChickenCoveragePileTarget());
+        }
+
         if (round.RoundEggsLaid < 3)
         {
             return;
@@ -1596,6 +1949,62 @@ public sealed class GameplayTestBot : MonoBehaviour
                 scaledTarget,
                 Mathf.Max(2, baseline),
                 Mathf.Max(MaximumDesiredFeedPiles, baseline)));
+    }
+
+    private static int GetDesiredFeedTier(RoundSystem round)
+    {
+        if (round == null)
+        {
+            return 2;
+        }
+
+        int targetTier = 1 + round.RoundNumber / 3;
+        if (!round.DidPassRound)
+        {
+            targetTier++;
+        }
+
+        return Mathf.Clamp(
+            targetTier,
+            2,
+            FoodShopController.MaximumFeedTier);
+    }
+
+    private static int GetMaximumChickenCoveragePileTarget()
+    {
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        int largestFlock = 0;
+        if (manager != null && manager.IsInitialized)
+        {
+            for (int index = 0; index < manager.PenCount; index++)
+            {
+                if (manager.IsPenOwned(index))
+                {
+                    largestFlock = Mathf.Max(
+                        largestFlock,
+                        manager.GetChickenCount(index));
+                }
+            }
+        }
+        else
+        {
+            IReadOnlyList<ChickenController> chickens =
+                ChickenController.ActiveInstances;
+            for (int index = 0; index < chickens.Count; index++)
+            {
+                if (chickens[index] != null
+                    && chickens[index].isActiveAndEnabled)
+                {
+                    largestFlock++;
+                }
+            }
+        }
+
+        return Mathf.Clamp(
+            Mathf.CeilToInt(
+                largestFlock / (float)ChickensPerDesiredFoodPile),
+            1,
+            MaximumDesiredFeedPiles);
     }
 
     private int GetDesiredFeedPileCount(int penIndex = -1)
@@ -1681,7 +2090,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         if (crosshatcher == null
             || !crosshatcher.isActiveAndEnabled
             || crosshatcher.IsProcessing
-            || crosshatcher.OccupiedSlots >= 2)
+            || !crosshatcher.CanAcceptCarriedChicken)
         {
             return false;
         }
@@ -1698,6 +2107,10 @@ public sealed class GameplayTestBot : MonoBehaviour
                 FindObjectsInactive.Exclude,
                 FindObjectsSortMode.None);
         var candidates = new List<CrosshatchCandidate>(targets.Length);
+        PenExpansionManager penManager = PenExpansionManager.Instance;
+        int focusedPenIndex = penManager != null && penManager.IsInitialized
+            ? penManager.FocusedPenIndex
+            : -1;
         Vector2 pointerPosition = automationInputMouse != null
             ? automationInputMouse.position.ReadValue()
             : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
@@ -1714,15 +2127,13 @@ public sealed class GameplayTestBot : MonoBehaviour
                 || chicken == null
                 || chicken.Breed
                     == ChickenController.ChickenBreed.Cosmic
+                || focusedPenIndex >= 0
+                    && penManager.GetClosestPenIndex(
+                        chicken.transform.position) != focusedPenIndex
                 || !TryGetChickenPickupScreenPoint(
                     chicken,
                     target,
-                    out Vector2 point)
-                || !RayHitsChickenPickup(
-                    camera,
-                    point,
-                    chicken,
-                    target))
+                    out Vector2 point))
             {
                 continue;
             }
@@ -1763,8 +2174,17 @@ public sealed class GameplayTestBot : MonoBehaviour
             return false;
         }
 
+        if (IsChickenCapReached()
+            && TrySelectLowestMatchingCrosshatchPair(
+                candidates,
+                out selectedChicken,
+                out selectedTarget))
+        {
+            return true;
+        }
+
         bool canReplaceChicken = HasWorkingIncubator();
-        float bestProfit = 0f;
+        float bestProfit = float.NegativeInfinity;
         float bestResultTier = -1f;
         float bestDistance = float.PositiveInfinity;
         int bestFirstIndex = -1;
@@ -1813,7 +2233,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             }
         }
 
-        if (bestFirstIndex < 0 || bestProfit <= 0f)
+        if (bestFirstIndex < 0)
         {
             return false;
         }
@@ -1838,6 +2258,29 @@ public sealed class GameplayTestBot : MonoBehaviour
                 out ChickenController.ChickenBreed loadedBreed))
         {
             return false;
+        }
+
+        if (IsChickenCapReached())
+        {
+            float nearestMatchDistance = float.PositiveInfinity;
+            for (int index = 0; index < candidates.Count; index++)
+            {
+                CrosshatchCandidate candidate = candidates[index];
+                if (candidate.Chicken.Breed != loadedBreed
+                    || candidate.PointerDistance >= nearestMatchDistance)
+                {
+                    continue;
+                }
+
+                nearestMatchDistance = candidate.PointerDistance;
+                selectedChicken = candidate.Chicken;
+                selectedTarget = candidate.Target;
+            }
+
+            if (selectedChicken != null)
+            {
+                return true;
+            }
         }
 
         bool canReplaceChicken = HasWorkingIncubator();
@@ -1874,6 +2317,54 @@ public sealed class GameplayTestBot : MonoBehaviour
             bestDistance = distance;
             selectedChicken = candidate.Chicken;
             selectedTarget = candidate.Target;
+        }
+
+        return selectedChicken != null;
+    }
+
+    private static bool TrySelectLowestMatchingCrosshatchPair(
+        List<CrosshatchCandidate> candidates,
+        out ChickenController selectedChicken,
+        out ChickenPickupTarget selectedTarget)
+    {
+        selectedChicken = null;
+        selectedTarget = null;
+        int bestBreed = int.MaxValue;
+        float bestDistance = float.PositiveInfinity;
+
+        for (int firstIndex = 0;
+            firstIndex < candidates.Count - 1;
+            firstIndex++)
+        {
+            CrosshatchCandidate first = candidates[firstIndex];
+            int breed = (int)first.Chicken.Breed;
+            for (int secondIndex = firstIndex + 1;
+                secondIndex < candidates.Count;
+                secondIndex++)
+            {
+                CrosshatchCandidate second = candidates[secondIndex];
+                if (second.Chicken.Breed != first.Chicken.Breed)
+                {
+                    continue;
+                }
+
+                float distance = first.PointerDistance
+                    + second.PointerDistance;
+                if (breed > bestBreed
+                    || breed == bestBreed && distance >= bestDistance)
+                {
+                    continue;
+                }
+
+                int selectedIndex = SelectFirstParentIndex(
+                    candidates,
+                    firstIndex,
+                    secondIndex);
+                bestBreed = breed;
+                bestDistance = distance;
+                selectedChicken = candidates[selectedIndex].Chicken;
+                selectedTarget = candidates[selectedIndex].Target;
+            }
         }
 
         return selectedChicken != null;

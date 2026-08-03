@@ -54,6 +54,8 @@ public sealed class CrosshatcherController : MonoBehaviour
     private MachineState state;
     private AudioSource processingAudioSource;
     private AudioSource hatchDoneAudioSource;
+    private Object chickenReservationOwner;
+    private int reservedChickenSlots;
 
     public const int MaximumLevel = 10;
     public int SpeedLevel => speedLevel;
@@ -62,6 +64,32 @@ public sealed class CrosshatcherController : MonoBehaviour
     public float ImprovementChance => GetImprovementChance(qualityLevel);
     public int OccupiedSlots => (chickenOne != null ? 1 : 0) + (chickenTwo != null ? 1 : 0);
     public bool IsProcessing => state == MachineState.Processing;
+    public bool CanAcceptCarriedChicken
+    {
+        get
+        {
+            ClearStaleReservation();
+            return isActiveAndEnabled
+                && state != MachineState.Processing
+                && state != MachineState.ReadyToRelease
+                && OccupiedSlots + reservedChickenSlots < 2;
+        }
+    }
+    public bool HasChickenReservation(Object owner) =>
+        owner != null
+        && chickenReservationOwner == owner
+        && reservedChickenSlots > 0;
+    public Vector3 RobotDeliveryPosition
+    {
+        get
+        {
+            Vector3 socketCenter = chickenStartOne != null
+                && chickenStartTwo != null
+                    ? (chickenStartOne.position + chickenStartTwo.position) * 0.5f
+                    : transform.position;
+            return socketCenter - transform.forward * 0.65f;
+        }
+    }
 
     public bool TryGetLoadedBreed(
         out ChickenController.ChickenBreed breed)
@@ -152,16 +180,82 @@ public sealed class CrosshatcherController : MonoBehaviour
         return TryAcceptChicken(chicken, true);
     }
 
+    public bool TryReserveChickenPair(Object owner)
+    {
+        ClearStaleReservation();
+        if (owner == null
+            || !isActiveAndEnabled
+            || state != MachineState.Waiting
+            || OccupiedSlots != 0
+            || chickenReservationOwner != null)
+        {
+            return false;
+        }
+
+        chickenReservationOwner = owner;
+        reservedChickenSlots = 2;
+        return true;
+    }
+
+    public void ReleaseChickenReservation(Object owner)
+    {
+        if (owner != null && chickenReservationOwner == owner)
+        {
+            chickenReservationOwner = null;
+            reservedChickenSlots = 0;
+        }
+    }
+
+    public bool TryAcceptReservedChicken(
+        ChickenController chicken,
+        Object owner)
+    {
+        ClearStaleReservation();
+        if (owner == null
+            || chickenReservationOwner != owner
+            || reservedChickenSlots <= 0)
+        {
+            return false;
+        }
+
+        bool accepted = TryAcceptChicken(chicken, true, true);
+        if (!accepted)
+        {
+            return false;
+        }
+
+        reservedChickenSlots--;
+        if (reservedChickenSlots <= 0)
+        {
+            chickenReservationOwner = null;
+            reservedChickenSlots = 0;
+        }
+
+        return true;
+    }
+
     private bool TryAcceptChicken(
         ChickenController chicken,
         bool allowMachineControlled)
     {
+        return TryAcceptChicken(chicken, allowMachineControlled, false);
+    }
+
+    private bool TryAcceptChicken(
+        ChickenController chicken,
+        bool allowMachineControlled,
+        bool consumeReservation)
+    {
+        ClearStaleReservation();
         if (chicken == null
             || state == MachineState.Processing
+            || state == MachineState.ReadyToRelease
             || (chicken.IsMachineControlled && !allowMachineControlled)
             || chicken == chickenOne
             || chicken == chickenTwo
-            || OccupiedSlots >= 2)
+            || OccupiedSlots >= 2
+            || (!consumeReservation
+                && OccupiedSlots + reservedChickenSlots >= 2))
         {
             return false;
         }
@@ -470,9 +564,20 @@ public sealed class CrosshatcherController : MonoBehaviour
 
     private void OnDisable()
     {
+        chickenReservationOwner = null;
+        reservedChickenSlots = 0;
         if (processingAudioSource != null)
         {
             processingAudioSource.Stop();
+        }
+    }
+
+    private void ClearStaleReservation()
+    {
+        if (chickenReservationOwner == null)
+        {
+            chickenReservationOwner = null;
+            reservedChickenSlots = 0;
         }
     }
 

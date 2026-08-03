@@ -122,11 +122,20 @@ public sealed class ProgressionSystem : MonoBehaviour
     };
 
     private static readonly int[] BasketCosts = { 800, 1800, 4200, 8000 };
-    private static readonly int[] VacuumPowerCosts = { 9000, 28000, 85000 };
-    private static readonly int[] VacuumRangeCosts = { 14000, 42000, 130000 };
+    // The $90 unlock remains accessible, but the post-unlock tiers scale
+    // sharply because power and especially range multiply collection income.
+    private static readonly int[] VacuumPowerCosts =
+    {
+        9000, 150000, 1500000
+    };
+    private static readonly int[] VacuumRangeCosts =
+    {
+        14000, 250000, 2500000
+    };
     private static readonly int[] RobotSpeedCosts = { 180000, 520000, 1600000 };
     private static readonly int[] RobotCapacityCosts = { 240000, 750000, 2400000 };
-    private static readonly int[] RobotSmartCosts = { 600000, 3500000, 12000000 };
+    private static readonly int[] RobotSmartCosts =
+        { 600000, 3500000, 12000000, 60000000 };
     private const int RobotUnlockCost = 120000;
 
     [SerializeField, Range(0, 8)] private int rareEggChanceLevel;
@@ -398,10 +407,11 @@ public sealed class ProgressionSystem : MonoBehaviour
                         0 => "Route spare eggs to incubator",
                         1 => "Prioritise valuable eggs and open incubator slots",
                         2 => "Upgrade to collect strictly by egg rarity",
-                        _ => "Collects highest-rarity eggs before nearby common eggs"
+                        3 => "Add paired chicken arms for the crosshatcher",
+                        _ => "Carries two chickens to an available crosshatcher"
                     },
                     smartness,
-                    3,
+                    EggCollectorRobot.ChickenArmsSmartnessLevel,
                     GetArrayCost(RobotSmartCosts, smartness),
                     robotUnlocked,
                     robotUnlocked);
@@ -623,7 +633,10 @@ public sealed class ProgressionSystem : MonoBehaviour
             case UpgradeId.RobotSmartness:
             {
                 int current = collection != null ? collection.RobotSmartnessLevel : 0;
-                int target = Mathf.Clamp(targetLevel, 1, 3);
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    1,
+                    EggCollectorRobot.ChickenArmsSmartnessLevel);
                 return new NodeState(
                     $"Robot Logic Upgrade {target}",
                     "AI",
@@ -631,7 +644,8 @@ public sealed class ProgressionSystem : MonoBehaviour
                     {
                         1 => "Route spare eggs to the incubator",
                         2 => "Prioritise valuable eggs and open incubator slots",
-                        _ => "Collect highest-rarity eggs before closer common eggs"
+                        3 => "Collect highest-rarity eggs before closer common eggs",
+                        _ => "Add two IK arms and carry paired chickens to the crosshatcher"
                     },
                     current,
                     target,

@@ -90,6 +90,7 @@ public sealed class FoodShopController : MonoBehaviour
     public int OwnedFoodCount => ownedFood;
     public int UnlockedFeedTier => unlockedFeedTier;
     public string CurrentFeedName => FeedTierNames[unlockedFeedTier - 1];
+    public float CurrentFeedAmount => FeedAmounts[unlockedFeedTier - 1];
     public float CurrentFeedSpeedMultiplier => FeedSpeedMultipliers[unlockedFeedTier - 1];
     public int CurrentFeedBagCost => FeedBagCosts[unlockedFeedTier - 1];
     public bool HasFeedTierUpgrade => unlockedFeedTier < MaximumFeedTier;

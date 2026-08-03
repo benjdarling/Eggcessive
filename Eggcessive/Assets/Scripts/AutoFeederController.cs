@@ -1,0 +1,210 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+[DisallowMultipleComponent]
+public sealed class AutoFeederController : MonoBehaviour
+{
+    public const int MaximumLevel = 5;
+    private static readonly float[] DispenseIntervals =
+        { 12f, 10f, 8f, 6f, 4f };
+
+    [Header("Authored Parts")]
+    [SerializeField] private GameObject foodPrefab;
+    [SerializeField] private Transform[] foodSockets;
+    [SerializeField] private Transform dialHand;
+
+    [Header("Settings")]
+    [SerializeField, Range(1, MaximumLevel)] private int speedLevel = 1;
+    [SerializeField, Min(0.05f)] private float occupiedSocketRadius = 0.38f;
+
+    private float timeUntilDispense;
+    private Quaternion dialHandStartRotation;
+    private bool initialized;
+    private readonly List<int> freeSocketIndices = new List<int>(4);
+
+    public int SpeedLevel => speedLevel;
+    public float DispenseInterval => GetDispenseInterval(speedLevel);
+    public float TimeUntilDispense => timeUntilDispense;
+
+    private void Awake()
+    {
+        EnsureInitialized();
+    }
+
+    private void OnEnable()
+    {
+        EnsureInitialized();
+        if (timeUntilDispense <= 0f)
+        {
+            timeUntilDispense = DispenseInterval;
+        }
+
+        RefreshDial();
+    }
+
+    private void Update()
+    {
+        if (RoundSystem.Instance != null
+            && !RoundSystem.Instance.IsRoundInProgress)
+        {
+            RefreshDial();
+            return;
+        }
+
+        BuildFreeSocketList();
+        if (freeSocketIndices.Count <= 0)
+        {
+            // A full feeder is genuinely paused: neither its timer nor its
+            // dial advances until a pile is consumed and a socket clears.
+            RefreshDial();
+            return;
+        }
+
+        timeUntilDispense -= Time.deltaTime;
+        if (timeUntilDispense <= 0f)
+        {
+            DispenseAtRandomFreeSocket();
+        }
+
+        RefreshDial();
+    }
+
+    public void InstallOrUpgrade(int nextSpeedLevel)
+    {
+        EnsureInitialized();
+        float previousInterval = DispenseInterval;
+        float elapsedNormalized = previousInterval > 0.001f
+            ? 1f - Mathf.Clamp01(timeUntilDispense / previousInterval)
+            : 0f;
+
+        speedLevel = Mathf.Clamp(nextSpeedLevel, 1, MaximumLevel);
+        timeUntilDispense = DispenseInterval * (1f - elapsedNormalized);
+        if (timeUntilDispense <= 0f)
+        {
+            timeUntilDispense = DispenseInterval;
+        }
+
+        gameObject.SetActive(true);
+        RefreshDial();
+    }
+
+    public static float GetDispenseInterval(int level)
+    {
+        return DispenseIntervals[
+            Mathf.Clamp(level, 1, MaximumLevel) - 1];
+    }
+
+    private void EnsureInitialized()
+    {
+        if (initialized)
+        {
+            return;
+        }
+
+        initialized = true;
+        if (dialHand != null)
+        {
+            dialHandStartRotation = dialHand.localRotation;
+        }
+
+        if (timeUntilDispense <= 0f)
+        {
+            timeUntilDispense = DispenseInterval;
+        }
+    }
+
+    private void BuildFreeSocketList()
+    {
+        freeSocketIndices.Clear();
+        if (foodSockets == null)
+        {
+            return;
+        }
+
+        for (int socketIndex = 0;
+             socketIndex < foodSockets.Length;
+             socketIndex++)
+        {
+            Transform socket = foodSockets[socketIndex];
+            if (socket != null && !IsSocketOccupied(socket.position))
+            {
+                freeSocketIndices.Add(socketIndex);
+            }
+        }
+    }
+
+    private bool IsSocketOccupied(Vector3 socketPosition)
+    {
+        float radiusSquared = occupiedSocketRadius * occupiedSocketRadius;
+        IReadOnlyList<FoodPile> piles = FoodPile.ActivePiles;
+        for (int index = 0; index < piles.Count; index++)
+        {
+            FoodPile pile = piles[index];
+            if (pile != null
+                && pile.IsAvailable
+                && (pile.transform.position - socketPosition).sqrMagnitude
+                    <= radiusSquared)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void DispenseAtRandomFreeSocket()
+    {
+        if (foodPrefab == null || freeSocketIndices.Count <= 0)
+        {
+            timeUntilDispense = 0f;
+            return;
+        }
+
+        int randomListIndex = Random.Range(0, freeSocketIndices.Count);
+        Transform socket = foodSockets[freeSocketIndices[randomListIndex]];
+        if (socket == null || IsSocketOccupied(socket.position))
+        {
+            timeUntilDispense = 0f;
+            return;
+        }
+
+        GameObject food = Instantiate(
+            foodPrefab,
+            socket.position,
+            Quaternion.Euler(0f, Random.Range(0f, 360f), 0f));
+        food.name = $"Auto-Feeder Food ({socket.name})";
+        FoodPile pile = food.GetComponent<FoodPile>();
+        FoodShopController foodShop = FoodShopController.Instance;
+        if (pile != null && foodShop != null)
+        {
+            // Auto-feeders use the currently unlocked global feed tier. They
+            // do not consume a purchased bag or depend on the bag inventory.
+            pile.ConfigureFeed(
+                foodShop.CurrentFeedAmount,
+                foodShop.CurrentFeedSpeedMultiplier);
+        }
+
+        timeUntilDispense = DispenseInterval;
+        RoundSystem.Instance?.PlayFoodPlaceSfx();
+    }
+
+    private void RefreshDial()
+    {
+        if (dialHand == null)
+        {
+            return;
+        }
+
+        float progress = DispenseInterval > 0.001f
+            ? 1f - Mathf.Clamp01(timeUntilDispense / DispenseInterval)
+            : 0f;
+        dialHand.localRotation = dialHandStartRotation
+            * Quaternion.AngleAxis(progress * 360f, Vector3.up);
+    }
+
+    private void OnValidate()
+    {
+        speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
+        occupiedSocketRadius = Mathf.Max(0.05f, occupiedSocketRadius);
+    }
+}

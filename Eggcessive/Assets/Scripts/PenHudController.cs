@@ -9,17 +9,19 @@ public sealed class PenHudController : MonoBehaviour
     public static PenHudController Instance { get; private set; }
 
     [SerializeField] private RectTransform buttonContent;
-    [SerializeField] private PenButtonView buttonTemplate;
+    [SerializeField] private List<PenButtonView> authoredButtons =
+        new List<PenButtonView>();
 
     private readonly List<PenButtonView> buttons = new List<PenButtonView>();
     private PenButtonView buyButton;
     private RectTransform panelRoot;
     private PenExpansionManager manager;
+    private float rateRefreshTimer;
 
-    private const float ButtonHeight = 40f;
-    private const float ButtonSpacing = 6f;
-    private const float PanelChromeHeight = 42f;
-    private const float PanelWidth = 260f;
+    private float buttonWidth = 64f;
+    private float buttonHeight = 64f;
+    private float buttonSpacing = 6f;
+    private const float RateRefreshInterval = 0.25f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
@@ -30,7 +32,8 @@ public sealed class PenHudController : MonoBehaviour
     private void Awake()
     {
         Instance = this;
-        ConfigureSingleColumnLayout();
+        ConfigureHorizontalLayout();
+        HideAuthoredButtonsForPlayMode();
         PenEquipmentHudController equipmentHud =
             GetComponent<PenEquipmentHudController>();
         if (equipmentHud == null)
@@ -38,8 +41,11 @@ public sealed class PenHudController : MonoBehaviour
             equipmentHud = gameObject.AddComponent<PenEquipmentHudController>();
         }
 
-        TMP_Text styleSource = buttonTemplate != null
-            ? buttonTemplate.GetComponentInChildren<TMP_Text>(true)
+        PenButtonView firstButton = authoredButtons.Count > 0
+            ? authoredButtons[0]
+            : null;
+        TMP_Text styleSource = firstButton != null
+            ? firstButton.GetComponentInChildren<TMP_Text>(true)
             : null;
         equipmentHud.Initialize(transform, panelRoot, styleSource);
     }
@@ -66,6 +72,14 @@ public sealed class PenHudController : MonoBehaviour
         if (manager == null)
         {
             TryBindManager();
+            return;
+        }
+
+        rateRefreshTimer -= Time.unscaledDeltaTime;
+        if (rateRefreshTimer <= 0f)
+        {
+            rateRefreshTimer = RateRefreshInterval;
+            RefreshOwnedButtons();
         }
     }
 
@@ -118,6 +132,11 @@ public sealed class PenHudController : MonoBehaviour
         manager?.TryPurchaseNextPen();
     }
 
+    public Button GetPurchaseButton()
+    {
+        return buyButton != null ? buyButton.Button : null;
+    }
+
     private void TryBindManager()
     {
         PenExpansionManager candidate = PenExpansionManager.Instance;
@@ -139,47 +158,45 @@ public sealed class PenHudController : MonoBehaviour
 
     private void BuildButtons()
     {
-        for (int index = 0; index < buttons.Count; index++)
-        {
-            if (buttons[index] != null)
-            {
-                Destroy(buttons[index].gameObject);
-            }
-        }
-
-        if (buyButton != null)
-        {
-            Destroy(buyButton.gameObject);
-            buyButton = null;
-        }
-
         buttons.Clear();
-        for (int index = 0; index < manager.PenCount; index++)
+        buyButton = null;
+        int nextIndex = manager.NextUnownedPenIndex;
+        for (int index = 0; index < authoredButtons.Count; index++)
         {
-            if (!manager.IsPenOwned(index))
+            PenButtonView view = authoredButtons[index];
+            if (view == null)
             {
                 continue;
             }
 
-            PenButtonView view = Instantiate(buttonTemplate, buttonContent);
-            view.name = $"Pen {index + 1} Button";
-            view.InitializePen(this, index);
-            buttons.Add(view);
+            if (index >= manager.PenCount)
+            {
+                view.gameObject.SetActive(false);
+            }
+            else if (manager.IsPenOwned(index))
+            {
+                view.InitializePen(this, index);
+                buttons.Add(view);
+            }
+            else if (index == nextIndex)
+            {
+                view.InitializePurchase(this, index);
+                buyButton = view;
+            }
+            else
+            {
+                view.gameObject.SetActive(false);
+            }
         }
 
-        int nextIndex = manager.NextUnownedPenIndex;
-        if (nextIndex >= 0)
+        if (authoredButtons.Count < manager.PenCount)
         {
-            buyButton = Instantiate(buttonTemplate, buttonContent);
-            buyButton.name = "Buy New Pen Button";
-            buyButton.InitializePurchase(this, nextIndex);
-        }
-        else
-        {
-            buyButton = null;
+            Debug.LogError(
+                $"Pen HUD has {authoredButtons.Count} authored buttons for "
+                + $"{manager.PenCount} configured pens.",
+                this);
         }
 
-        buttonTemplate.gameObject.SetActive(false);
         ResizePanel(buttons.Count + (buyButton != null ? 1 : 0));
     }
 
@@ -196,11 +213,7 @@ public sealed class PenHudController : MonoBehaviour
             BuildButtons();
         }
 
-        for (int index = 0; index < buttons.Count; index++)
-        {
-            buttons[index].RefreshOwned(
-                buttons[index].PenIndex == manager.FocusedPenIndex);
-        }
+        RefreshOwnedButtons();
 
         int nextIndex = manager.NextUnownedPenIndex;
         if (buyButton != null && nextIndex >= 0)
@@ -228,7 +241,27 @@ public sealed class PenHudController : MonoBehaviour
         Refresh();
     }
 
-    private void ConfigureSingleColumnLayout()
+    private void RefreshOwnedButtons()
+    {
+        if (manager == null)
+        {
+            return;
+        }
+
+        RoundSystem roundSystem = RoundSystem.Instance;
+        for (int index = 0; index < buttons.Count; index++)
+        {
+            PenButtonView view = buttons[index];
+            float eggsPerMinute = roundSystem != null
+                ? roundSystem.GetPenEggsPerMinute(view.PenIndex)
+                : 0f;
+            view.RefreshOwned(
+                view.PenIndex == manager.FocusedPenIndex,
+                eggsPerMinute);
+        }
+    }
+
+    private void ConfigureHorizontalLayout()
     {
         if (buttonContent == null)
         {
@@ -243,9 +276,14 @@ public sealed class PenHudController : MonoBehaviour
             panelRoot.pivot = new Vector2(1f, 0f);
             panelRoot.anchoredPosition = new Vector2(-24f, 24f);
             panelRoot.SetSizeWithCurrentAnchors(
-                RectTransform.Axis.Horizontal,
-                PanelWidth);
+                RectTransform.Axis.Vertical,
+                buttonHeight);
         }
+
+        buttonContent.anchorMin = Vector2.zero;
+        buttonContent.anchorMax = Vector2.one;
+        buttonContent.anchoredPosition = Vector2.zero;
+        buttonContent.sizeDelta = Vector2.zero;
 
         GridLayoutGroup grid = buttonContent.GetComponent<GridLayoutGroup>();
         if (grid != null)
@@ -255,36 +293,42 @@ public sealed class PenHudController : MonoBehaviour
 
         VerticalLayoutGroup layout =
             buttonContent.GetComponent<VerticalLayoutGroup>();
-        if (layout == null)
+        if (layout != null)
         {
-            layout = buttonContent.gameObject
-                .AddComponent<VerticalLayoutGroup>();
+            layout.enabled = false;
         }
 
-        layout.padding = new RectOffset(0, 0, 0, 0);
-        layout.spacing = ButtonSpacing;
-        layout.childAlignment = TextAnchor.UpperCenter;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
-        layout.childForceExpandWidth = true;
-        layout.childForceExpandHeight = false;
-
-        RectTransform templateRect = buttonTemplate != null
-            ? buttonTemplate.GetComponent<RectTransform>()
-            : null;
-        if (templateRect != null)
+        HorizontalLayoutGroup horizontalLayout =
+            buttonContent.GetComponent<HorizontalLayoutGroup>();
+        if (horizontalLayout == null)
         {
-            templateRect.sizeDelta = new Vector2(0f, ButtonHeight);
-            LayoutElement element =
-                templateRect.GetComponent<LayoutElement>();
-            if (element == null)
-            {
-                element = templateRect.gameObject.AddComponent<LayoutElement>();
-            }
+            horizontalLayout = buttonContent.gameObject
+                .AddComponent<HorizontalLayoutGroup>();
+        }
 
-            element.minHeight = ButtonHeight;
-            element.preferredHeight = ButtonHeight;
-            element.flexibleHeight = 0f;
+        horizontalLayout.padding = new RectOffset(0, 0, 0, 0);
+        buttonSpacing = horizontalLayout.spacing;
+        horizontalLayout.childAlignment = TextAnchor.MiddleRight;
+        horizontalLayout.childControlWidth = false;
+        horizontalLayout.childControlHeight = false;
+        horizontalLayout.childForceExpandWidth = false;
+        horizontalLayout.childForceExpandHeight = false;
+
+        PenButtonView firstButton = authoredButtons.Count > 0
+            ? authoredButtons[0]
+            : null;
+        RectTransform firstButtonRect = firstButton != null
+            ? firstButton.GetComponent<RectTransform>()
+            : null;
+        if (firstButtonRect != null)
+        {
+            LayoutElement element = firstButtonRect.GetComponent<LayoutElement>();
+            buttonWidth = element != null && element.preferredWidth > 0f
+                ? element.preferredWidth
+                : firstButtonRect.rect.width;
+            buttonHeight = element != null && element.preferredHeight > 0f
+                ? element.preferredHeight
+                : firstButtonRect.rect.height;
         }
     }
 
@@ -302,13 +346,27 @@ public sealed class PenHudController : MonoBehaviour
             return;
         }
 
-        float buttonsHeight = visibleButtonCount > 0
-            ? visibleButtonCount * ButtonHeight
-                + (visibleButtonCount - 1) * ButtonSpacing
+        float buttonsWidth = visibleButtonCount > 0
+            ? visibleButtonCount * buttonWidth
+                + (visibleButtonCount - 1) * buttonSpacing
             : 0f;
         panelRoot.SetSizeWithCurrentAnchors(
+            RectTransform.Axis.Horizontal,
+            buttonsWidth);
+        panelRoot.SetSizeWithCurrentAnchors(
             RectTransform.Axis.Vertical,
-            PanelChromeHeight + buttonsHeight);
+            buttonHeight);
+    }
+
+    private void HideAuthoredButtonsForPlayMode()
+    {
+        for (int index = 0; index < authoredButtons.Count; index++)
+        {
+            if (authoredButtons[index] != null)
+            {
+                authoredButtons[index].gameObject.SetActive(false);
+            }
+        }
     }
 
 }

@@ -498,6 +498,11 @@ public sealed class ChickenController : MonoBehaviour
         AlignHeldBoneTo(attachPosition);
     }
 
+    public void SetHeldCarryRotation(Quaternion rotation)
+    {
+        heldBaseRotation = rotation;
+    }
+
     private void Awake()
     {
         EnsureSchedulerDriver();

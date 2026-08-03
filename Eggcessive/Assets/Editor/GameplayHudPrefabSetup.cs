@@ -14,6 +14,7 @@ public static class GameplayHudPrefabSetup
         "Assets/UI/prefab_EggScoreHud.prefab";
     private const string IconAtlasPath =
         "Assets/Resources/UI/HudIconAtlas.png";
+    private const int AuthoredPenButtonCount = 8;
 
     private static readonly string[] StatLabels =
     {
@@ -24,12 +25,6 @@ public static class GameplayHudPrefabSetup
         "TRUCKS"
     };
 
-    [InitializeOnLoadMethod]
-    private static void QueuePrefabMigration()
-    {
-        EditorApplication.delayCall += MigrateIfRequired;
-    }
-
     [MenuItem("Tools/Eggcessive/Rebuild Editable Gameplay HUD Prefabs")]
     public static void RebuildGameplayHudPrefabs()
     {
@@ -39,6 +34,31 @@ public static class GameplayHudPrefabSetup
         AssetDatabase.Refresh();
         Debug.Log(
             "Gameplay HUD objects are now authored and editable in their prefabs.");
+    }
+
+    [MenuItem("Tools/Eggcessive/Rebuild Editable Pen Buttons")]
+    public static void RebuildEditablePenButtons()
+    {
+        ConfigureSavedPrefab(ToolHudPrefabPath, ConfigurePenHud);
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log("The eight pen buttons are now authored in the HUD prefab.");
+    }
+
+    public static void ConfigurePenHud(GameObject root)
+    {
+        PenHudController controller = root.GetComponent<PenHudController>();
+        if (controller == null)
+        {
+            controller = root.AddComponent<PenHudController>();
+        }
+
+        TMP_Text existingText = root.GetComponentsInChildren<TMP_Text>(true)
+            .FirstOrDefault(text => text.font != null);
+        ConfigurePenNavigation(
+            root.transform,
+            existingText != null ? existingText.font : null,
+            controller);
     }
 
     public static void ConfigureRoundHud(GameObject root)
@@ -272,7 +292,7 @@ public static class GameplayHudPrefabSetup
             penHud = root.AddComponent<PenHudController>();
         }
 
-        ConfigurePenNavigation(panel, font, penHud);
+        ConfigurePenNavigation(root.transform, font, penHud);
 
         serializedController.FindProperty("handToolButton")
             .objectReferenceValue = handButton;
@@ -305,22 +325,16 @@ public static class GameplayHudPrefabSetup
         DestroyNamedDescendant(parent, "Pen Navigation");
 
         RectTransform panel = CreateUiObject("Pen Navigation", parent);
-        SetTopRightRect(
-            panel,
-            new Vector2(-24f, -206f),
-            new Vector2(260f, 128f));
+        panel.anchorMin = new Vector2(1f, 0f);
+        panel.anchorMax = new Vector2(1f, 0f);
+        panel.pivot = new Vector2(1f, 0f);
+        panel.anchoredPosition = new Vector2(-24f, 24f);
+        panel.sizeDelta = new Vector2(554f, 64f);
         Image panelImage = panel.gameObject.AddComponent<Image>();
         panelImage.sprite = GetUiSprite();
         panelImage.type = Image.Type.Sliced;
-        panelImage.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
-        ConfigureOutline(
-            panel.gameObject,
-            new Color(0.12f, 0.07f, 0.035f, 1f),
-            new Vector2(2f, -2f));
-        ConfigureShadow(
-            panel.gameObject,
-            new Color(0f, 0f, 0f, 0.5f),
-            new Vector2(3f, -4f));
+        panelImage.color = Color.clear;
+        panelImage.raycastTarget = false;
 
         TMP_Text title = CreateText(
             "Title",
@@ -337,33 +351,42 @@ public static class GameplayHudPrefabSetup
         titleRect.pivot = new Vector2(0.5f, 1f);
         titleRect.anchoredPosition = new Vector2(0f, -5f);
         titleRect.sizeDelta = new Vector2(0f, 22f);
+        title.gameObject.SetActive(false);
 
         RectTransform content = CreateUiObject("Buttons", panel);
-        content.anchorMin = new Vector2(0f, 0f);
-        content.anchorMax = new Vector2(1f, 1f);
-        content.offsetMin = new Vector2(6f, 6f);
-        content.offsetMax = new Vector2(-6f, -30f);
-        VerticalLayoutGroup layout =
-            content.gameObject.AddComponent<VerticalLayoutGroup>();
+        Stretch(content, 0f);
+        HorizontalLayoutGroup layout =
+            content.gameObject.AddComponent<HorizontalLayoutGroup>();
         layout.padding = new RectOffset(0, 0, 0, 0);
         layout.spacing = 6f;
-        layout.childAlignment = TextAnchor.UpperCenter;
-        layout.childControlWidth = true;
+        layout.childAlignment = TextAnchor.MiddleRight;
+        layout.childControlWidth = false;
         layout.childControlHeight = false;
-        layout.childForceExpandWidth = true;
+        layout.childForceExpandWidth = false;
         layout.childForceExpandHeight = false;
 
         RectTransform templateRect = CreateUiObject("Pen Button Template", content);
-        templateRect.sizeDelta = new Vector2(0f, 40f);
+        templateRect.sizeDelta = new Vector2(64f, 64f);
         LayoutElement templateLayout =
             templateRect.gameObject.AddComponent<LayoutElement>();
-        templateLayout.minHeight = 40f;
-        templateLayout.preferredHeight = 40f;
+        templateLayout.minWidth = 64f;
+        templateLayout.preferredWidth = 64f;
+        templateLayout.flexibleWidth = 0f;
+        templateLayout.minHeight = 64f;
+        templateLayout.preferredHeight = 64f;
         templateLayout.flexibleHeight = 0f;
         Image background = templateRect.gameObject.AddComponent<Image>();
         background.sprite = GetUiSprite();
         background.type = Image.Type.Sliced;
         background.color = new Color(0.22f, 0.34f, 0.25f, 1f);
+        ConfigureOutline(
+            templateRect.gameObject,
+            new Color(0.12f, 0.07f, 0.035f, 1f),
+            new Vector2(2f, -2f));
+        ConfigureShadow(
+            templateRect.gameObject,
+            new Color(0f, 0f, 0f, 0.5f),
+            new Vector2(3f, -4f));
         Button button = templateRect.gameObject.AddComponent<Button>();
         button.targetGraphic = background;
         button.navigation = new Navigation { mode = Navigation.Mode.None };
@@ -376,7 +399,7 @@ public static class GameplayHudPrefabSetup
             12f,
             TextAlignmentOptions.Center);
         penLabel.fontStyle = FontStyles.Bold;
-        penLabel.rectTransform.anchorMin = new Vector2(0f, 0.38f);
+        penLabel.rectTransform.anchorMin = new Vector2(0f, 0.47f);
         penLabel.rectTransform.anchorMax = Vector2.one;
         penLabel.rectTransform.offsetMin = new Vector2(2f, 0f);
         penLabel.rectTransform.offsetMax = new Vector2(-2f, -1f);
@@ -385,14 +408,18 @@ public static class GameplayHudPrefabSetup
             "Purchase Label",
             templateRect,
             font,
-            "BUY  $25.00",
-            8f,
+            "0\nE/MIN",
+            11f,
             TextAlignmentOptions.Center);
         purchaseLabel.color = new Color(1f, 0.89f, 0.46f, 1f);
         purchaseLabel.rectTransform.anchorMin = Vector2.zero;
-        purchaseLabel.rectTransform.anchorMax = new Vector2(1f, 0.42f);
-        purchaseLabel.rectTransform.offsetMin = new Vector2(2f, 5f);
-        purchaseLabel.rectTransform.offsetMax = new Vector2(-2f, 0f);
+        purchaseLabel.rectTransform.anchorMax = new Vector2(1f, 0f);
+        purchaseLabel.rectTransform.offsetMin = new Vector2(2f, 2f);
+        purchaseLabel.rectTransform.offsetMax = new Vector2(-2f, 30f);
+        purchaseLabel.enableAutoSizing = true;
+        purchaseLabel.fontSizeMin = 8f;
+        purchaseLabel.fontSizeMax = 11f;
+        purchaseLabel.textWrappingMode = TextWrappingModes.NoWrap;
 
         RectTransform progress = CreateUiObject("Savings Progress", templateRect);
         progress.anchorMin = new Vector2(0f, 0f);
@@ -414,6 +441,30 @@ public static class GameplayHudPrefabSetup
         fill.fillAmount = 0f;
         fill.raycastTarget = false;
 
+        TMP_Text earningsText = CreateText(
+            "Pen Earnings",
+            templateRect,
+            font,
+            "+$2.3k",
+            12f,
+            TextAlignmentOptions.Bottom);
+        earningsText.fontStyle = FontStyles.Bold;
+        earningsText.color = new Color(1f, 0.84f, 0.16f, 1f);
+        earningsText.textWrappingMode = TextWrappingModes.NoWrap;
+        earningsText.overflowMode = TextOverflowModes.Overflow;
+        earningsText.raycastTarget = false;
+        RectTransform earningsRect = earningsText.rectTransform;
+        earningsRect.anchorMin = new Vector2(0.5f, 1f);
+        earningsRect.anchorMax = new Vector2(0.5f, 1f);
+        earningsRect.pivot = new Vector2(0.5f, 0f);
+        earningsRect.anchoredPosition = new Vector2(0f, 8f);
+        earningsRect.sizeDelta = new Vector2(90f, 26f);
+        CanvasGroup earningsCanvas = earningsText.gameObject
+            .AddComponent<CanvasGroup>();
+        earningsCanvas.alpha = 0f;
+        earningsCanvas.interactable = false;
+        earningsCanvas.blocksRaycasts = false;
+
         PenButtonView view = templateRect.gameObject.AddComponent<PenButtonView>();
         SerializedObject serializedView = new SerializedObject(view);
         serializedView.FindProperty("button").objectReferenceValue = button;
@@ -422,12 +473,35 @@ public static class GameplayHudPrefabSetup
         serializedView.FindProperty("purchaseLabel").objectReferenceValue = purchaseLabel;
         serializedView.FindProperty("progressRoot").objectReferenceValue = progress.gameObject;
         serializedView.FindProperty("progressFill").objectReferenceValue = fill;
+        serializedView.FindProperty("earningsText").objectReferenceValue = earningsText;
+        serializedView.FindProperty("earningsCanvasGroup").objectReferenceValue = earningsCanvas;
         serializedView.ApplyModifiedPropertiesWithoutUndo();
-        templateRect.gameObject.SetActive(false);
+        PenButtonView[] authoredButtons =
+            new PenButtonView[AuthoredPenButtonCount];
+        for (int index = 0; index < authoredButtons.Length; index++)
+        {
+            PenButtonView authoredView = index == 0
+                ? view
+                : Object.Instantiate(view, content);
+            authoredView.name = $"Pen {index + 1} Button";
+            authoredView.ConfigureEditorPreview(
+                index,
+                focused: index == 0,
+                eggsPerMinute: 0f);
+            authoredButtons[index] = authoredView;
+        }
 
         SerializedObject serializedController = new SerializedObject(controller);
         serializedController.FindProperty("buttonContent").objectReferenceValue = content;
-        serializedController.FindProperty("buttonTemplate").objectReferenceValue = view;
+        SerializedProperty buttonsProperty =
+            serializedController.FindProperty("authoredButtons");
+        buttonsProperty.arraySize = authoredButtons.Length;
+        for (int index = 0; index < authoredButtons.Length; index++)
+        {
+            buttonsProperty.GetArrayElementAtIndex(index).objectReferenceValue =
+                authoredButtons[index];
+        }
+
         serializedController.ApplyModifiedPropertiesWithoutUndo();
         SetLayerRecursively(panel.gameObject, 5);
     }
@@ -487,7 +561,7 @@ public static class GameplayHudPrefabSetup
             "Value",
             row,
             font,
-            index == 1 ? "0.0" : "0",
+            "0",
             14f,
             TextAlignmentOptions.MidlineRight);
         valueText.color = new Color(1f, 0.87f, 0.27f, 1f);
@@ -809,33 +883,4 @@ public static class GameplayHudPrefabSetup
         }
     }
 
-    private static void MigrateIfRequired()
-    {
-        if (EditorApplication.isPlayingOrWillChangePlaymode
-            || EditorApplication.isCompiling
-            || EditorApplication.isUpdating)
-        {
-            return;
-        }
-
-        GameObject roundPrefab =
-            AssetDatabase.LoadAssetAtPath<GameObject>(RoundPrefabPath);
-        GameObject toolPrefab =
-            AssetDatabase.LoadAssetAtPath<GameObject>(ToolHudPrefabPath);
-        bool roundNeedsMigration = roundPrefab != null
-            && FindDescendant(
-                roundPrefab.transform,
-                "HUD Stat Row 0") == null;
-        bool toolsNeedMigration = toolPrefab != null
-            && FindDescendant(
-                toolPrefab.transform,
-                "Hand Tool Button") == null;
-        bool pensNeedMigration = toolPrefab != null
-            && FindDescendant(toolPrefab.transform, "Pen Navigation") == null;
-
-        if (roundNeedsMigration || toolsNeedMigration || pensNeedMigration)
-        {
-            RebuildGameplayHudPrefabs();
-        }
-    }
 }

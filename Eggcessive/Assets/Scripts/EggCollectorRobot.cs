@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using DitzelGames.FastIK;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -12,6 +13,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const float DestinationRefreshInterval = 0.1f;
     private const float DestinationMoveThreshold = 0.05f;
     private const float MaximumCollectionTripDuration = 3.5f;
+    public const int ChickenArmsSmartnessLevel = 4;
 
     [SerializeField] private Transform[] visibleEggSlots = null;
     [SerializeField, Min(0.01f)] private float pickupDistance = 0.24f;
@@ -20,9 +22,20 @@ public sealed class EggCollectorRobot : MonoBehaviour
     [SerializeField, Min(0.1f)] private float navMeshSampleDistance = 1.5f;
     [SerializeField, Min(0.05f)] private float targetNavMeshTolerance = 0.28f;
 
+    [Header("Smart 4 Chicken Arms")]
+    [SerializeField] private GameObject chickenArmRoot = null;
+    [SerializeField] private FastIKFabric[] chickenArmSolvers = null;
+    [SerializeField] private Transform[] chickenArmTargets = null;
+    [SerializeField] private Transform[] chickenCarrySlots = null;
+    [SerializeField, Min(0.1f)] private float chickenPickupDistance = 0.62f;
+    [SerializeField, Range(1f, 45f)] private float chickenFacingTolerance = 15f;
+    [SerializeField, Min(1f)] private float chickenTurnSpeed = 300f;
+    [SerializeField, Min(0.1f)] private float chickenDeliveryDistance = 0.75f;
+
     private NavMeshAgent agent;
     private EggContainer eggContainer;
     private IncubatorController incubator;
+    private CrosshatcherController crosshatcher;
     private ChickenEgg targetEgg;
     private int capacity = 3;
     private int storedEggs;
@@ -41,11 +54,22 @@ public sealed class EggCollectorRobot : MonoBehaviour
         new ChickenEgg[MaximumReachabilityCandidates];
     private readonly float[] nearestEggCandidateScores =
         new float[MaximumReachabilityCandidates];
+    private readonly ChickenController[] nearestChickenCandidates =
+        new ChickenController[MaximumReachabilityCandidates];
+    private readonly float[] nearestChickenCandidateDistances =
+        new float[MaximumReachabilityCandidates];
     private readonly RaycastHit[] obstructionHits = new RaycastHit[8];
     private int obstructionMask;
     private Vector3 lastDestination;
     private float nextDestinationRefreshTime;
     private bool hasDestination;
+    private readonly ChickenController[] carriedChickens =
+        new ChickenController[2];
+    private ChickenController targetChicken;
+    private bool chickenMissionActive;
+    private bool deliveringChickenPair;
+    private int carriedChickenCount;
+    private float nextChickenMissionCheckTime;
 
     public int StoredEggs => storedEggs;
     public int Capacity => capacity;
@@ -87,34 +111,45 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private void OnDisable()
     {
+        CancelChickenMission(true);
         ActiveRobots.Remove(this);
     }
 
     public void Configure(
         EggContainer targetContainer,
         IncubatorController targetIncubator,
+        CrosshatcherController targetCrosshatcher,
         float movementSpeed,
         int eggCapacity,
         int deliverySmartnessLevel)
     {
         eggContainer = targetContainer;
         incubator = targetIncubator;
+        crosshatcher = targetCrosshatcher;
         targetPenIndex = PenExpansionManager.Instance != null
             ? PenExpansionManager.Instance.GetPenIndex(targetContainer)
             : -1;
         capacity = Mathf.Max(1, eggCapacity);
-        smartnessLevel = Mathf.Clamp(deliverySmartnessLevel, 0, 3);
+        smartnessLevel = Mathf.Clamp(
+            deliverySmartnessLevel,
+            0,
+            ChickenArmsSmartnessLevel);
         agent.speed = Mathf.Max(0.1f, movementSpeed);
         agent.acceleration = agent.speed * 5f;
         agent.angularSpeed = 540f;
         TryPlaceOnNavMesh();
+        SetChickenArmsEnabled(
+            smartnessLevel >= ChickenArmsSmartnessLevel);
         RefreshVisibleEggs();
     }
 
     private void Update()
     {
+        UpdateChickenCarryPoses();
+
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
         {
+            CancelChickenMission(true);
             StopMoving();
             return;
         }
@@ -124,9 +159,20 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
+        if (chickenMissionActive)
+        {
+            UpdateChickenMission();
+            return;
+        }
+
         if (delivering)
         {
             UpdateDelivery();
+            return;
+        }
+
+        if (storedEggs <= 0 && TryBeginChickenMission())
+        {
             return;
         }
 
@@ -172,6 +218,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     public void FinalizeRound()
     {
+        CancelChickenMission(true);
         targetEgg = null;
         StopMoving();
         storedEggs = 0;
@@ -345,6 +392,433 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
 
         return count;
+    }
+
+    private bool TryBeginChickenMission()
+    {
+        if (smartnessLevel < ChickenArmsSmartnessLevel
+            || Time.time < nextChickenMissionCheckTime
+            || crosshatcher == null
+            || !crosshatcher.isActiveAndEnabled)
+        {
+            return false;
+        }
+
+        nextChickenMissionCheckTime = Time.time + targetRefreshInterval;
+        if (!TryFindChickenPair(out ChickenController first, out _)
+            || !crosshatcher.TryReserveChickenPair(this))
+        {
+            return false;
+        }
+
+        chickenMissionActive = true;
+        deliveringChickenPair = false;
+        targetEgg = null;
+        targetChicken = first;
+        carriedChickenCount = 0;
+        return true;
+    }
+
+    private void UpdateChickenMission()
+    {
+        if (crosshatcher == null || !crosshatcher.isActiveAndEnabled)
+        {
+            CancelChickenMission(true);
+            return;
+        }
+
+        if (deliveringChickenPair)
+        {
+            UpdateChickenPairDelivery();
+            return;
+        }
+
+        if (!crosshatcher.HasChickenReservation(this))
+        {
+            CancelChickenMission(true);
+            return;
+        }
+
+        if (!IsAvailableChickenTarget(targetChicken))
+        {
+            targetChicken = FindNearestAvailableChicken();
+            if (targetChicken == null)
+            {
+                CancelChickenMission(true);
+                return;
+            }
+        }
+
+        Vector3 targetPosition = targetChicken.transform.position;
+        SetDestination(targetPosition);
+        if (PlanarDistance(transform.position, targetPosition)
+            > chickenPickupDistance)
+        {
+            return;
+        }
+
+        StopMoving();
+        Vector3 facing = Vector3.ProjectOnPlane(
+            targetPosition - transform.position,
+            Vector3.up);
+        if (facing.sqrMagnitude <= 0.0001f)
+        {
+            GrabTargetChicken();
+            return;
+        }
+
+        Quaternion desiredRotation = Quaternion.LookRotation(
+            facing.normalized,
+            Vector3.up);
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation,
+            desiredRotation,
+            chickenTurnSpeed * Time.deltaTime);
+        float facingAngle = Vector3.Angle(transform.forward, facing);
+        if (facingAngle <= chickenFacingTolerance)
+        {
+            GrabTargetChicken();
+        }
+    }
+
+    private void GrabTargetChicken()
+    {
+        ChickenController chicken = targetChicken;
+        targetChicken = null;
+        if (!IsAvailableChickenTarget(chicken)
+            || carriedChickenCount >= carriedChickens.Length
+            || !crosshatcher.HasChickenReservation(this))
+        {
+            return;
+        }
+
+        int slotIndex = carriedChickenCount;
+        chicken.SetMachineControlled(true);
+        chicken.SetHeldByHand(true);
+        carriedChickens[slotIndex] = chicken;
+        carriedChickenCount++;
+        chicken.UpdateHeldCarryPose(
+            GetChickenCarryPosition(slotIndex),
+            0f);
+
+        if (carriedChickenCount >= carriedChickens.Length)
+        {
+            deliveringChickenPair = true;
+            SetDestination(crosshatcher.RobotDeliveryPosition);
+            return;
+        }
+
+        targetChicken = FindNearestAvailableChicken();
+        if (targetChicken == null)
+        {
+            CancelChickenMission(true);
+        }
+    }
+
+    private void UpdateChickenPairDelivery()
+    {
+        Vector3 target = crosshatcher.RobotDeliveryPosition;
+        SetDestination(target);
+        bool reachedRawTarget =
+            PlanarDistance(transform.position, target)
+            <= chickenDeliveryDistance;
+        bool reachedNavMeshTarget = !agent.pathPending
+            && agent.hasPath
+            && agent.remainingDistance
+                <= Mathf.Max(
+                    chickenDeliveryDistance,
+                    agent.stoppingDistance + 0.05f);
+        if (!reachedRawTarget && !reachedNavMeshTarget)
+        {
+            return;
+        }
+
+        StopMoving();
+        for (int index = 0; index < carriedChickens.Length; index++)
+        {
+            ChickenController chicken = carriedChickens[index];
+            if (chicken != null
+                && crosshatcher.TryAcceptReservedChicken(chicken, this))
+            {
+                carriedChickens[index] = null;
+                carriedChickenCount--;
+            }
+        }
+
+        if (carriedChickenCount > 0)
+        {
+            if (!crosshatcher.HasChickenReservation(this))
+            {
+                CancelChickenMission(true);
+            }
+            return;
+        }
+
+        targetChicken = null;
+        chickenMissionActive = false;
+        deliveringChickenPair = false;
+        noTargetTime = 0f;
+        ResetArmTargets();
+    }
+
+    private void CancelChickenMission(bool releaseCarriedChickens)
+    {
+        if (crosshatcher != null)
+        {
+            crosshatcher.ReleaseChickenReservation(this);
+        }
+
+        if (releaseCarriedChickens)
+        {
+            for (int index = 0; index < carriedChickens.Length; index++)
+            {
+                ChickenController chicken = carriedChickens[index];
+                if (chicken == null)
+                {
+                    continue;
+                }
+
+                Vector3 releasePosition = transform.TransformPoint(
+                    index == 0
+                        ? new Vector3(-0.55f, 0.05f, 0.15f)
+                        : new Vector3(0.55f, 0.05f, 0.15f));
+                chicken.SetHeldByHand(false);
+                chicken.AlignHeldBoneTo(releasePosition);
+                chicken.SetMachineControlled(false);
+                carriedChickens[index] = null;
+            }
+        }
+
+        carriedChickenCount = 0;
+        targetChicken = null;
+        chickenMissionActive = false;
+        deliveringChickenPair = false;
+        ResetArmTargets();
+    }
+
+    private void UpdateChickenCarryPoses()
+    {
+        for (int index = 0; index < carriedChickens.Length; index++)
+        {
+            ChickenController chicken = carriedChickens[index];
+            if (chicken != null)
+            {
+                chicken.SetHeldCarryRotation(transform.rotation);
+                chicken.UpdateHeldCarryPose(
+                    GetChickenCarryPosition(index),
+                    Time.deltaTime);
+            }
+        }
+
+        for (int index = 0;
+             chickenArmTargets != null && index < chickenArmTargets.Length;
+             index++)
+        {
+            Transform armTarget = chickenArmTargets[index];
+            if (armTarget == null)
+            {
+                continue;
+            }
+
+            if (!deliveringChickenPair
+                && targetChicken != null
+                && index == carriedChickenCount)
+            {
+                armTarget.position = targetChicken.transform.position
+                    + Vector3.up * 0.22f;
+            }
+            else
+            {
+                armTarget.position = GetChickenCarryPosition(index);
+            }
+        }
+    }
+
+    private Vector3 GetChickenCarryPosition(int index)
+    {
+        if (chickenCarrySlots != null
+            && index >= 0
+            && index < chickenCarrySlots.Length
+            && chickenCarrySlots[index] != null)
+        {
+            return chickenCarrySlots[index].position;
+        }
+
+        return transform.TransformPoint(
+            index == 0
+                ? new Vector3(-0.38f, 0.55f, 0.35f)
+                : new Vector3(0.38f, 0.55f, 0.35f));
+    }
+
+    private void ResetArmTargets()
+    {
+        for (int index = 0;
+             chickenArmTargets != null && index < chickenArmTargets.Length;
+             index++)
+        {
+            if (chickenArmTargets[index] != null)
+            {
+                chickenArmTargets[index].position =
+                    GetChickenCarryPosition(index);
+            }
+        }
+    }
+
+    private void SetChickenArmsEnabled(bool enabled)
+    {
+        if (chickenArmRoot != null)
+        {
+            chickenArmRoot.SetActive(enabled);
+        }
+
+        if (chickenArmSolvers == null)
+        {
+            return;
+        }
+
+        for (int index = 0; index < chickenArmSolvers.Length; index++)
+        {
+            if (chickenArmSolvers[index] != null)
+            {
+                chickenArmSolvers[index].enabled = enabled;
+            }
+        }
+    }
+
+    private bool TryFindChickenPair(
+        out ChickenController first,
+        out ChickenController second)
+    {
+        first = null;
+        second = null;
+        int candidateCount = BuildNearestChickenCandidates();
+        for (int index = 0; index < candidateCount; index++)
+        {
+            ChickenController candidate = nearestChickenCandidates[index];
+            nearestChickenCandidates[index] = null;
+            if (!CanReachChicken(candidate))
+            {
+                continue;
+            }
+
+            if (first == null)
+            {
+                first = candidate;
+            }
+            else
+            {
+                second = candidate;
+                break;
+            }
+        }
+
+        return first != null && second != null;
+    }
+
+    private ChickenController FindNearestAvailableChicken()
+    {
+        int candidateCount = BuildNearestChickenCandidates();
+        for (int index = 0; index < candidateCount; index++)
+        {
+            ChickenController candidate = nearestChickenCandidates[index];
+            nearestChickenCandidates[index] = null;
+            if (CanReachChicken(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private int BuildNearestChickenCandidates()
+    {
+        int candidateCount = 0;
+        IReadOnlyList<ChickenController> chickens =
+            ChickenController.ActiveInstances;
+        for (int index = 0; index < chickens.Count; index++)
+        {
+            ChickenController chicken = chickens[index];
+            if (!IsAvailableChickenTarget(chicken))
+            {
+                continue;
+            }
+
+            float distance =
+                (chicken.transform.position - transform.position).sqrMagnitude;
+            int insertionIndex = candidateCount;
+            while (insertionIndex > 0
+                && distance
+                    < nearestChickenCandidateDistances[insertionIndex - 1])
+            {
+                insertionIndex--;
+            }
+
+            if (insertionIndex >= MaximumReachabilityCandidates)
+            {
+                continue;
+            }
+
+            int newCount = Mathf.Min(
+                candidateCount + 1,
+                MaximumReachabilityCandidates);
+            for (int move = newCount - 1; move > insertionIndex; move--)
+            {
+                nearestChickenCandidates[move] =
+                    nearestChickenCandidates[move - 1];
+                nearestChickenCandidateDistances[move] =
+                    nearestChickenCandidateDistances[move - 1];
+            }
+
+            nearestChickenCandidates[insertionIndex] = chicken;
+            nearestChickenCandidateDistances[insertionIndex] = distance;
+            candidateCount = newCount;
+        }
+
+        return candidateCount;
+    }
+
+    private bool IsAvailableChickenTarget(ChickenController chicken)
+    {
+        if (chicken == null || !chicken.CanBePickedUp)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < carriedChickens.Length; index++)
+        {
+            if (carriedChickens[index] == chicken)
+            {
+                return false;
+            }
+        }
+
+        return targetPenIndex < 0
+            || PenExpansionManager.Instance == null
+            || PenExpansionManager.Instance.GetClosestPenIndex(
+                chicken.transform.position) == targetPenIndex;
+    }
+
+    private bool CanReachChicken(ChickenController chicken)
+    {
+        if (!IsAvailableChickenTarget(chicken)
+            || !agent.isOnNavMesh
+            || !NavMesh.SamplePosition(
+                chicken.transform.position,
+                out NavMeshHit targetHit,
+                targetNavMeshTolerance,
+                agent.areaMask))
+        {
+            return false;
+        }
+
+        if (reachabilityPath == null)
+        {
+            reachabilityPath = new NavMeshPath();
+        }
+
+        return agent.CalculatePath(targetHit.position, reachabilityPath)
+            && reachabilityPath.status == NavMeshPathStatus.PathComplete;
     }
 
     private ChickenEgg FindNearestAvailableEgg()
@@ -600,5 +1074,12 @@ public sealed class EggCollectorRobot : MonoBehaviour
         targetRefreshInterval = Mathf.Max(0.05f, targetRefreshInterval);
         navMeshSampleDistance = Mathf.Max(0.1f, navMeshSampleDistance);
         targetNavMeshTolerance = Mathf.Max(0.05f, targetNavMeshTolerance);
+        chickenPickupDistance = Mathf.Max(0.1f, chickenPickupDistance);
+        chickenFacingTolerance = Mathf.Clamp(
+            chickenFacingTolerance,
+            1f,
+            45f);
+        chickenTurnSpeed = Mathf.Max(1f, chickenTurnSpeed);
+        chickenDeliveryDistance = Mathf.Max(0.1f, chickenDeliveryDistance);
     }
 }

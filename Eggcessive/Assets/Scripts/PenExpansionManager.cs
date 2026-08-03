@@ -12,7 +12,8 @@ public sealed class PenExpansionManager : MonoBehaviour
     {
         Incubator,
         Crosshatcher,
-        Robot
+        Robot,
+        AutoFeeder
     }
 
     public enum EquipmentUpgrade
@@ -23,13 +24,15 @@ public sealed class PenExpansionManager : MonoBehaviour
         CrosshatcherQuality,
         RobotSpeed,
         RobotCapacity,
-        RobotSmartness
+        RobotSmartness,
+        AutoFeederSpeed
     }
 
     private const int RuntimeGroundMaskResolution = 64;
     private const int IncubatorInstallCost = 400;
     private const int CrosshatcherInstallCost = 15000;
     private const int RobotInstallCost = 120000;
+    private const int AutoFeederInstallCost = 2500000;
     private const float PenGap = 20f;
 
     private static readonly int[] IncubatorCapacityCosts =
@@ -66,7 +69,12 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private static readonly int[] RobotSmartnessCosts =
     {
-        600000, 3500000, 12000000
+        600000, 3500000, 12000000, 60000000
+    };
+
+    private static readonly int[] AutoFeederSpeedCosts =
+    {
+        7500000, 25000000, 90000000, 350000000
     };
 
     private static readonly EquipmentUpgrade[] IncubatorUpgrades =
@@ -88,6 +96,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         EquipmentUpgrade.RobotSmartness
     };
 
+    private static readonly EquipmentUpgrade[] AutoFeederUpgrades =
+    {
+        EquipmentUpgrade.AutoFeederSpeed
+    };
+
     private sealed class PenSlot
     {
         public int costCents;
@@ -102,6 +115,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         public EggContainer eggContainer;
         public IncubatorController incubator;
         public CrosshatcherController crosshatcher;
+        public AutoFeederController autoFeeder;
         public EggCollectorRobot robot;
         public bool robotOwned;
         public int robotSpeedLevel;
@@ -115,9 +129,17 @@ public sealed class PenExpansionManager : MonoBehaviour
     [SerializeField, Min(2)] private int penCount = 8;
     [SerializeField, Min(0)] private int starterChickensPerPurchasedPen = 3;
 
-    [Header("Purchase Costs")]
-    [SerializeField, Min(1)] private int firstAdditionalPenCostCents = 2500;
-    [SerializeField, Min(1f)] private float penCostMultiplier = 2f;
+    private static readonly int[] PenPurchaseCostsCents =
+    {
+        0,
+        200000,
+        1000000,
+        5000000,
+        25000000,
+        100000000,
+        500000000,
+        2000000000
+    };
 
     [Header("Distant Pen Visuals")]
     [Tooltip("Chicken animators/meshes and egg meshes beyond this horizontal distance are disabled. Physics remains active.")]
@@ -134,6 +156,7 @@ public sealed class PenExpansionManager : MonoBehaviour
     private EggContainer containerTemplate;
     private IncubatorController incubatorTemplate;
     private CrosshatcherController crosshatcherTemplate;
+    private AutoFeederController autoFeederTemplate;
     private GameObject signTemplate;
     private Vector3 baseCameraPivotPosition;
     private float penSpacing;
@@ -413,6 +436,8 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentType.Crosshatcher => slot.crosshatcher != null
                 && slot.crosshatcher.gameObject.activeSelf,
             EquipmentType.Robot => slot.robotOwned,
+            EquipmentType.AutoFeeder => slot.autoFeeder != null
+                && slot.autoFeeder.gameObject.activeSelf,
             _ => false
         };
     }
@@ -424,6 +449,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentType.Incubator => IncubatorInstallCost,
             EquipmentType.Crosshatcher => CrosshatcherInstallCost,
             EquipmentType.Robot => RobotInstallCost,
+            EquipmentType.AutoFeeder => AutoFeederInstallCost,
             _ => 0
         };
     }
@@ -456,6 +482,9 @@ public sealed class PenExpansionManager : MonoBehaviour
                 ? slot.robotCapacityLevel : 0,
             EquipmentUpgrade.RobotSmartness => slot.robotOwned
                 ? slot.robotSmartnessLevel : 0,
+            EquipmentUpgrade.AutoFeederSpeed =>
+                IsEquipmentOwned(penIndex, EquipmentType.AutoFeeder)
+                    ? slot.autoFeeder.SpeedLevel : 0,
             _ => 0
         };
     }
@@ -473,6 +502,10 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentUpgrade.RobotSpeed
                 or EquipmentUpgrade.RobotCapacity =>
                     EggCarryController.MaximumRobotLevel,
+            EquipmentUpgrade.RobotSmartness =>
+                EggCollectorRobot.ChickenArmsSmartnessLevel,
+            EquipmentUpgrade.AutoFeederSpeed =>
+                AutoFeederController.MaximumLevel,
             _ => 3
         };
     }
@@ -501,6 +534,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentUpgrade.RobotSpeed => RobotSpeedCosts,
             EquipmentUpgrade.RobotCapacity => RobotCapacityCosts,
             EquipmentUpgrade.RobotSmartness => RobotSmartnessCosts,
+            EquipmentUpgrade.AutoFeederSpeed => AutoFeederSpeedCosts,
             _ => null
         };
         int costIndex = upgrade == EquipmentUpgrade.RobotSmartness
@@ -525,6 +559,8 @@ public sealed class PenExpansionManager : MonoBehaviour
                 && slots[penIndex].incubator == null)
             || (type == EquipmentType.Crosshatcher
                 && slots[penIndex].crosshatcher == null)
+            || (type == EquipmentType.AutoFeeder
+                && slots[penIndex].autoFeeder == null)
             || (type == EquipmentType.Robot
                 && EggCarryController.Instance == null))
         {
@@ -553,6 +589,9 @@ public sealed class PenExpansionManager : MonoBehaviour
                 slot.robotCapacityLevel = 1;
                 slot.robotSmartnessLevel = 0;
                 RefreshRobot(slot);
+                break;
+            case EquipmentType.AutoFeeder:
+                slot.autoFeeder?.InstallOrUpgrade(1);
                 break;
         }
 
@@ -610,6 +649,10 @@ public sealed class PenExpansionManager : MonoBehaviour
                 slot.robotSmartnessLevel++;
                 RefreshRobot(slot);
                 break;
+            case EquipmentUpgrade.AutoFeederSpeed:
+                slot.autoFeeder.InstallOrUpgrade(
+                    slot.autoFeeder.SpeedLevel + 1);
+                break;
         }
 
         RoundSystem.Instance?.PlayCashRegisterSfx();
@@ -639,6 +682,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         {
             EquipmentType.Incubator => IncubatorUpgrades,
             EquipmentType.Crosshatcher => CrosshatcherUpgrades,
+            EquipmentType.AutoFeeder => AutoFeederUpgrades,
             _ => RobotUpgrades
         };
     }
@@ -651,6 +695,7 @@ public sealed class PenExpansionManager : MonoBehaviour
                 or EquipmentUpgrade.IncubatorSpeed => EquipmentType.Incubator,
             EquipmentUpgrade.CrosshatcherSpeed
                 or EquipmentUpgrade.CrosshatcherQuality => EquipmentType.Crosshatcher,
+            EquipmentUpgrade.AutoFeederSpeed => EquipmentType.AutoFeeder,
             _ => EquipmentType.Robot
         };
     }
@@ -757,6 +802,28 @@ public sealed class PenExpansionManager : MonoBehaviour
             FindObjectsInactive.Include);
         crosshatcherTemplate = FindFirstObjectByType<CrosshatcherController>(
             FindObjectsInactive.Include);
+        autoFeederTemplate = FindFirstObjectByType<AutoFeederController>(
+            FindObjectsInactive.Include);
+        if (autoFeederTemplate == null)
+        {
+            Transform autoFeederLocation =
+                GameObject.Find("Location_AutoFeeder")?.transform;
+            GameObject autoFeederPrefab = Resources.Load<GameObject>(
+                "AutoFeeder/prefab_AutoFeeder");
+            if (autoFeederLocation != null && autoFeederPrefab != null)
+            {
+                GameObject instance = Instantiate(
+                    autoFeederPrefab,
+                    autoFeederLocation);
+                instance.name = "AutoFeeder_1";
+                instance.transform.SetLocalPositionAndRotation(
+                    Vector3.zero,
+                    Quaternion.identity);
+                autoFeederTemplate =
+                    instance.GetComponent<AutoFeederController>();
+                instance.SetActive(false);
+            }
+        }
         signTemplate = GameObject.Find("Pen Sign Template");
         if (signTemplate == null)
         {
@@ -817,6 +884,8 @@ public sealed class PenExpansionManager : MonoBehaviour
             && incubatorTemplate.gameObject.activeSelf;
         bool starterCrosshatcherInstalled = crosshatcherTemplate != null
             && crosshatcherTemplate.gameObject.activeSelf;
+        bool starterAutoFeederInstalled = autoFeederTemplate != null
+            && autoFeederTemplate.gameObject.activeSelf;
         for (int index = 0; index < penCount; index++)
         {
             slots.Add(new PenSlot
@@ -832,7 +901,8 @@ public sealed class PenExpansionManager : MonoBehaviour
                     : null,
                 eggContainer = index == 0 ? containerTemplate : null,
                 incubator = index == 0 ? incubatorTemplate : null,
-                crosshatcher = index == 0 ? crosshatcherTemplate : null
+                crosshatcher = index == 0 ? crosshatcherTemplate : null,
+                autoFeeder = index == 0 ? autoFeederTemplate : null
             });
         }
 
@@ -844,6 +914,10 @@ public sealed class PenExpansionManager : MonoBehaviour
         if (crosshatcherTemplate != null && !starterCrosshatcherInstalled)
         {
             crosshatcherTemplate.gameObject.SetActive(false);
+        }
+        if (autoFeederTemplate != null && !starterAutoFeederInstalled)
+        {
+            autoFeederTemplate.gameObject.SetActive(false);
         }
         EggContainer.SetFocusedContainer(containerTemplate);
         slots[0].sign = signTemplate;
@@ -857,9 +931,9 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private int CalculateCost(int index)
     {
-        double cost = firstAdditionalPenCostCents
-            * Math.Pow(penCostMultiplier, index - 1);
-        return (int)Math.Min(int.MaxValue, Math.Round(cost));
+        return index >= 0 && index < PenPurchaseCostsCents.Length
+            ? PenPurchaseCostsCents[index]
+            : int.MaxValue;
     }
 
     private float MeasureTerrainWidth()
@@ -951,6 +1025,10 @@ public sealed class PenExpansionManager : MonoBehaviour
             index,
             worldOffset,
             penRoot.transform);
+        AutoFeederController autoFeeder = CloneAutoFeeder(
+            index,
+            worldOffset,
+            penRoot.transform);
 
         PenTruckController truck = penRoot.AddComponent<PenTruckController>();
         truck.Configure(container, worldOffset);
@@ -974,6 +1052,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         slot.eggContainer = container;
         slot.incubator = incubator;
         slot.crosshatcher = crosshatcher;
+        slot.autoFeeder = autoFeeder;
         slot.truck = truck;
         slot.sign = CreatePenSign(index, penRoot.transform);
     }
@@ -1107,6 +1186,26 @@ public sealed class PenExpansionManager : MonoBehaviour
         return clone;
     }
 
+    private AutoFeederController CloneAutoFeeder(
+        int index,
+        Vector3 worldOffset,
+        Transform parent)
+    {
+        if (autoFeederTemplate == null)
+        {
+            return null;
+        }
+
+        AutoFeederController clone = Instantiate(
+            autoFeederTemplate,
+            autoFeederTemplate.transform.position + worldOffset,
+            autoFeederTemplate.transform.rotation,
+            parent);
+        clone.name = $"AutoFeeder_{index + 1}";
+        clone.gameObject.SetActive(false);
+        return clone;
+    }
+
     private void SynchronizeIncubator(IncubatorController target)
     {
         if (target == null || incubatorTemplate == null)
@@ -1170,6 +1269,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         slot.robot = collection.CreatePenRobot(
             slot.eggContainer,
             slot.incubator,
+            slot.crosshatcher,
             slot.robotSpeedLevel,
             slot.robotCapacityLevel,
             slot.robotSmartnessLevel,
@@ -1472,8 +1572,6 @@ public sealed class PenExpansionManager : MonoBehaviour
         starterChickensPerPurchasedPen = Mathf.Max(
             0,
             starterChickensPerPurchasedPen);
-        firstAdditionalPenCostCents = Mathf.Max(1, firstAdditionalPenCostCents);
-        penCostMultiplier = Mathf.Max(1f, penCostMultiplier);
         visualActivationDistance = Mathf.Max(1f, visualActivationDistance);
         visualRefreshInterval = Mathf.Max(0.1f, visualRefreshInterval);
     }

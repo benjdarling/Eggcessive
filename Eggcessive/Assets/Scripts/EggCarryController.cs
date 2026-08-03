@@ -17,7 +17,9 @@ public sealed class EggCarryController : MonoBehaviour
 
     private static readonly int[] UpgradeCosts =
     {
-        800, 1800, 4200, 8000, 9000, 17500, 27500, 45000, 75000, 120000
+        800, 1800, 4200, 8000, 9000,
+        400000, 4000000,
+        45000, 75000, 120000
     };
 
     private static readonly string[] TierNames =
@@ -68,7 +70,8 @@ public sealed class EggCarryController : MonoBehaviour
     [SerializeField] private bool robotUnlocked;
     [SerializeField, Range(0, MaximumRobotLevel)] private int robotSpeedLevel;
     [SerializeField, Range(0, MaximumRobotLevel)] private int robotCapacityLevel;
-    [SerializeField, Range(0, 3)] private int robotSmartnessLevel;
+    [SerializeField, Range(0, EggCollectorRobot.ChickenArmsSmartnessLevel)]
+    private int robotSmartnessLevel;
     [SerializeField] private GameObject[] basketPrefabs = null;
     [SerializeField] private GameObject[] vacuumPrefabs = null;
     [SerializeField] private GameObject[] robotPrefabs = null;
@@ -477,6 +480,28 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
+        // A loose egg under the pointer must win over nearby machine trigger
+        // volumes. Otherwise an incubator intake overlapping the ray consumes
+        // the click as an empty basket deposit and the egg cannot be picked up.
+        ChickenEgg egg = FindEggUnderPointer(pointerPosition);
+        if (egg != null && basketEggCount < BasketCapacity)
+        {
+            if (egg.TryCollectFromTool())
+            {
+                RoundSystem.Instance?.PlayGrabSfx();
+                int slotIndex = basketEggCount;
+                basketEggValues.Add(egg.ValueCents);
+                basketEggTypes.Add(egg.Type);
+                basketEggCount++;
+                StartCoroutine(AnimateEggIntoBasket(
+                    egg,
+                    slotIndex,
+                    basketAnimationGeneration));
+            }
+
+            return;
+        }
+
         if (TryGetContainerUnderPointer(pointerPosition, out EggContainer targetContainer))
         {
             EmptyBasket(targetContainer);
@@ -495,23 +520,6 @@ public sealed class EggCarryController : MonoBehaviour
         {
             return;
         }
-
-        ChickenEgg egg = FindEggUnderPointer(pointerPosition);
-
-        if (egg == null || !egg.TryCollectFromTool())
-        {
-            return;
-        }
-
-        RoundSystem.Instance?.PlayGrabSfx();
-        int slotIndex = basketEggCount;
-        basketEggValues.Add(egg.ValueCents);
-        basketEggTypes.Add(egg.Type);
-        basketEggCount++;
-        StartCoroutine(AnimateEggIntoBasket(
-            egg,
-            slotIndex,
-            basketAnimationGeneration));
     }
 
     private void EmptyBasket(EggContainer targetContainer)
@@ -917,6 +925,7 @@ public sealed class EggCarryController : MonoBehaviour
         activeRobot.Configure(
             eggContainer,
             incubator,
+            FindFirstObjectByType<CrosshatcherController>(),
             RobotSpeeds[Mathf.Clamp(
                 robotSpeedLevel - 1,
                 0,
@@ -931,6 +940,7 @@ public sealed class EggCarryController : MonoBehaviour
     public EggCollectorRobot CreatePenRobot(
         EggContainer targetContainer,
         IncubatorController targetIncubator,
+        CrosshatcherController targetCrosshatcher,
         int speedLevel,
         int capacityLevel,
         int smartnessLevel,
@@ -938,7 +948,10 @@ public sealed class EggCarryController : MonoBehaviour
     {
         int resolvedSpeed = Mathf.Clamp(speedLevel, 1, MaximumRobotLevel);
         int resolvedCapacity = Mathf.Clamp(capacityLevel, 1, MaximumRobotLevel);
-        int resolvedSmartness = Mathf.Clamp(smartnessLevel, 0, 3);
+        int resolvedSmartness = Mathf.Clamp(
+            smartnessLevel,
+            0,
+            EggCollectorRobot.ChickenArmsSmartnessLevel);
         if (robotPrefabs == null || robotPrefabs.Length == 0)
         {
             Debug.LogError("Missing authored robot prefabs.", this);
@@ -981,10 +994,47 @@ public sealed class EggCarryController : MonoBehaviour
         robot.Configure(
             targetContainer,
             targetIncubator,
+            targetCrosshatcher,
             RobotSpeeds[resolvedSpeed - 1],
             RobotCapacities[resolvedCapacity - 1],
             resolvedSmartness);
         return robot;
+    }
+
+    public bool TryDeliverHeldChickenToCrosshatcher(
+        CrosshatcherController targetCrosshatcher)
+    {
+        if (heldChicken == null
+            || targetCrosshatcher == null
+            || !targetCrosshatcher.TryAcceptCarriedChicken(heldChicken))
+        {
+            return false;
+        }
+
+        heldChicken = null;
+        return true;
+    }
+
+    public bool TryBeginCarryChicken(ChickenController chicken)
+    {
+        if (selectedTool != PlayerTool.Hand
+            || heldEgg != null
+            || heldChicken != null
+            || chicken == null
+            || !chicken.CanBePickedUp
+            || (RoundSystem.Instance != null
+                && !RoundSystem.Instance.IsRoundInProgress))
+        {
+            return false;
+        }
+
+        pickupOutline.Clear();
+        heldChicken = chicken;
+        heldChicken.SetMachineControlled(true);
+        heldChicken.SetHeldByHand(true);
+        carryTarget = heldChicken.transform.position;
+        RoundSystem.Instance?.PlayGrabSfx();
+        return true;
     }
 
     private void UpdateCursorGround(Vector2 pointerPosition)
@@ -1492,7 +1542,9 @@ public sealed class EggCarryController : MonoBehaviour
 
     public void UpgradeRobotSmartness()
     {
-        robotSmartnessLevel = Mathf.Min(3, robotSmartnessLevel + 1);
+        robotSmartnessLevel = Mathf.Min(
+            EggCollectorRobot.ChickenArmsSmartnessLevel,
+            robotSmartnessLevel + 1);
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
@@ -1609,7 +1661,10 @@ public sealed class EggCarryController : MonoBehaviour
             robotCapacityLevel,
             0,
             MaximumRobotLevel);
-        robotSmartnessLevel = Mathf.Clamp(robotSmartnessLevel, 0, 3);
+        robotSmartnessLevel = Mathf.Clamp(
+            robotSmartnessLevel,
+            0,
+            EggCollectorRobot.ChickenArmsSmartnessLevel);
         toolHeight = Mathf.Max(0f, toolHeight);
         toolSmoothTime = Mathf.Max(0.01f, toolSmoothTime);
         toolSideDistance = Mathf.Max(0f, toolSideDistance);

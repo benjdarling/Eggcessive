@@ -44,7 +44,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     private bool initialized;
 
     private const float PanelWidth = 260f;
-    private const float PanelHeight = 244f;
+    private const float PanelHeight = 310f;
 
     public static PenEquipmentHudController Instance { get; private set; }
     public bool IsUpgradeDialogOpen =>
@@ -139,11 +139,52 @@ public sealed class PenEquipmentHudController : MonoBehaviour
 
         int penIndex = manager.FocusedPenIndex;
         long balance = EggScoreHud.CurrentCents;
+        EggCarryController collection = EggCarryController.Instance;
+        bool botReadyForRobot = collection != null
+            && collection.BasketUpgradeLevel
+                >= EggCarryController.MaximumBasketLevel
+            && collection.HasVacuum
+            && GameplayTestBot.HasRecommendedPremiumEggProgression();
+        bool ownsRobot = manager.IsEquipmentOwned(
+            penIndex,
+            PenExpansionManager.EquipmentType.Robot);
+        bool ownsAutoFeeder = manager.IsEquipmentOwned(
+            penIndex,
+            PenExpansionManager.EquipmentType.AutoFeeder);
+
+        // Once a robot has been installed, completing the automatic
+        // production loop with an Auto-Feeder takes precedence over every
+        // optional local upgrade. Returning null while it is unaffordable
+        // makes the automation save instead of spending that money elsewhere.
+        if (ownsRobot && !ownsAutoFeeder)
+        {
+            for (int index = 0; index < equipmentViews.Count; index++)
+            {
+                EquipmentView view = equipmentViews[index];
+                if (view.type
+                        == PenExpansionManager.EquipmentType.AutoFeeder
+                    && balance >= manager.GetEquipmentPurchaseCost(view.type))
+                {
+                    return view.button;
+                }
+            }
+
+            return null;
+        }
+
         // Establish each part of a pen's production chain before spending the
         // automation budget on deeper upgrades to the first owned machine.
         for (int index = 0; index < equipmentViews.Count; index++)
         {
             EquipmentView view = equipmentViews[index];
+            if (view.type == PenExpansionManager.EquipmentType.Robot
+                && !botReadyForRobot)
+            {
+                // Finish the affordable basket progression before committing
+                // the bot to the much larger robot -> Auto-Feeder investment.
+                continue;
+            }
+
             if (!manager.IsEquipmentOwned(penIndex, view.type)
                 && balance >= manager.GetEquipmentPurchaseCost(view.type))
             {
@@ -154,6 +195,12 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         for (int index = 0; index < equipmentViews.Count; index++)
         {
             EquipmentView view = equipmentViews[index];
+            if (view.type == PenExpansionManager.EquipmentType.Robot
+                && !botReadyForRobot)
+            {
+                continue;
+            }
+
             if (view.type == PenExpansionManager.EquipmentType.Incubator
                 && manager.GetChickenCount(penIndex)
                     >= ChickenController.MaximumChickenCount)
@@ -244,6 +291,10 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             PenExpansionManager.EquipmentType.Robot,
             "ROBOT",
             new Vector2(8f, -170f));
+        CreateEquipmentView(
+            PenExpansionManager.EquipmentType.AutoFeeder,
+            "AUTO-FEEDER",
+            new Vector2(8f, -236f));
     }
 
     private void CreateEquipmentView(
@@ -561,6 +612,11 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             return $"SPD {manager.GetUpgradeLevel(penIndex, upgrades[0])}  "
                 + $"QLTY {manager.GetUpgradeLevel(penIndex, upgrades[1])}";
         }
+        if (type == PenExpansionManager.EquipmentType.AutoFeeder)
+        {
+            int level = manager.GetUpgradeLevel(penIndex, upgrades[0]);
+            return $"EVERY {AutoFeederController.GetDispenseInterval(level):0} SEC";
+        }
 
         return $"SPD {manager.GetUpgradeLevel(penIndex, upgrades[0])}  "
             + $"CAP {manager.GetUpgradeLevel(penIndex, upgrades[1])}  "
@@ -570,9 +626,12 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     private static string GetEquipmentName(
         PenExpansionManager.EquipmentType type)
     {
-        return type == PenExpansionManager.EquipmentType.Crosshatcher
-            ? "CROSSHATCHER"
-            : type.ToString().ToUpperInvariant();
+        return type switch
+        {
+            PenExpansionManager.EquipmentType.Crosshatcher => "CROSSHATCHER",
+            PenExpansionManager.EquipmentType.AutoFeeder => "AUTO-FEEDER",
+            _ => type.ToString().ToUpperInvariant()
+        };
     }
 
     private static string GetUpgradeName(
@@ -586,6 +645,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             PenExpansionManager.EquipmentUpgrade.CrosshatcherQuality => "QUALITY",
             PenExpansionManager.EquipmentUpgrade.RobotSpeed => "SPEED",
             PenExpansionManager.EquipmentUpgrade.RobotCapacity => "CAPACITY",
+            PenExpansionManager.EquipmentUpgrade.AutoFeederSpeed => "SPEED",
             _ => "LOGIC"
         };
     }
@@ -704,7 +764,9 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             targetImage.pixelsPerUnitMultiplier =
                 sourceImage.pixelsPerUnitMultiplier;
             targetImage.material = sourceImage.material;
-            targetImage.color = sourceImage.color;
+            targetImage.color = sourceImage.color.a > 0.01f
+                ? sourceImage.color
+                : new Color(0.055f, 0.06f, 0.048f, 0.94f);
             targetImage.raycastTarget = sourceImage.raycastTarget;
         }
         else
