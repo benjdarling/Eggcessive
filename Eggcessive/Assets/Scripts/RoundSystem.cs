@@ -106,12 +106,16 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private GameObject intermissionScreen;
     [SerializeField] private GameObject countdownDisplay;
     [SerializeField] private GameObject timerDisplay;
+    [SerializeField] private GameObject quotaDisplay;
     [SerializeField] private GameObject liveStatsDisplay;
     [SerializeField] private GameObject resultsScreen;
     [SerializeField] private GameObject suppliesShopScreen;
     [SerializeField] private TMP_Text intermissionTitle;
     [SerializeField] private TMP_Text countdownText;
+    [SerializeField] private TMP_Text roundNumberText;
     [SerializeField] private TMP_Text timerText;
+    [SerializeField] private TMP_Text quotaTitleText;
+    [SerializeField] private TMP_Text quotaValueText;
     [SerializeField] private TMP_Text liveStatsText;
     [SerializeField] private TMP_Text liveStatsValueText;
     [SerializeField] private TMP_Text[] liveStatRowValues =
@@ -146,6 +150,8 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private Image feedUnlockProgressFill;
     [SerializeField] private Image incubatorProgressFill;
     [SerializeField] private Image collectionProgressFill;
+    [SerializeField] private Image[] quotaContributionFills =
+        new Image[8];
     [SerializeField] private RectTransform roundCanvasRect;
     [SerializeField] private RectTransform coinEffectLayer;
     [SerializeField] private RectTransform coinHudTarget;
@@ -326,10 +332,8 @@ public sealed class RoundSystem : MonoBehaviour
     private int pendingCoinAudioArrivals;
     private int pendingCashAudioArrivals;
     private float nextRewardLandingSoundTime;
-    private GameObject quotaDisplay;
-    private TMP_Text quotaTitleText;
-    private TMP_Text quotaValueText;
-    private Image quotaProgressFill;
+    private readonly int[] roundCashContributionsCents =
+        new int[8];
     private TMP_Text resultsSubtitleText;
     private TMP_Text resultsQuotaLabelText;
 
@@ -429,7 +433,7 @@ public sealed class RoundSystem : MonoBehaviour
             ? gameplayHud.GetComponent<Canvas>()
             : null;
         ResolveResultsPresentationReferences();
-        EnsureQuotaHud();
+        InitializeQuotaHud();
         EggContainer.EggCollectedFromContainer += HandleEggCollected;
         ChickenController.EggLaid += HandleEggLaid;
         IncubatorController.ChickenHatched += HandleChickenHatched;
@@ -734,6 +738,7 @@ public sealed class RoundSystem : MonoBehaviour
         return intermissionScreen != null
             && countdownDisplay != null
             && timerDisplay != null
+            && quotaDisplay != null
             && liveStatsDisplay != null
             && resultsTitleText != null
             && resultsScreen != null
@@ -748,6 +753,10 @@ public sealed class RoundSystem : MonoBehaviour
             && roundCanvasRect != null
             && coinEffectLayer != null
             && coinHudTarget != null
+            && quotaTitleText != null
+            && quotaValueText != null
+            && quotaContributionFills != null
+            && quotaContributionFills.Length == PenUiPalette.Count
             && flyingCoinPrefab != null
             && floatingRewardPrefab != null;
     }
@@ -957,6 +966,10 @@ public sealed class RoundSystem : MonoBehaviour
         roundElapsed = 0f;
         roundEggsCollected = 0;
         roundCashMade = 0;
+        Array.Clear(
+            roundCashContributionsCents,
+            0,
+            roundCashContributionsCents.Length);
         roundEggsLaid = 0;
         roundEggsIncubated = 0;
         roundChickensHatched = 0;
@@ -1013,7 +1026,11 @@ public sealed class RoundSystem : MonoBehaviour
         SetPhase(RoundPhase.Settling);
         roundTimeRemaining = 0f;
         RefreshTimer();
-        timerText.text = $"ROUND {roundNumber}\nFINALISING";
+        if (roundNumberText != null)
+        {
+            roundNumberText.text = $"ROUND {roundNumber}";
+        }
+        timerText.text = "FINALISING";
         StartCoroutine(FinalizeRoundAfterSettlement());
     }
 
@@ -1642,209 +1659,25 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
-    private void EnsureQuotaHud()
+    private void InitializeQuotaHud()
     {
-        if (quotaDisplay != null || roundCanvasRect == null)
+        if (quotaDisplay == null)
         {
             return;
         }
 
-        quotaDisplay = new GameObject(
-            "Round Cash Quota",
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(Image),
-            typeof(Outline),
-            typeof(Shadow));
-        quotaDisplay.layer = roundCanvasRect.gameObject.layer;
-        quotaDisplay.transform.SetParent(roundCanvasRect, false);
-        RectTransform root = quotaDisplay.GetComponent<RectTransform>();
-        root.anchorMin = new Vector2(0f, 1f);
-        root.anchorMax = new Vector2(0f, 1f);
-        root.pivot = new Vector2(0f, 1f);
-        root.anchoredPosition = new Vector2(24f, -24f);
-        root.sizeDelta = new Vector2(260f, 84f);
+        for (int index = 0; index < quotaContributionFills.Length; index++)
+        {
+            if (quotaContributionFills[index] != null)
+            {
+                quotaContributionFills[index].color =
+                    PenUiPalette.GetColour(index);
+            }
+        }
 
-        CopyQuotaPanelStyle(quotaDisplay);
-        TMP_FontAsset font = GetHudFont();
-        quotaTitleText = CreateRuntimeHudText(
-            "Quota Title",
-            quotaDisplay.transform,
-            font,
-            13f,
-            TextAlignmentOptions.Center);
-        SetRuntimeHudRect(
-            quotaTitleText.rectTransform,
-            new Vector2(10f, -5f),
-            new Vector2(240f, 20f));
-        quotaTitleText.text = "CASH QUOTA";
-        quotaTitleText.fontStyle = FontStyles.Bold;
-        quotaTitleText.color = Color.white;
-
-        quotaValueText = CreateRuntimeHudText(
-            "Quota Value",
-            quotaDisplay.transform,
-            font,
-            26f,
-            TextAlignmentOptions.Center);
-        SetRuntimeHudRect(
-            quotaValueText.rectTransform,
-            new Vector2(10f, -24f),
-            new Vector2(240f, 38f));
-        quotaValueText.fontStyle = FontStyles.Bold;
-
-        GameObject progressBackground = new GameObject(
-            "Quota Progress",
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(Image));
-        progressBackground.layer = quotaDisplay.layer;
-        progressBackground.transform.SetParent(quotaDisplay.transform, false);
-        RectTransform progressRect =
-            progressBackground.GetComponent<RectTransform>();
-        SetRuntimeHudRect(
-            progressRect,
-            new Vector2(12f, -70f),
-            new Vector2(236f, 8f));
-        Image progressBackImage = progressBackground.GetComponent<Image>();
-        progressBackImage.color = new Color(0.035f, 0.035f, 0.025f, 1f);
-        progressBackImage.raycastTarget = false;
-
-        GameObject fill = new GameObject(
-            "Fill",
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(Image));
-        fill.layer = quotaDisplay.layer;
-        fill.transform.SetParent(progressBackground.transform, false);
-        quotaProgressFill = fill.GetComponent<Image>();
-        quotaProgressFill.color = new Color(1f, 0.68f, 0.08f, 1f);
-        quotaProgressFill.raycastTarget = false;
-        SetQuotaProgressFill(0f);
+        timerDisplay.SetActive(false);
+        SetQuotaContributionFills();
         quotaDisplay.SetActive(false);
-    }
-
-    private void CopyQuotaPanelStyle(GameObject target)
-    {
-        Image sourceImage = liveStatsDisplay != null
-            ? liveStatsDisplay.GetComponent<Image>()
-            : null;
-        Image targetImage = target.GetComponent<Image>();
-        if (sourceImage != null)
-        {
-            targetImage.sprite = sourceImage.sprite;
-            targetImage.type = sourceImage.type;
-            targetImage.material = sourceImage.material;
-            targetImage.color = sourceImage.color;
-        }
-        else
-        {
-            targetImage.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
-        }
-        targetImage.raycastTarget = false;
-
-        Outline sourceOutline = liveStatsDisplay != null
-            ? liveStatsDisplay.GetComponent<Outline>()
-            : null;
-        Outline targetOutline = target.GetComponent<Outline>();
-        targetOutline.effectColor = sourceOutline != null
-            ? sourceOutline.effectColor
-            : new Color(0.12f, 0.07f, 0.035f, 1f);
-        targetOutline.effectDistance = sourceOutline != null
-            ? sourceOutline.effectDistance
-            : new Vector2(2f, -2f);
-        targetOutline.useGraphicAlpha = sourceOutline != null
-            && sourceOutline.useGraphicAlpha;
-
-        Shadow sourceShadow = null;
-        if (liveStatsDisplay != null)
-        {
-            Shadow[] shadows = liveStatsDisplay.GetComponents<Shadow>();
-            for (int index = 0; index < shadows.Length; index++)
-            {
-                if (shadows[index] != null
-                    && shadows[index].GetType() == typeof(Shadow))
-                {
-                    sourceShadow = shadows[index];
-                    break;
-                }
-            }
-        }
-
-        Shadow targetShadow = null;
-        Shadow[] targetShadows = target.GetComponents<Shadow>();
-        for (int index = 0; index < targetShadows.Length; index++)
-        {
-            if (targetShadows[index] != null
-                && targetShadows[index].GetType() == typeof(Shadow))
-            {
-                targetShadow = targetShadows[index];
-                break;
-            }
-        }
-        if (targetShadow == null)
-        {
-            targetShadow = target.AddComponent<Shadow>();
-        }
-        targetShadow.effectColor = sourceShadow != null
-            ? sourceShadow.effectColor
-            : new Color(0f, 0f, 0f, 0.5f);
-        targetShadow.effectDistance = sourceShadow != null
-            ? sourceShadow.effectDistance
-            : new Vector2(3f, -4f);
-        targetShadow.useGraphicAlpha = sourceShadow == null
-            || sourceShadow.useGraphicAlpha;
-    }
-
-    private TMP_FontAsset GetHudFont()
-    {
-        for (int index = 0; index < liveStatRowValues.Length; index++)
-        {
-            if (liveStatRowValues[index] != null
-                && liveStatRowValues[index].font != null)
-            {
-                return liveStatRowValues[index].font;
-            }
-        }
-
-        return liveStatsValueText != null && liveStatsValueText.font != null
-            ? liveStatsValueText.font
-            : TMP_Settings.defaultFontAsset;
-    }
-
-    private static TMP_Text CreateRuntimeHudText(
-        string objectName,
-        Transform parent,
-        TMP_FontAsset font,
-        float fontSize,
-        TextAlignmentOptions alignment)
-    {
-        GameObject textObject = new GameObject(
-            objectName,
-            typeof(RectTransform),
-            typeof(CanvasRenderer),
-            typeof(TextMeshProUGUI));
-        textObject.layer = parent.gameObject.layer;
-        textObject.transform.SetParent(parent, false);
-        TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
-        text.font = font;
-        text.fontSize = fontSize;
-        text.alignment = alignment;
-        text.textWrappingMode = TextWrappingModes.NoWrap;
-        text.overflowMode = TextOverflowModes.Truncate;
-        text.raycastTarget = false;
-        return text;
-    }
-
-    private static void SetRuntimeHudRect(
-        RectTransform rect,
-        Vector2 anchoredPosition,
-        Vector2 size)
-    {
-        rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
-        rect.pivot = new Vector2(0f, 1f);
-        rect.anchoredPosition = anchoredPosition;
-        rect.sizeDelta = size;
     }
 
     private void RefreshQuotaHud()
@@ -1861,24 +1694,39 @@ public sealed class RoundSystem : MonoBehaviour
         quotaValueText.color = met
             ? new Color(0.42f, 0.94f, 0.5f)
             : new Color(1f, 0.84f, 0.3f);
-        SetQuotaProgressFill(
-            roundCashQuotaCents > 0
-                ? roundCashMade / (float)roundCashQuotaCents
-                : 0f);
+        SetQuotaContributionFills();
     }
 
-    private void SetQuotaProgressFill(float amount)
+    private void SetQuotaContributionFills()
     {
-        if (quotaProgressFill == null)
+        if (quotaContributionFills == null
+            || quotaContributionFills.Length == 0)
         {
             return;
         }
 
-        RectTransform fill = quotaProgressFill.rectTransform;
-        fill.anchorMin = Vector2.zero;
-        fill.anchorMax = new Vector2(Mathf.Clamp01(amount), 1f);
-        fill.offsetMin = Vector2.zero;
-        fill.offsetMax = Vector2.zero;
+        float quota = Mathf.Max(1f, roundCashQuotaCents);
+        float cursor = 0f;
+        for (int index = 0; index < quotaContributionFills.Length; index++)
+        {
+            Image image = quotaContributionFills[index];
+            if (image == null)
+            {
+                continue;
+            }
+
+            float remaining = Mathf.Max(0f, 1f - cursor);
+            float width = Mathf.Min(
+                remaining,
+                roundCashContributionsCents[index] / quota);
+            RectTransform fill = image.rectTransform;
+            fill.anchorMin = new Vector2(cursor, 0f);
+            cursor += Mathf.Max(0f, width);
+            fill.anchorMax = new Vector2(cursor, 1f);
+            fill.offsetMin = Vector2.zero;
+            fill.offsetMax = Vector2.zero;
+            image.gameObject.SetActive(width > 0f);
+        }
     }
 
     private static void SetButtonText(Button button, string value)
@@ -1895,14 +1743,11 @@ public sealed class RoundSystem : MonoBehaviour
     private void RefreshTimer()
     {
         int seconds = Mathf.CeilToInt(roundTimeRemaining);
-        int shownEggs = PenExpansionManager.Instance != null
-            ? PenExpansionManager.Instance.GetFocusedTruckEggCount(
-                eggsTowardTruck)
-            : eggsTowardTruck;
-        timerText.text =
-            $"ROUND {roundNumber}  .  TRUCK {trucksFilled + 1}\n" +
-            $"{seconds / 60}:{seconds % 60:D2}   .   " +
-            $"EGGS {shownEggs}/{roundEggTarget}";
+        if (roundNumberText != null)
+        {
+            roundNumberText.text = $"ROUND {roundNumber}";
+        }
+        timerText.text = $"{seconds / 60}:{seconds % 60:D2}";
     }
 
     public void NotifyPenTruckProgressChanged()
@@ -1923,8 +1768,11 @@ public sealed class RoundSystem : MonoBehaviour
         roundEggsCollected++;
         roundCashMade = SaturatingAdd(roundCashMade, cents);
 
-        bool isPrimaryPen = PenExpansionManager.Instance == null
-            || PenExpansionManager.Instance.GetPenIndex(container) <= 0;
+        int penIndex = PenExpansionManager.Instance != null
+            ? PenExpansionManager.Instance.GetPenIndex(container)
+            : 0;
+        AddPenCashContribution(penIndex, cents);
+        bool isPrimaryPen = penIndex <= 0;
         if (isPrimaryPen && IsRoundAcceptingEggs && roundEggTarget > 0)
         {
             eggsTowardTruck++;
@@ -1951,6 +1799,7 @@ public sealed class RoundSystem : MonoBehaviour
             * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
         roundTruckCashMade = SaturatingAdd(roundTruckCashMade, bonus);
         roundCashMade = SaturatingAdd(roundCashMade, bonus);
+        AddPenCashContribution(0, bonus);
         EggScoreHud.AddCents(bonus);
 
         if (truck != null)
@@ -1969,7 +1818,9 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
-    public void CompleteAdditionalPenTruckQuota(Vector3 rewardPosition)
+    public void CompleteAdditionalPenTruckQuota(
+        Vector3 rewardPosition,
+        int penIndex)
     {
         if (!IsRoundInProgress || roundEggTarget <= 0)
         {
@@ -1984,6 +1835,7 @@ public sealed class RoundSystem : MonoBehaviour
             * Mathf.Pow(1.08f, Mathf.Max(0, roundNumber - 1)));
         roundTruckCashMade = SaturatingAdd(roundTruckCashMade, bonus);
         roundCashMade = SaturatingAdd(roundCashMade, bonus);
+        AddPenCashContribution(penIndex, bonus);
         EggScoreHud.AddCents(bonus);
         ShowTruckBonusReward(
             rewardPosition + Vector3.up * 0.45f,
@@ -1992,6 +1844,22 @@ public sealed class RoundSystem : MonoBehaviour
         RefreshTimer();
         RefreshLiveStats();
         RefreshQuotaHud();
+    }
+
+    private void AddPenCashContribution(int penIndex, int cents)
+    {
+        if (cents <= 0)
+        {
+            return;
+        }
+
+        int safeIndex = Mathf.Clamp(
+            penIndex,
+            0,
+            roundCashContributionsCents.Length - 1);
+        roundCashContributionsCents[safeIndex] = SaturatingAdd(
+            roundCashContributionsCents[safeIndex],
+            cents);
     }
 
     private IEnumerator ReplaceFilledTrucks()

@@ -19,6 +19,7 @@ public sealed class PenHudController : MonoBehaviour
     private const float ButtonHeight = 40f;
     private const float ButtonSpacing = 6f;
     private const float PanelChromeHeight = 42f;
+    private const float PanelWidth = 260f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
@@ -235,6 +236,17 @@ public sealed class PenHudController : MonoBehaviour
         }
 
         panelRoot = buttonContent.parent as RectTransform;
+        if (panelRoot != null)
+        {
+            panelRoot.anchorMin = new Vector2(1f, 0f);
+            panelRoot.anchorMax = new Vector2(1f, 0f);
+            panelRoot.pivot = new Vector2(1f, 0f);
+            panelRoot.anchoredPosition = new Vector2(-24f, 24f);
+            panelRoot.SetSizeWithCurrentAnchors(
+                RectTransform.Axis.Horizontal,
+                PanelWidth);
+        }
+
         GridLayoutGroup grid = buttonContent.GetComponent<GridLayoutGroup>();
         if (grid != null)
         {
@@ -298,4 +310,5 @@ public sealed class PenHudController : MonoBehaviour
             RectTransform.Axis.Vertical,
             PanelChromeHeight + buttonsHeight);
     }
+
 }

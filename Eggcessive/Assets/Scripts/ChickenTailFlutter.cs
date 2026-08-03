@@ -42,6 +42,12 @@ public sealed class ChickenTailFlutter : MonoBehaviour
     private float microDuration;
     private float microAngle;
     private bool microActive;
+    private float runtimeInfluence = 1f;
+
+    public void SetRuntimeInfluence(float influence)
+    {
+        runtimeInfluence = Mathf.Clamp01(influence);
+    }
 
     private void Awake()
     {
@@ -109,7 +115,7 @@ public sealed class ChickenTailFlutter : MonoBehaviour
         float additiveAngle = Mathf.Clamp(
             mainAngle + GetMicroAngle(),
             minMainRotation,
-            maxMainRotation);
+            maxMainRotation) * runtimeInfluence;
         tailBone.localRotation = animatedLocalRotation
             * Quaternion.AngleAxis(additiveAngle, Vector3.right);
     }

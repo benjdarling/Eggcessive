@@ -35,6 +35,12 @@ public sealed class ChickenWattlePendulum : MonoBehaviour
     private Vector3 previousAnchorPosition;
     private Vector3 previousAnimatedRestPosition;
     private bool simulationInitialized;
+    private float runtimeInfluence = 1f;
+
+    public void SetRuntimeInfluence(float influence)
+    {
+        runtimeInfluence = Mathf.Clamp01(influence);
+    }
 
     private void Awake()
     {
@@ -158,7 +164,10 @@ public sealed class ChickenWattlePendulum : MonoBehaviour
         simulatedPosition = anchorPosition + simulatedDirection * tetherLength;
         previousAnchorPosition = anchorPosition;
         previousAnimatedRestPosition = animatedRestPosition;
-        pendulumBone.position = Vector3.Lerp(animatedRestPosition, simulatedPosition, activeBlend);
+        pendulumBone.position = Vector3.Lerp(
+            animatedRestPosition,
+            simulatedPosition,
+            activeBlend * runtimeInfluence);
     }
 
     private void ResetSimulation(Vector3 restPosition, Vector3 anchorPosition)

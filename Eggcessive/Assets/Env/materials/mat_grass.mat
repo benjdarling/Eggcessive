@@ -151,7 +151,7 @@ Material:
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _GrassTint: {r: 1, g: 1, b: 1, a: 1}
     - _MaskWorldRect: {r: -2.5, g: -3, b: 5, a: 5}
-    - _OuterMaskWorldRect: {r: -3, g: -3, b: 6, a: 10}
+    - _OuterMaskWorldRect: {r: -5.5, g: -3, b: 11, a: 8}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

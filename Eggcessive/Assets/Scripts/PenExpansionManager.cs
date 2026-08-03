@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 
 [DefaultExecutionOrder(-150)]
@@ -25,11 +26,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         RobotSmartness
     }
 
-    private const float RuntimeGroundMaskPixelsPerMetre = 16f;
-    private const int MaximumRuntimeGroundMaskResolution = 1024;
+    private const int RuntimeGroundMaskResolution = 64;
     private const int IncubatorInstallCost = 400;
     private const int CrosshatcherInstallCost = 15000;
     private const int RobotInstallCost = 120000;
+    private const float PenGap = 20f;
 
     private static readonly int[] IncubatorCapacityCosts =
     {
@@ -95,6 +96,8 @@ public sealed class PenExpansionManager : MonoBehaviour
         public GameObject runtimeRoot;
         public Transform terrain;
         public InteractiveGrassSystem grass;
+        public Material groundMaterial;
+        public Texture2D groundMask;
         public DebugChickenSpawner spawner;
         public EggContainer eggContainer;
         public IncubatorController incubator;
@@ -105,19 +108,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         public int robotCapacityLevel;
         public int robotSmartnessLevel;
         public PenTruckController truck;
-    }
-
-    private sealed class PenBuffer
-    {
-        public Transform terrain;
-        public Material groundMaterial;
-        public InteractiveGrassSystem grass;
+        public GameObject sign;
     }
 
     [Header("Pen Layout")]
     [SerializeField, Min(2)] private int penCount = 8;
-    [SerializeField, Min(0.1f)] private float penSpacing = 5f;
-    [SerializeField, Min(0f)] private float additionalPenSpacing = 1f;
     [SerializeField, Min(0)] private int starterChickensPerPurchasedPen = 3;
 
     [Header("Purchase Costs")]
@@ -133,19 +128,15 @@ public sealed class PenExpansionManager : MonoBehaviour
     private readonly List<Material> runtimeGroundMaterials = new List<Material>();
     private readonly List<Texture2D> runtimeGroundMasks = new List<Texture2D>();
     private Transform terrainTemplate;
+    private Transform roadTemplate;
     private GameObject volumeTemplate;
     private InteractiveGrassSystem grassTemplate;
     private EggContainer containerTemplate;
     private IncubatorController incubatorTemplate;
     private CrosshatcherController crosshatcherTemplate;
-    private GameObject bufferRoot;
-    private PenBuffer leftBuffer;
-    private PenBuffer rightBuffer;
-    private Vector4 baseMaskWorldRect;
-    private Vector4 baseOuterMaskWorldRect;
-    private Material worldGroundMaterial;
-    private Texture2D worldGroundMask;
+    private GameObject signTemplate;
     private Vector3 baseCameraPivotPosition;
+    private float penSpacing;
     private int focusedPenIndex;
     private float nextVisualRefreshTime;
     private Coroutine penPurchaseFinalization;
@@ -746,6 +737,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         pivotPosition.x += slots[index].horizontalOffset;
         transform.position = pivotPosition;
         EggContainer.SetFocusedContainer(slots[index].eggContainer);
+        RefreshPenSigns();
         RefreshDistantVisuals();
         RoundSystem.Instance?.NotifyPenTruckProgressChanged();
         StateChanged?.Invoke();
@@ -754,6 +746,7 @@ public sealed class PenExpansionManager : MonoBehaviour
     private void InitializePens()
     {
         terrainTemplate = GameObject.Find("Terrain_Pens")?.transform;
+        roadTemplate = GameObject.Find("Roads")?.transform;
         volumeTemplate = GameObject.Find("VolumePen");
         grassTemplate = FindFirstObjectByType<InteractiveGrassSystem>(
             FindObjectsInactive.Include);
@@ -764,15 +757,24 @@ public sealed class PenExpansionManager : MonoBehaviour
             FindObjectsInactive.Include);
         crosshatcherTemplate = FindFirstObjectByType<CrosshatcherController>(
             FindObjectsInactive.Include);
+        signTemplate = GameObject.Find("Pen Sign Template");
+        if (signTemplate == null)
+        {
+            Debug.LogWarning(
+                "Pen Sign Template was not found. Pen signs will remain "
+                + "disabled until an authored scene template is provided.",
+                this);
+        }
 
         if (terrainTemplate == null
+            || roadTemplate == null
             || volumeTemplate == null
             || grassTemplate == null
             || containerTemplate == null)
         {
             Debug.LogError(
-                "Pen expansion needs Terrain_Pens, VolumePen, Interactive Grass, "
-                + "and the original EggContainer in the scene.",
+                "Pen expansion needs Terrain_Pens, Roads, VolumePen, Interactive "
+                + "Grass, and the original EggContainer in the scene.",
                 this);
             enabled = false;
             return;
@@ -781,31 +783,34 @@ public sealed class PenExpansionManager : MonoBehaviour
         float measuredTerrainWidth = MeasureTerrainWidth();
         if (measuredTerrainWidth > 0.1f)
         {
-            // These surfaces are resized to cover the spacing between pens.
-            // Keeping the authored template static can leave its renderer in a
-            // pre-baked static batch at the old width while its collider uses
-            // the new transform, producing a visible strip at each boundary.
-            SetStaticRecursively(terrainTemplate, false);
-            penSpacing = measuredTerrainWidth + additionalPenSpacing;
-            FitTerrainSurfacesToWidth(
-                terrainTemplate,
-                penSpacing);
-            // Collider.bounds can otherwise retain the pre-resize width until
-            // the next physics step. Grass placement is generated immediately
-            // below, so synchronize once to keep visual and collision coverage
-            // identical from the first frame.
-            Physics.SyncTransforms();
-            volumeTemplate
-                .GetComponent<DebugChickenSpawner>()
-                ?.RebuildPenNavMesh();
+            // Keep the authored ProBuilder mesh at scale one so its renderer
+            // and collider retain exactly the authored dimensions. Pen centres
+            // are separated by the surface width plus a clear twenty-metre gap.
+            penSpacing = measuredTerrainWidth + PenGap;
             grassTemplate.ConfigureRuntimePen(
                 terrainTemplate,
                 Vector3.zero,
                 null,
                 true);
         }
+        else
+        {
+            Debug.LogError(
+                "Terrain_Pens must contain a rendered grass_pen surface.",
+                this);
+            enabled = false;
+            return;
+        }
 
         SynchronizeGroundMaskRects();
+        Material baseGroundMaterial =
+            CreateRuntimeGroundMaterial(0, terrainTemplate);
+        grassTemplate.ConfigureRuntimePen(
+            terrainTemplate,
+            Vector3.zero,
+            baseGroundMaterial,
+            true,
+            false);
 
         slots.Clear();
         bool starterIncubatorInstalled = incubatorTemplate != null
@@ -821,6 +826,7 @@ public sealed class PenExpansionManager : MonoBehaviour
                 horizontalOffset = index * penSpacing,
                 terrain = index == 0 ? terrainTemplate : null,
                 grass = index == 0 ? grassTemplate : null,
+                groundMaterial = index == 0 ? baseGroundMaterial : null,
                 spawner = index == 0
                     ? volumeTemplate.GetComponent<DebugChickenSpawner>()
                     : null,
@@ -840,9 +846,11 @@ public sealed class PenExpansionManager : MonoBehaviour
             crosshatcherTemplate.gameObject.SetActive(false);
         }
         EggContainer.SetFocusedContainer(containerTemplate);
-        CreateEdgeBuffers();
-        RefreshWorldGroundCoverage();
+        slots[0].sign = signTemplate;
+        ConfigurePenSign(slots[0].sign, 0);
+        RefreshPenSigns();
         IsInitialized = true;
+        StartCoroutine(RefreshPenGroundCoverageTimeSliced(slots[0]));
         RefreshDistantVisuals();
         StateChanged?.Invoke();
     }
@@ -860,74 +868,29 @@ public sealed class PenExpansionManager : MonoBehaviour
         Renderer renderer = penSurface != null
             ? penSurface.GetComponent<Renderer>()
             : null;
-        return renderer != null ? renderer.bounds.size.x : penSpacing;
-    }
-
-    private static void FitTerrainSurfacesToWidth(
-        Transform terrain,
-        float targetWorldWidth)
-    {
-        if (terrain == null || targetWorldWidth <= 0f)
-        {
-            return;
-        }
-
-        for (int index = 0; index < terrain.childCount; index++)
-        {
-            Transform surface = terrain.GetChild(index);
-            Renderer renderer = surface.GetComponent<Renderer>();
-            if (renderer == null || renderer.bounds.size.x <= 0.0001f)
-            {
-                continue;
-            }
-
-            Vector3 scale = surface.localScale;
-            scale.x *= targetWorldWidth / renderer.bounds.size.x;
-            surface.localScale = scale;
-        }
+        return renderer != null ? renderer.bounds.size.x : 0f;
     }
 
     private void SynchronizeGroundMaskRects()
     {
-        Transform penSurface = terrainTemplate.Find("grass_pen");
-        Transform backgroundSurface =
-            terrainTemplate.Find("grass_background");
-        Renderer penRenderer = penSurface != null
-            ? penSurface.GetComponent<Renderer>()
-            : null;
-        Renderer backgroundRenderer = backgroundSurface != null
-            ? backgroundSurface.GetComponent<Renderer>()
-            : null;
         Material source = grassTemplate.GroundColourSource;
-        if (penRenderer == null || backgroundRenderer == null || source == null)
+        if (source == null)
         {
             return;
         }
 
-        Bounds penBounds = penRenderer.bounds;
-        Bounds outerBounds = penBounds;
-        outerBounds.Encapsulate(backgroundRenderer.bounds);
-        baseMaskWorldRect = BoundsToWorldRect(penBounds);
-        baseOuterMaskWorldRect = BoundsToWorldRect(outerBounds);
+        Vector4 innerWorldRect = GetGrassWorldRect(grassTemplate, false);
+        Vector4 outerWorldRect = GetGrassWorldRect(grassTemplate, true);
 
         if (source.HasProperty("_MaskWorldRect"))
         {
-            source.SetVector("_MaskWorldRect", baseMaskWorldRect);
+            source.SetVector("_MaskWorldRect", innerWorldRect);
         }
 
         if (source.HasProperty("_OuterMaskWorldRect"))
         {
-            source.SetVector("_OuterMaskWorldRect", baseOuterMaskWorldRect);
+            source.SetVector("_OuterMaskWorldRect", outerWorldRect);
         }
-    }
-
-    private static Vector4 BoundsToWorldRect(Bounds bounds)
-    {
-        return new Vector4(
-            bounds.min.x,
-            bounds.min.z,
-            Mathf.Max(0.0001f, bounds.size.x),
-            Mathf.Max(0.0001f, bounds.size.z));
     }
 
     private void CreatePurchasedPen(int index, PenSlot slot)
@@ -940,8 +903,12 @@ public sealed class PenExpansionManager : MonoBehaviour
             $"Terrain_Pens_{index + 1}",
             worldOffset,
             penRoot.transform);
+        CreateRuntimeRoad(
+            $"Roads_{index + 1}",
+            worldOffset,
+            penRoot.transform);
         Material groundMaterial =
-            ApplyWorldGroundMaterial(terrain);
+            CreateRuntimeGroundMaterial(index, terrain);
 
         // Make the new terrain visible to the NavMesh bake performed by the
         // cloned spawner's Awake. This avoids baking it a second time below.
@@ -1002,17 +969,65 @@ public sealed class PenExpansionManager : MonoBehaviour
         slot.runtimeRoot = penRoot;
         slot.terrain = terrain;
         slot.grass = grass;
+        slot.groundMaterial = groundMaterial;
         slot.spawner = clonedSpawner;
         slot.eggContainer = container;
         slot.incubator = incubator;
         slot.crosshatcher = crosshatcher;
         slot.truck = truck;
+        slot.sign = CreatePenSign(index, penRoot.transform);
+    }
+
+    private GameObject CreatePenSign(int penIndex, Transform parent)
+    {
+        if (signTemplate == null)
+        {
+            return null;
+        }
+
+        Vector3 worldPosition = signTemplate.transform.position
+            + Vector3.right * slots[penIndex].horizontalOffset;
+        GameObject root = Instantiate(
+            signTemplate,
+            worldPosition,
+            signTemplate.transform.rotation,
+            parent);
+        root.name = $"Pen {penIndex + 1} Sign";
+        ConfigurePenSign(root, penIndex);
+        return root;
+    }
+
+    private static void ConfigurePenSign(GameObject sign, int penIndex)
+    {
+        if (sign == null)
+        {
+            return;
+        }
+
+        TMP_Text text = sign.GetComponentInChildren<TMP_Text>(true);
+        if (text != null)
+        {
+            text.text = (penIndex + 1).ToString();
+            text.color = PenUiPalette.GetColour(penIndex);
+        }
+    }
+
+    private void RefreshPenSigns()
+    {
+        for (int index = 0; index < slots.Count; index++)
+        {
+            if (slots[index].sign != null)
+            {
+                slots[index].sign.SetActive(
+                    slots[index].owned && index == focusedPenIndex);
+            }
+        }
     }
 
     private IEnumerator FinalizePurchasedPen(PenSlot slot)
     {
         // Return control immediately after the purchase click, then divide the
-        // expensive grass, edge-buffer and world-mask work across frames.
+        // expensive grass and this pen's small ground masks across frames.
         yield return null;
         if (slot.spawner != null)
         {
@@ -1047,9 +1062,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
 
         yield return null;
-        yield return RefreshEdgeBuffersTimeSliced();
-        yield return null;
-        yield return RefreshWorldGroundCoverageTimeSliced();
+        yield return RefreshPenGroundCoverageTimeSliced(slot);
         penPurchaseFinalization = null;
         StateChanged?.Invoke();
     }
@@ -1165,6 +1178,22 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private void RefreshDistantVisuals()
     {
+        for (int index = 0; index < slots.Count; index++)
+        {
+            InteractiveGrassSystem grass = slots[index].grass;
+            if (grass == null)
+            {
+                continue;
+            }
+
+            bool shouldProcessGrass = slots[index].owned
+                && index == focusedPenIndex;
+            if (grass.enabled != shouldProcessGrass)
+            {
+                grass.enabled = shouldProcessGrass;
+            }
+        }
+
         float cameraX = transform.position.x;
         IReadOnlyList<ChickenController> chickens =
             ChickenController.ActiveInstances;
@@ -1192,80 +1221,50 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
     }
 
-    private void CreateEdgeBuffers()
-    {
-        bufferRoot = new GameObject("Pen Edge Buffers");
-        leftBuffer = CreateBuffer("Left", -penSpacing);
-        rightBuffer = CreateBuffer("Right", penSpacing);
-    }
-
-    private PenBuffer CreateBuffer(string side, float horizontalOffset)
-    {
-        Vector3 worldOffset = Vector3.right * horizontalOffset;
-        Transform terrain = CreateRuntimeTerrain(
-            $"Terrain_Pens Buffer {side}",
-            worldOffset,
-            bufferRoot.transform);
-        for (int index = 0; index < terrain.childCount; index++)
-        {
-            Transform surface = terrain.GetChild(index);
-            surface.name =
-                $"{surface.name.ToLowerInvariant()}_buffer_{side.ToLowerInvariant()}";
-        }
-
-        Material groundMaterial =
-            ApplyWorldGroundMaterial(terrain);
-        InteractiveGrassSystem grass = CreateRuntimeGrass(
-            terrain,
-            worldOffset,
-            groundMaterial,
-            $"Interactive Grass Buffer {side}",
-            bufferRoot.transform);
-        return new PenBuffer
-        {
-            terrain = terrain,
-            groundMaterial = groundMaterial,
-            grass = grass
-        };
-    }
-
-    private InteractiveGrassSystem CreateRuntimeGrass(
-        Transform terrain,
-        Vector3 worldOffset,
-        Material groundMaterial,
-        string objectName,
-        Transform parent)
-    {
-        return grassTemplate.CreateRuntimeCopy(
-            grassTemplate.transform.position + worldOffset,
-            grassTemplate.transform.rotation,
-            parent,
-            objectName,
-            terrain,
-            worldOffset,
-            groundMaterial,
-            true);
-    }
-
     private Transform CreateRuntimeTerrain(
         string objectName,
         Vector3 worldOffset,
         Transform parent)
     {
-        GameObject terrainObject = new GameObject(objectName);
-        Transform terrain = terrainObject.transform;
-        terrain.SetParent(parent, false);
-        terrain.SetPositionAndRotation(
-            terrainTemplate.position + worldOffset,
-            terrainTemplate.rotation);
-        terrain.localScale = terrainTemplate.localScale;
+        return CreateRuntimeSurfaceGroup(
+            terrainTemplate,
+            objectName,
+            worldOffset,
+            parent);
+    }
 
-        for (int index = 0; index < terrainTemplate.childCount; index++)
+    private Transform CreateRuntimeRoad(
+        string objectName,
+        Vector3 worldOffset,
+        Transform parent)
+    {
+        return CreateRuntimeSurfaceGroup(
+            roadTemplate,
+            objectName,
+            worldOffset,
+            parent);
+    }
+
+    private static Transform CreateRuntimeSurfaceGroup(
+        Transform source,
+        string objectName,
+        Vector3 worldOffset,
+        Transform parent)
+    {
+        GameObject groupObject = new GameObject(objectName);
+        Transform group = groupObject.transform;
+        group.SetParent(parent, false);
+        group.SetPositionAndRotation(
+            source.position + worldOffset,
+            source.rotation);
+        group.localScale = source.localScale;
+
+        for (int index = 0; index < source.childCount; index++)
         {
-            CreateRuntimeSurface(terrainTemplate.GetChild(index), terrain);
+            CreateRuntimeSurface(source.GetChild(index), group);
         }
 
-        return terrain;
+        return group;
     }
 
     private static void CreateRuntimeSurface(
@@ -1287,6 +1286,18 @@ public sealed class PenExpansionManager : MonoBehaviour
             || sourceMesh == null
             || sourceRenderer == null)
         {
+            // Authored child groups, such as the pre-baked pen fence prefab,
+            // should be copied intact. They are already generated in the
+            // editor and require no runtime construction of their contents.
+            if (sourceSurface.GetComponentInChildren<Renderer>(true) != null)
+            {
+                GameObject authoredGroup = UnityEngine.Object.Instantiate(
+                    sourceSurface.gameObject,
+                    parent,
+                    false);
+                authoredGroup.name = sourceSurface.name;
+            }
+
             return;
         }
 
@@ -1331,76 +1342,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
     }
 
-    private IEnumerator RefreshEdgeBuffersTimeSliced()
-    {
-        if (leftBuffer == null || rightBuffer == null)
-        {
-            yield break;
-        }
-
-        int firstOwnedIndex = 0;
-        int lastOwnedIndex = 0;
-        for (int index = 0; index < slots.Count; index++)
-        {
-            if (!slots[index].owned)
-            {
-                continue;
-            }
-
-            firstOwnedIndex = Mathf.Min(firstOwnedIndex, index);
-            lastOwnedIndex = Mathf.Max(lastOwnedIndex, index);
-        }
-
-        InteractiveGrassSystem movedGrass = PositionBuffer(
-            leftBuffer,
-            (firstOwnedIndex - 1) * penSpacing);
-        if (movedGrass != null)
-        {
-            yield return movedGrass.GenerateGrassTimeSliced();
-        }
-
-        movedGrass = PositionBuffer(
-            rightBuffer,
-            (lastOwnedIndex + 1) * penSpacing);
-        if (movedGrass != null)
-        {
-            yield return movedGrass.GenerateGrassTimeSliced();
-        }
-    }
-
-    private InteractiveGrassSystem PositionBuffer(
-        PenBuffer buffer,
-        float horizontalOffset)
-    {
-        Vector3 worldOffset = Vector3.right * horizontalOffset;
-        Vector3 targetTerrainPosition = terrainTemplate.position + worldOffset;
-        if ((buffer.terrain.position - targetTerrainPosition).sqrMagnitude
-            <= 0.000001f)
-        {
-            return null;
-        }
-
-        buffer.terrain.SetPositionAndRotation(
-            targetTerrainPosition,
-            terrainTemplate.rotation);
-        if (buffer.grass != null)
-        {
-            buffer.grass.transform.SetPositionAndRotation(
-                grassTemplate.transform.position + worldOffset,
-                grassTemplate.transform.rotation);
-            buffer.grass.ConfigureRuntimePen(
-                buffer.terrain,
-                worldOffset,
-                buffer.groundMaterial,
-                true,
-                false);
-            return buffer.grass;
-        }
-
-        return null;
-    }
-
-    private Material ApplyWorldGroundMaterial(Transform terrain)
+    private Material CreateRuntimeGroundMaterial(int penIndex, Transform terrain)
     {
         Material source = grassTemplate.GroundColourSource;
         if (source == null)
@@ -1408,216 +1350,115 @@ public sealed class PenExpansionManager : MonoBehaviour
             return null;
         }
 
-        if (worldGroundMaterial == null)
+        var groundMaterial = new Material(source)
         {
-            worldGroundMaterial = new Material(source)
-            {
-                name = $"{source.name} Continuous World"
-            };
-            runtimeGroundMaterials.Add(worldGroundMaterial);
-        }
+            name = $"{source.name} Pen {penIndex + 1}"
+        };
+        runtimeGroundMaterials.Add(groundMaterial);
 
-        Renderer[] renderers = terrain.GetComponentsInChildren<Renderer>(true);
-        for (int rendererIndex = 0; rendererIndex < renderers.Length; rendererIndex++)
+        // The fence and any future authored props are also children of the
+        // terrain template. Only grass_pen is ground and should receive this
+        // per-pen material instance.
+        Transform groundSurface = terrain.Find("grass_pen");
+        Renderer renderer = groundSurface != null
+            ? groundSurface.GetComponent<Renderer>()
+            : null;
+        if (renderer != null)
         {
-            Material[] materials = renderers[rendererIndex].sharedMaterials;
+            Material[] materials = renderer.sharedMaterials;
             for (int materialIndex = 0; materialIndex < materials.Length; materialIndex++)
             {
                 if (materials[materialIndex] != null)
                 {
-                    materials[materialIndex] = worldGroundMaterial;
+                    materials[materialIndex] = groundMaterial;
                 }
             }
 
-            renderers[rendererIndex].enabled = true;
-            renderers[rendererIndex].sharedMaterials = materials;
+            renderer.enabled = true;
+            renderer.sharedMaterials = materials;
         }
 
-        return worldGroundMaterial;
+        return groundMaterial;
     }
 
-    private void RefreshWorldGroundCoverage()
+    private IEnumerator RefreshPenGroundCoverageTimeSliced(PenSlot slot)
     {
-        if (!TryPrepareWorldGroundCoverage(
-                out List<Transform> terrains,
-                out List<InteractiveGrassSystem> grassSystems,
-                out Vector4 worldRect,
-                out int maskResolution))
-        {
-            return;
-        }
-
-        Texture2D nextMask = grassTemplate.CreateRuntimeGroundMask(
-            worldRect,
-            maskResolution,
-            false,
-            grassSystems);
-        ApplyWorldGroundMask(nextMask, worldRect, terrains);
-    }
-
-    private IEnumerator RefreshWorldGroundCoverageTimeSliced()
-    {
-        if (!TryPrepareWorldGroundCoverage(
-                out List<Transform> terrains,
-                out List<InteractiveGrassSystem> grassSystems,
-                out Vector4 worldRect,
-                out int maskResolution))
+        if (slot == null
+            || slot.grass == null
+            || slot.groundMaterial == null)
         {
             yield break;
         }
 
-        Texture2D nextMask = null;
-        yield return grassTemplate.CreateRuntimeGroundMaskTimeSliced(
+        Vector4 worldRect = GetGrassWorldRect(slot.grass, true);
+        if (worldRect.z <= 0f
+            || worldRect.w <= 0f)
+        {
+            yield break;
+        }
+
+        Texture2D groundMask = null;
+        InteractiveGrassSystem[] coverageSources = { slot.grass };
+        yield return slot.grass.CreateRuntimeGroundMaskTimeSliced(
             worldRect,
-            maskResolution,
+            RuntimeGroundMaskResolution,
             false,
-            grassSystems,
-            generatedMask => nextMask = generatedMask);
-        if (nextMask != null)
+            coverageSources,
+            generatedMask => groundMask = generatedMask);
+
+        if (groundMask == null)
         {
-            ApplyWorldGroundMask(nextMask, worldRect, terrains);
+            yield break;
         }
+
+        groundMask.name = "Runtime Pen Ground Mask";
+        slot.groundMask = groundMask;
+        runtimeGroundMasks.Add(groundMask);
+
+        // A pen is now one isolated surface, so both shader slots sample the
+        // same full-surface mask instead of maintaining inner/outer textures.
+        slot.groundMaterial.SetTexture("_LayerMask", groundMask);
+        slot.groundMaterial.SetTexture("_OuterLayerMask", groundMask);
+        slot.groundMaterial.SetVector("_MaskWorldRect", worldRect);
+        slot.groundMaterial.SetVector("_OuterMaskWorldRect", worldRect);
+        slot.groundMaterial.SetFloat("_PlacedCoverageAvailable", 1f);
+        slot.groundMaterial.SetFloat("_OuterPlacedCoverageAvailable", 1f);
     }
 
-    private bool TryPrepareWorldGroundCoverage(
-        out List<Transform> terrains,
-        out List<InteractiveGrassSystem> grassSystems,
-        out Vector4 worldRect,
-        out int maskResolution)
-    {
-        terrains = new List<Transform>();
-        grassSystems = new List<InteractiveGrassSystem>();
-        worldRect = default;
-        maskResolution = 0;
-
-        if (worldGroundMaterial == null)
-        {
-            ApplyWorldGroundMaterial(terrainTemplate);
-        }
-
-        if (worldGroundMaterial == null)
-        {
-            return false;
-        }
-
-        AddWorldGroundSource(terrainTemplate, grassTemplate, terrains, grassSystems);
-        AddWorldGroundSource(
-            leftBuffer != null ? leftBuffer.terrain : null,
-            leftBuffer != null ? leftBuffer.grass : null,
-            terrains,
-            grassSystems);
-        AddWorldGroundSource(
-            rightBuffer != null ? rightBuffer.terrain : null,
-            rightBuffer != null ? rightBuffer.grass : null,
-            terrains,
-            grassSystems);
-        for (int index = 1; index < slots.Count; index++)
-        {
-            PenSlot slot = slots[index];
-            if (slot.owned)
-            {
-                AddWorldGroundSource(
-                    slot.terrain,
-                    slot.grass,
-                    terrains,
-                    grassSystems);
-            }
-        }
-
-        if (!TryGetCombinedTerrainBounds(terrains, out Bounds bounds))
-        {
-            return false;
-        }
-
-        worldRect = BoundsToWorldRect(bounds);
-        maskResolution = Mathf.Clamp(
-            Mathf.NextPowerOfTwo(
-                Mathf.CeilToInt(
-                    Mathf.Max(worldRect.z, worldRect.w)
-                    * RuntimeGroundMaskPixelsPerMetre)),
-            256,
-            MaximumRuntimeGroundMaskResolution);
-        return true;
-    }
-
-    private void ApplyWorldGroundMask(
-        Texture2D nextMask,
-        Vector4 worldRect,
-        List<Transform> terrains)
-    {
-        if (worldGroundMask != null)
-        {
-            runtimeGroundMasks.Remove(worldGroundMask);
-            Destroy(worldGroundMask);
-        }
-
-        worldGroundMask = nextMask;
-        worldGroundMask.name = "Continuous World Ground Mask";
-        runtimeGroundMasks.Add(worldGroundMask);
-        worldGroundMaterial.SetTexture("_LayerMask", worldGroundMask);
-        worldGroundMaterial.SetTexture("_OuterLayerMask", worldGroundMask);
-        worldGroundMaterial.SetVector("_MaskWorldRect", worldRect);
-        worldGroundMaterial.SetVector("_OuterMaskWorldRect", worldRect);
-        worldGroundMaterial.SetFloat("_PlacedCoverageAvailable", 1f);
-        worldGroundMaterial.SetFloat("_OuterPlacedCoverageAvailable", 1f);
-
-        for (int index = 0; index < terrains.Count; index++)
-        {
-            ApplyWorldGroundMaterial(terrains[index]);
-        }
-    }
-
-    private static void AddWorldGroundSource(
-        Transform terrain,
+    private static Vector4 GetGrassWorldRect(
         InteractiveGrassSystem grass,
-        List<Transform> terrains,
-        List<InteractiveGrassSystem> grassSystems)
+        bool outer)
     {
-        if (terrain != null)
+        Vector2 centre = outer ? grass.OuterAreaCenter : Vector2.zero;
+        Vector2 size = outer ? grass.OuterAreaSize : grass.AreaSize;
+        Vector2 halfSize = size * 0.5f;
+        Vector3 minimum = new Vector3(
+            float.PositiveInfinity,
+            0f,
+            float.PositiveInfinity);
+        Vector3 maximum = new Vector3(
+            float.NegativeInfinity,
+            0f,
+            float.NegativeInfinity);
+        for (int x = -1; x <= 1; x += 2)
         {
-            terrains.Add(terrain);
-        }
-
-        if (grass != null)
-        {
-            grassSystems.Add(grass);
-        }
-    }
-
-    private static bool TryGetCombinedTerrainBounds(
-        List<Transform> terrains,
-        out Bounds combined)
-    {
-        combined = default;
-        bool hasBounds = false;
-        for (int terrainIndex = 0; terrainIndex < terrains.Count; terrainIndex++)
-        {
-            Renderer[] renderers = terrains[terrainIndex]
-                .GetComponentsInChildren<Renderer>(true);
-            for (int rendererIndex = 0; rendererIndex < renderers.Length; rendererIndex++)
+            for (int z = -1; z <= 1; z += 2)
             {
-                if (!hasBounds)
-                {
-                    combined = renderers[rendererIndex].bounds;
-                    hasBounds = true;
-                }
-                else
-                {
-                    combined.Encapsulate(renderers[rendererIndex].bounds);
-                }
+                Vector3 corner = grass.transform.TransformPoint(
+                    new Vector3(
+                        centre.x + halfSize.x * x,
+                        0f,
+                        centre.y + halfSize.y * z));
+                minimum = Vector3.Min(minimum, corner);
+                maximum = Vector3.Max(maximum, corner);
             }
         }
 
-        return hasBounds;
-    }
-
-    private static void SetStaticRecursively(Transform root, bool isStatic)
-    {
-        root.gameObject.isStatic = isStatic;
-        for (int index = 0; index < root.childCount; index++)
-        {
-            SetStaticRecursively(root.GetChild(index), isStatic);
-        }
+        return new Vector4(
+            minimum.x,
+            minimum.z,
+            Mathf.Max(0.0001f, maximum.x - minimum.x),
+            Mathf.Max(0.0001f, maximum.z - minimum.z));
     }
 
     private bool IsValidIndex(int index)
@@ -1628,8 +1469,6 @@ public sealed class PenExpansionManager : MonoBehaviour
     private void OnValidate()
     {
         penCount = Mathf.Max(2, penCount);
-        penSpacing = Mathf.Max(0.1f, penSpacing);
-        additionalPenSpacing = Mathf.Max(0f, additionalPenSpacing);
         starterChickensPerPurchasedPen = Mathf.Max(
             0,
             starterChickensPerPurchasedPen);
@@ -1717,7 +1556,10 @@ internal sealed class PenTruckController : MonoBehaviour
             round.CompleteAdditionalPenTruckQuota(
                 truck != null
                     ? truck.position
-                    : GetStopPosition());
+                    : GetStopPosition(),
+                PenExpansionManager.Instance != null
+                    ? PenExpansionManager.Instance.GetPenIndex(container)
+                    : 0);
             pendingReplacements++;
             if (replacement == null)
             {

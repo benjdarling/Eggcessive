@@ -10,6 +10,7 @@ using UnityEngine.Rendering;
 public sealed class InteractiveGrassSystem : MonoBehaviour
 {
     private const int MaximumInstancesPerDraw = 1023;
+    private const int PlacementAttemptsPerTarget = 12;
     private static int automaticGenerationSuppressionDepth;
     private static readonly Dictionary<int, Mesh> RuntimeCombinedClumpMeshes =
         new Dictionary<int, Mesh>();
@@ -102,7 +103,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     [SerializeField] private Vector2 outerAreaCenter = new Vector2(0f, 2.5f);
     [Tooltip("Local-space size of the complete outer ground rectangle.")]
     [SerializeField] private Vector2 outerAreaSize = new Vector2(12f, 10f);
-    [Tooltip("Placement density outside the pen as a proportion of the existing inner density.")]
+    [Tooltip("Density at the inner-area boundary as a proportion of the inner density. It fades to zero at the outer terrain edge.")]
     [SerializeField, Range(0.01f, 1f)] private float outerDensityMultiplier = 0.35f;
     [Tooltip("Distance outside the pen over which character interaction fades.")]
     [SerializeField, Min(0.01f)] private float outerInteractionFadeDistance = 5f;
@@ -201,7 +202,9 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             groundColourSource = runtimeGroundColourSource;
         }
 
-        RefreshInnerAreaFromTerrainPen();
+        // The authored areaSize is the protected, dense inner patch. Only the
+        // outer rectangle follows the grass_pen collider bounds at runtime.
+        RefreshOuterAreaFromTerrainPens();
         if (generateImmediately)
         {
             GenerateGrass();
@@ -535,7 +538,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     private void OnEnable()
     {
-        if (automaticGenerationSuppressionDepth == 0)
+        // Focus switching disables grass systems for every remote pen. Keep
+        // their generated batches alive so returning to a pen is immediate
+        // instead of rebuilding thousands of instances on every visit.
+        if (automaticGenerationSuppressionDepth == 0
+            && (activeMesh == null || activeMaterial == null))
         {
             GenerateGrass();
         }
@@ -686,7 +693,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         int targetCount = Mathf.Max(1, Mathf.RoundToInt(area * densityPerSquareMetre));
         float minimumSpacing = Mathf.Sqrt(1f / densityPerSquareMetre) * spacingMultiplier;
         float cellSize = Mathf.Max(minimumSpacing, 0.001f);
-        int maximumAttempts = targetCount * 80;
+        int maximumAttempts = targetCount * PlacementAttemptsPerTarget;
         var random = new System.Random(randomSeed);
         var accepted = new List<Vector2>(targetCount);
         var grid = new Dictionary<Vector2Int, List<Vector2>>();
@@ -786,16 +793,18 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         float outerArea = outerAreaSize.x * outerAreaSize.y;
         float innerArea = areaSize.x * areaSize.y;
         float extensionArea = Mathf.Max(0f, outerArea - innerArea);
-        float outerDensity = densityPerSquareMetre * outerDensityMultiplier;
-        int targetCount = Mathf.Max(0, Mathf.RoundToInt(extensionArea * outerDensity));
+        float peakOuterDensity = densityPerSquareMetre * outerDensityMultiplier;
+        int targetCount = Mathf.Max(
+            0,
+            Mathf.RoundToInt(extensionArea * peakOuterDensity * 0.5f));
         if (targetCount == 0)
         {
             return;
         }
 
-        float minimumSpacing = Mathf.Sqrt(1f / outerDensity) * spacingMultiplier;
+        float minimumSpacing = Mathf.Sqrt(1f / peakOuterDensity) * spacingMultiplier;
         float cellSize = Mathf.Max(minimumSpacing, 0.001f);
-        int maximumAttempts = targetCount * 80;
+        int maximumAttempts = targetCount * PlacementAttemptsPerTarget;
         var random = new System.Random(randomSeed ^ 0x5f3759df);
         var accepted = new List<Vector2>(targetCount);
         var grid = new Dictionary<Vector2Int, List<Vector2>>();
@@ -819,8 +828,15 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
                 out float patchWeight,
                 out float clumpWeight,
                 out float acceptance);
-            if (NextFloat(random) > acceptance
-                || HasCloseNeighbour(point, grid, cellSize, minimumSpacing))
+            float outerDensityWeight = GetOuterDensityWeight(point);
+            float localMinimumSpacing = minimumSpacing
+                / Mathf.Sqrt(Mathf.Max(0.01f, outerDensityWeight));
+            if (NextFloat(random) > acceptance * outerDensityWeight
+                || HasCloseNeighbour(
+                    point,
+                    grid,
+                    cellSize,
+                    localMinimumSpacing))
             {
                 continue;
             }
@@ -890,26 +906,21 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         List<GrassInstance> instances,
         List<Bounds> terrainPenBounds)
     {
-        float outerDensity = densityPerSquareMetre * outerDensityMultiplier;
-        float minimumSpacing = Mathf.Sqrt(1f / outerDensity) * spacingMultiplier;
+        float peakOuterDensity = densityPerSquareMetre * outerDensityMultiplier;
+        float minimumSpacing = Mathf.Sqrt(1f / peakOuterDensity) * spacingMultiplier;
         float cellSize = Mathf.Max(minimumSpacing, 0.001f);
         var grid = new Dictionary<Vector2Int, List<Vector2>>();
 
         for (int penIndex = 0; penIndex < terrainPenBounds.Count; penIndex++)
         {
             Bounds bounds = terrainPenBounds[penIndex];
-            Vector3 localCentre3D = transform.InverseTransformPoint(bounds.center);
-            Vector2 localCentre = new Vector2(localCentre3D.x, localCentre3D.z);
-            if (GetDistanceOutsideInnerArea(localCentre) <= 0f)
-            {
-                // Preserve the original pen's deterministic placement exactly.
-                continue;
-            }
-
             int targetCount = Mathf.Max(
                 0,
-                Mathf.RoundToInt(bounds.size.x * bounds.size.z * outerDensity));
-            int maximumAttempts = targetCount * 80;
+                Mathf.RoundToInt(
+                    GetLocalAreaOutsideInner(bounds)
+                    * peakOuterDensity
+                    * 0.5f));
+            int maximumAttempts = targetCount * PlacementAttemptsPerTarget;
             int acceptedCount = 0;
             var random = new System.Random(
                 randomSeed ^ unchecked((penIndex + 1) * 0x5f3759df));
@@ -934,8 +945,15 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
                     out float patchWeight,
                     out float clumpWeight,
                     out float acceptance);
-                if (NextFloat(random) > acceptance
-                    || HasCloseNeighbour(point, grid, cellSize, minimumSpacing))
+                float outerDensityWeight = GetOuterDensityWeight(point);
+                float localMinimumSpacing = minimumSpacing
+                    / Mathf.Sqrt(Mathf.Max(0.01f, outerDensityWeight));
+                if (NextFloat(random) > acceptance * outerDensityWeight
+                    || HasCloseNeighbour(
+                        point,
+                        grid,
+                        cellSize,
+                        localMinimumSpacing))
                 {
                     continue;
                 }
@@ -1057,64 +1075,68 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
             maximum.z - minimum.z);
     }
 
-    private void RefreshInnerAreaFromTerrainPen()
+    private float GetLocalAreaOutsideInner(Bounds worldBounds)
     {
-        if (terrainPensRoot == null)
+        Vector2 localMinimum = new Vector2(
+            float.PositiveInfinity,
+            float.PositiveInfinity);
+        Vector2 localMaximum = new Vector2(
+            float.NegativeInfinity,
+            float.NegativeInfinity);
+        for (int x = -1; x <= 1; x += 2)
         {
-            return;
+            for (int z = -1; z <= 1; z += 2)
+            {
+                Vector3 corner = transform.InverseTransformPoint(
+                    worldBounds.center + Vector3.Scale(
+                        worldBounds.extents,
+                        new Vector3(x, 0f, z)));
+                localMinimum = Vector2.Min(
+                    localMinimum,
+                    new Vector2(corner.x, corner.z));
+                localMaximum = Vector2.Max(
+                    localMaximum,
+                    new Vector2(corner.x, corner.z));
+            }
         }
 
-        for (int childIndex = 0;
-            childIndex < terrainPensRoot.childCount;
-            childIndex++)
+        Vector2 localSize = localMaximum - localMinimum;
+        float totalArea = Mathf.Max(0f, localSize.x * localSize.y);
+        Vector2 innerHalfSize = areaSize * 0.5f;
+        float overlapWidth = Mathf.Max(
+            0f,
+            Mathf.Min(localMaximum.x, innerHalfSize.x)
+                - Mathf.Max(localMinimum.x, -innerHalfSize.x));
+        float overlapDepth = Mathf.Max(
+            0f,
+            Mathf.Min(localMaximum.y, innerHalfSize.y)
+                - Mathf.Max(localMinimum.y, -innerHalfSize.y));
+        return Mathf.Max(0f, totalArea - overlapWidth * overlapDepth);
+    }
+
+    private float GetOuterDensityWeight(Vector2 localPoint)
+    {
+        float distanceOutsideInner = GetDistanceOutsideInnerArea(localPoint);
+        if (distanceOutsideInner <= 0f)
         {
-            Transform surface = terrainPensRoot.GetChild(childIndex);
-            if (!surface.name.StartsWith(
-                    "grass_pen",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            Collider groundCollider = surface.GetComponent<Collider>();
-            Renderer groundRenderer = surface.GetComponent<Renderer>();
-            if (groundCollider == null && groundRenderer == null)
-            {
-                continue;
-            }
-
-            // Renderer bounds update with a resized transform immediately.
-            // Collider bounds can remain cached until Physics.SyncTransforms,
-            // which previously restored the old narrow placement width.
-            Bounds bounds = groundRenderer != null
-                ? groundRenderer.bounds
-                : groundCollider.bounds;
-            Vector3 minimum = new Vector3(
-                float.PositiveInfinity,
-                0f,
-                float.PositiveInfinity);
-            Vector3 maximum = new Vector3(
-                float.NegativeInfinity,
-                0f,
-                float.NegativeInfinity);
-            for (int x = -1; x <= 1; x += 2)
-            {
-                for (int z = -1; z <= 1; z += 2)
-                {
-                    Vector3 corner = transform.InverseTransformPoint(
-                        bounds.center + Vector3.Scale(
-                            bounds.extents,
-                            new Vector3(x, 0f, z)));
-                    minimum = Vector3.Min(minimum, corner);
-                    maximum = Vector3.Max(maximum, corner);
-                }
-            }
-
-            areaSize = new Vector2(
-                Mathf.Max(0.01f, maximum.x - minimum.x),
-                Mathf.Max(0.01f, maximum.z - minimum.z));
-            return;
+            return 1f;
         }
+
+        Vector2 outerHalfSize = outerAreaSize * 0.5f;
+        Vector2 outerMinimum = outerAreaCenter - outerHalfSize;
+        Vector2 outerMaximum = outerAreaCenter + outerHalfSize;
+        float distanceToOuterEdge = Mathf.Max(
+            0f,
+            Mathf.Min(
+                Mathf.Min(
+                    localPoint.x - outerMinimum.x,
+                    outerMaximum.x - localPoint.x),
+                Mathf.Min(
+                    localPoint.y - outerMinimum.y,
+                    outerMaximum.y - localPoint.y)));
+        float fade = distanceOutsideInner
+            / Mathf.Max(0.0001f, distanceOutsideInner + distanceToOuterEdge);
+        return 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(fade));
     }
 
     private float GetDistanceOutsideInnerArea(Vector2 localPoint)
@@ -1768,9 +1790,12 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
     {
         Vector2Int cell = GetCell(point, cellSize);
         float minimumSpacingSquared = minimumSpacing * minimumSpacing;
-        for (int y = -1; y <= 1; y++)
+        int searchRadius = Mathf.Max(
+            1,
+            Mathf.CeilToInt(minimumSpacing / cellSize));
+        for (int y = -searchRadius; y <= searchRadius; y++)
         {
-            for (int x = -1; x <= 1; x++)
+            for (int x = -searchRadius; x <= searchRadius; x++)
             {
                 if (!grid.TryGetValue(cell + new Vector2Int(x, y), out List<Vector2> points))
                 {
@@ -1811,6 +1836,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         for (int i = 0; i < hitCount; i++)
         {
             RaycastHit hit = groundHits[i];
+            if (!IsTerrainGroundCollider(hit.collider))
+            {
+                continue;
+            }
+
             Transform hitTransform = hit.collider.transform;
             if (hitTransform.GetComponentInParent<ChickenController>() != null
                 || hitTransform.GetComponentInParent<ChickenEgg>() != null
@@ -1843,6 +1873,11 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         for (int i = 0; i < hitCount; i++)
         {
             RaycastHit hit = groundHits[i];
+            if (!IsTerrainGroundCollider(hit.collider))
+            {
+                continue;
+            }
+
             Transform hitTransform = hit.collider.transform;
             if (hitTransform.GetComponentInParent<ChickenController>() != null
                 || hitTransform.GetComponentInParent<ChickenEgg>() != null
@@ -1861,6 +1896,20 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
         }
 
         return foundGround;
+    }
+
+    private bool IsTerrainGroundCollider(Collider candidate)
+    {
+        if (candidate == null || terrainPensRoot == null)
+        {
+            return false;
+        }
+
+        Transform surface = candidate.transform;
+        return surface.parent == terrainPensRoot
+            && surface.name.StartsWith(
+                "grass_pen",
+                StringComparison.OrdinalIgnoreCase);
     }
 
     private static Mesh CreatePlaceholderClump()
@@ -2012,14 +2061,9 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     private void OnDisable()
     {
-        ReleaseGeneratedAssets();
-        activeMesh = null;
-        activeMaterial = null;
-        batches = Array.Empty<DrawBatch>();
-        interactionGrid.Clear();
-        activeInteractionInstances.Clear();
-        interactionStateReset = true;
-        InstanceCount = 0;
+        // Preserve generated batches and interaction state while this pen is
+        // unfocused. A disabled component receives no Update/LateUpdate calls,
+        // and OnDestroy remains responsible for releasing generated assets.
     }
 
     private void ReleaseGeneratedAssets()

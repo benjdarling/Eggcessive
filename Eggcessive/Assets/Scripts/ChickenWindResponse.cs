@@ -37,6 +37,12 @@ public sealed class ChickenWindResponse : MonoBehaviour
     [SerializeField, Min(0f)] private float perBoneTurbulenceOffset = 0.08f;
 
     private WindBone[] windBones;
+    private float runtimeInfluence = 1f;
+
+    public void SetRuntimeInfluence(float influence)
+    {
+        runtimeInfluence = Mathf.Clamp01(influence);
+    }
 
     private void Awake()
     {
@@ -127,7 +133,9 @@ public sealed class ChickenWindResponse : MonoBehaviour
                 continue;
             }
 
-            float bendAngle = Mathf.Min(requestedBend, windBone.maximumBend);
+            float bendAngle = Mathf.Min(
+                requestedBend,
+                windBone.maximumBend) * runtimeInfluence;
             Quaternion additiveWindRotation = Quaternion.AngleAxis(
                 bendAngle,
                 bendDegrees / requestedBend);

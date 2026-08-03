@@ -52,9 +52,14 @@ public sealed class PenButtonView : MonoBehaviour
         purchaseLabel.gameObject.SetActive(false);
         progressRoot.SetActive(false);
         button.interactable = true;
+        Color penColour = PenUiPalette.GetColour(penIndex);
         background.color = focused
-            ? new Color(0.20f, 0.52f, 0.72f, 1f)
-            : new Color(0.22f, 0.34f, 0.25f, 1f);
+            ? penColour
+            : new Color(
+                penColour.r * 0.58f,
+                penColour.g * 0.58f,
+                penColour.b * 0.58f,
+                1f);
     }
 
     public void RefreshPurchase(
@@ -70,9 +75,13 @@ public sealed class PenButtonView : MonoBehaviour
         button.interactable = affordable;
         purchaseLabel.text =
             $"CASH {FormatMoney(currentCents)} / {FormatMoney(costCents)}";
-        background.color = affordable
-            ? new Color(0.55f, 0.34f, 0.10f, 1f)
-            : new Color(0.20f, 0.18f, 0.14f, 0.9f);
+        Color penColour = PenUiPalette.GetColour(nextPenIndex);
+        float brightness = affordable ? 0.72f : 0.28f;
+        background.color = new Color(
+            penColour.r * brightness,
+            penColour.g * brightness,
+            penColour.b * brightness,
+            affordable ? 1f : 0.9f);
         SetProgressFill(
             costCents > 0 ? currentCents / (float)costCents : 1f);
     }
@@ -196,5 +205,27 @@ public sealed class PenButtonView : MonoBehaviour
         rect.anchorMax = new Vector2(Mathf.Clamp01(amount), 1f);
         rect.offsetMin = Vector2.zero;
         rect.offsetMax = Vector2.zero;
+    }
+}
+
+internal static class PenUiPalette
+{
+    private static readonly Color[] Colours =
+    {
+        new Color(0.12f, 0.55f, 0.95f, 1f),
+        new Color(0.18f, 0.78f, 0.32f, 1f),
+        new Color(1f, 0.50f, 0.08f, 1f),
+        new Color(0.96f, 0.18f, 0.58f, 1f),
+        new Color(0.05f, 0.82f, 0.86f, 1f),
+        new Color(0.94f, 0.16f, 0.12f, 1f),
+        new Color(0.57f, 0.25f, 0.92f, 1f),
+        new Color(0.98f, 0.82f, 0.08f, 1f)
+    };
+
+    public static int Count => Colours.Length;
+
+    public static Color GetColour(int penIndex)
+    {
+        return Colours[Mathf.Abs(penIndex) % Colours.Length];
     }
 }

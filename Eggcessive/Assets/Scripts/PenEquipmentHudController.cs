@@ -43,10 +43,8 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     private PenExpansionManager.EquipmentType dialogType;
     private bool initialized;
 
-    private const float PanelWidth = 250f;
+    private const float PanelWidth = 260f;
     private const float PanelHeight = 244f;
-    private const float PanelSpacing = 10f;
-    private const float PanelTopOffset = -206f;
 
     public static PenEquipmentHudController Instance { get; private set; }
     public bool IsUpgradeDialogOpen =>
@@ -210,28 +208,12 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         Transform canvasRoot,
         RectTransform penNavigationPanel)
     {
-        Transform panelParent = penNavigationPanel != null
-            && penNavigationPanel.parent != null
-                ? penNavigationPanel.parent
-                : canvasRoot;
-        panel = CreateUiObject("Local Pen Equipment", panelParent);
+        panel = CreateUiObject("Local Pen Equipment", canvasRoot);
         RectTransform rect = panel.GetComponent<RectTransform>();
-        if (penNavigationPanel != null)
-        {
-            rect.anchorMin = penNavigationPanel.anchorMin;
-            rect.anchorMax = penNavigationPanel.anchorMax;
-            rect.pivot = penNavigationPanel.pivot;
-            rect.anchoredPosition = penNavigationPanel.anchoredPosition;
-            penNavigationPanel.anchoredPosition +=
-                Vector2.down * (PanelHeight + PanelSpacing);
-        }
-        else
-        {
-            rect.anchorMin = Vector2.one;
-            rect.anchorMax = Vector2.one;
-            rect.pivot = Vector2.one;
-            rect.anchoredPosition = new Vector2(-24f, PanelTopOffset);
-        }
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
+        rect.anchoredPosition = new Vector2(24f, -24f);
 
         rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
         CopyPanelRenderingStyle(
@@ -248,7 +230,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             TextAlignmentOptions.Center,
             FontStyles.Bold);
         SetRect(panelTitle.rectTransform, new Vector2(8f, -7f),
-            new Vector2(234f, 25f));
+            new Vector2(244f, 25f));
 
         CreateEquipmentView(
             PenExpansionManager.EquipmentType.Incubator,
@@ -271,7 +253,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     {
         GameObject card = CreateUiObject($"Local {title} Button", panel.transform);
         RectTransform rect = card.GetComponent<RectTransform>();
-        SetRect(rect, position, new Vector2(234f, 59f));
+        SetRect(rect, position, new Vector2(244f, 59f));
         Image background = card.AddComponent<Image>();
         Button button = card.AddComponent<Button>();
         button.targetGraphic = background;
@@ -295,11 +277,11 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             TextAlignmentOptions.Center, FontStyles.Bold);
         action.color = new Color(1f, 0.84f, 0.25f);
         SetRect(action.rectTransform, new Vector2(142f, -8f),
-            new Vector2(84f, 38f));
+            new Vector2(94f, 38f));
 
         GameObject progress = CreateUiObject("Cash Progress", card.transform);
         SetRect(progress.GetComponent<RectTransform>(), new Vector2(142f, -42f),
-            new Vector2(84f, 10f));
+            new Vector2(94f, 10f));
         Image progressBack = progress.AddComponent<Image>();
         progressBack.color = new Color(0.08f, 0.08f, 0.06f, 1f);
         GameObject fillObject = CreateUiObject("Fill", progress.transform);
@@ -312,7 +294,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             "Cash Text", card.transform, string.Empty, 8f,
             TextAlignmentOptions.Center, FontStyles.Bold);
         SetRect(progressText.rectTransform, new Vector2(137f, -32f),
-            new Vector2(94f, 12f));
+            new Vector2(104f, 12f));
 
         equipmentViews.Add(new EquipmentView
         {

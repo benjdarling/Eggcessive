@@ -44,6 +44,11 @@ public sealed class ChickenController : MonoBehaviour
     private static readonly int IdleState = Animator.StringToHash("Base Layer.Idle");
     private static readonly int LayEggState = Animator.StringToHash("Base Layer.Lay Egg");
     private static readonly int HeldState = Animator.StringToHash("Base Layer.Held");
+    private static readonly System.Reflection.FieldInfo JiggleRigSegmentField =
+        typeof(JiggleRig).GetField(
+            "segment",
+            System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic);
     private static readonly int BaseMapTransform = Shader.PropertyToID("_BaseMap_ST");
     private static readonly int MainTextureTransform = Shader.PropertyToID("_MainTex_ST");
     private const int MaximumWanderCrowdSamples = 128;
@@ -120,6 +125,21 @@ public sealed class ChickenController : MonoBehaviour
         "whole flock in one frame.")]
     [SerializeField, Min(1)] private int secondaryMotionLodCheckIntervalFrames =
         8;
+    [Tooltip(
+        "Minimum delay before secondary motion wakes after a chicken becomes " +
+        "visible. A brief stable pose prevents an immediate physics pop.")]
+    [SerializeField, Min(0f)] private float minimumSecondaryMotionWakeDelay =
+        0.12f;
+    [Tooltip(
+        "Maximum randomized wake delay. Spreading activation across this " +
+        "window prevents a whole pen's combs, wattles, and tails moving together.")]
+    [SerializeField, Min(0f)] private float maximumSecondaryMotionWakeDelay =
+        0.9f;
+    [Tooltip(
+        "Time taken to blend secondary physics from the stable animated pose " +
+        "to its full authored influence after waking.")]
+    [SerializeField, Min(0.01f)] private float secondaryMotionInfluenceRampDuration =
+        1f;
 
     [Header("Performance")]
     [Tooltip(
@@ -284,6 +304,14 @@ public sealed class ChickenController : MonoBehaviour
     private bool secondaryMotionLodAvailable;
     private int nextSecondaryMotionLodCheckFrame;
     private bool secondaryMotionActive = true;
+    private bool secondaryMotionWakePending;
+    private float secondaryMotionWakeTime;
+    private bool secondaryMotionInfluenceRampActive;
+    private float secondaryMotionInfluenceRampStartTime;
+    private JiggleRig[] secondaryMotionJiggleRigs =
+        System.Array.Empty<JiggleRig>();
+    private readonly List<JigglePointParameters> rampedJiggleParameters =
+        new List<JigglePointParameters>();
     private Renderer[] detailedRenderers = System.Array.Empty<Renderer>();
     private bool[] detailedRendererDefaults = System.Array.Empty<bool>();
     private Behaviour[] farDisabledBehaviours =
@@ -292,6 +320,8 @@ public sealed class ChickenController : MonoBehaviour
         System.Array.Empty<bool>();
     private ObstacleAvoidanceType detailedAvoidanceType;
     private bool animatorDefaultEnabled = true;
+    private bool initialAnimatorPhaseApplied;
+    private float initialAnimatorPhase;
     private bool usingFarImpostor;
     private bool penVisualsEnabled = true;
     private float lastAiUpdateTime;
@@ -334,6 +364,7 @@ public sealed class ChickenController : MonoBehaviour
         penVisualsEnabled = enabled;
         if (!enabled)
         {
+            secondaryMotionWakePending = false;
             if (farImpostorRenderer != null)
             {
                 farImpostorRenderer.enabled = false;
@@ -371,7 +402,30 @@ public sealed class ChickenController : MonoBehaviour
         }
 
         SetFarImpostorActive(false, true);
-        UpdateSecondaryMotionLod(true);
+        ResetAnimatorForPenFocus();
+        BeginSecondaryMotionWake();
+    }
+
+    private void ResetAnimatorForPenFocus()
+    {
+        if (animator == null
+            || animator.runtimeAnimatorController == null)
+        {
+            return;
+        }
+
+        // Egg production continues while another pen is focused. Any lay
+        // trigger raised while this Animator was disabled would otherwise stay
+        // queued and make the whole pen enter Lay Egg on the same frame.
+        animator.ResetTrigger(LayEggParameter);
+        animator.SetBool(IsEatingParameter, false);
+        if (!animator.enabled || !animator.HasState(0, IdleState))
+        {
+            return;
+        }
+
+        animator.Play(IdleState, 0, Random.value);
+        animator.Update(0f);
     }
 
     public void AlignHeldBoneTo(Vector3 attachPosition)
@@ -494,6 +548,15 @@ public sealed class ChickenController : MonoBehaviour
             animator = GetComponentInChildren<Animator>(true);
         }
 
+        if (animator != null)
+        {
+            // Pen visual LOD disables the Animator component completely. Keep
+            // its controller state so returning to a pen does not restart every
+            // chicken on the first frame of Idle.
+            animator.keepAnimatorStateOnDisable = true;
+            initialAnimatorPhase = Random.value;
+        }
+
         CacheFarImpostor();
         CacheLayEggAnimationTiming();
         eggSpawnBone = FindEggSpawnBone();
@@ -526,11 +589,12 @@ public sealed class ChickenController : MonoBehaviour
         nextSecondaryMotionLodCheckFrame = Time.frameCount;
         lastAiUpdateTime = Time.time;
         separationSamplePhase = 0;
-        UpdateSecondaryMotionLod(true);
+        BeginSecondaryMotionWake();
     }
 
     private void Start()
     {
+        ApplyInitialAnimatorPhase();
         if (hasIncubatorExitDestination)
         {
             TryBeginIncubatorExit();
@@ -539,6 +603,28 @@ public sealed class ChickenController : MonoBehaviour
 
         TryInitializeNavigation();
         BeginIdle();
+    }
+
+    private void ApplyInitialAnimatorPhase()
+    {
+        if (initialAnimatorPhaseApplied
+            || animator == null
+            || animator.runtimeAnimatorController == null
+            || !animator.HasState(0, IdleState))
+        {
+            return;
+        }
+
+        // Chickens are commonly spawned in a single frame. Starting their
+        // looping base animation at different points prevents a pen-wide wave
+        // even before any individual AI state changes occur.
+        animator.Play(IdleState, 0, initialAnimatorPhase);
+        if (animator.enabled)
+        {
+            animator.Update(0f);
+        }
+
+        initialAnimatorPhaseApplied = true;
     }
 
     private void OnDisable()
@@ -569,6 +655,7 @@ public sealed class ChickenController : MonoBehaviour
         if (penVisualsEnabled)
         {
             UpdateSecondaryMotionLod(false);
+            UpdateSecondaryMotionInfluenceRamp();
         }
 
         // NavMeshAgent rotation has been applied by this point, while Animator
@@ -1010,6 +1097,10 @@ public sealed class ChickenController : MonoBehaviour
 
         isHeldByHand = held;
         ApplyHeldBlendShape(held);
+        if (held)
+        {
+            secondaryMotionWakePending = false;
+        }
         UpdateSecondaryMotionLod(true);
 
         if (held)
@@ -1467,7 +1558,10 @@ public sealed class ChickenController : MonoBehaviour
         SetEatingAnimation(false);
         agent.updateRotation = false;
 
-        if (animator != null && animator.runtimeAnimatorController != null)
+        if (penVisualsEnabled
+            && animator != null
+            && animator.isActiveAndEnabled
+            && animator.runtimeAnimatorController != null)
         {
             animator.ResetTrigger(LayEggParameter);
             animator.SetTrigger(LayEggParameter);
@@ -2251,8 +2345,9 @@ public sealed class ChickenController : MonoBehaviour
     private void CacheSecondaryMotionLod()
     {
         var controlledComponents = new List<Behaviour>();
-        controlledComponents.AddRange(
-            GetComponentsInChildren<JiggleRig>(true));
+        secondaryMotionJiggleRigs =
+            GetComponentsInChildren<JiggleRig>(true);
+        controlledComponents.AddRange(secondaryMotionJiggleRigs);
         controlledComponents.AddRange(
             GetComponentsInChildren<ChickenWattlePendulum>(true));
         controlledComponents.AddRange(
@@ -2327,6 +2422,17 @@ public sealed class ChickenController : MonoBehaviour
             return;
         }
 
+        if (secondaryMotionWakePending)
+        {
+            if (!isHeldByHand && Time.time < secondaryMotionWakeTime)
+            {
+                return;
+            }
+
+            secondaryMotionWakePending = false;
+            force = true;
+        }
+
         if (lodControlledSecondaryMotion.Length == 0
             || !secondaryMotionLodAvailable)
         {
@@ -2347,6 +2453,23 @@ public sealed class ChickenController : MonoBehaviour
         bool insideDetailedLod = IsInsideSecondaryMotionLod();
         bool shouldSimulate = isHeldByHand || insideDetailedLod;
         SetSecondaryMotionEnabled(shouldSimulate);
+    }
+
+    private void BeginSecondaryMotionWake()
+    {
+        if (lodControlledSecondaryMotion.Length == 0)
+        {
+            return;
+        }
+
+        SetSecondaryMotionEnabled(false);
+        secondaryMotionInfluenceRampActive = false;
+        ApplySecondaryMotionInfluence(0f);
+        secondaryMotionWakePending = true;
+        secondaryMotionWakeTime = Time.time + Random.Range(
+            minimumSecondaryMotionWakeDelay,
+            maximumSecondaryMotionWakeDelay);
+        nextSecondaryMotionLodCheckFrame = Time.frameCount;
     }
 
     private bool IsInsideSecondaryMotionLod()
@@ -2715,6 +2838,100 @@ public sealed class ChickenController : MonoBehaviour
                 component.enabled = enabledForLod;
             }
         }
+
+        if (active)
+        {
+            secondaryMotionInfluenceRampStartTime = Time.time;
+            secondaryMotionInfluenceRampActive = true;
+            ApplySecondaryMotionInfluence(0f);
+        }
+        else
+        {
+            secondaryMotionInfluenceRampActive = false;
+            ApplySecondaryMotionInfluence(0f);
+        }
+    }
+
+    private void UpdateSecondaryMotionInfluenceRamp()
+    {
+        if (!secondaryMotionInfluenceRampActive)
+        {
+            return;
+        }
+
+        float progress = Mathf.Clamp01(
+            (Time.time - secondaryMotionInfluenceRampStartTime)
+            / Mathf.Max(0.01f, secondaryMotionInfluenceRampDuration));
+        float influence = Mathf.SmoothStep(0f, 1f, progress);
+        ApplySecondaryMotionInfluence(influence);
+        if (progress >= 1f)
+        {
+            secondaryMotionInfluenceRampActive = false;
+        }
+    }
+
+    private void ApplySecondaryMotionInfluence(float influence)
+    {
+        influence = Mathf.Clamp01(influence);
+        for (int index = 0;
+             index < lodControlledSecondaryMotion.Length;
+             index++)
+        {
+            switch (lodControlledSecondaryMotion[index])
+            {
+                case ChickenWattlePendulum wattle:
+                    wattle.SetRuntimeInfluence(influence);
+                    break;
+                case ChickenTailFlutter tail:
+                    tail.SetRuntimeInfluence(influence);
+                    break;
+                case ChickenWindResponse wind:
+                    wind.SetRuntimeInfluence(influence);
+                    break;
+            }
+        }
+
+        if (JiggleRigSegmentField == null)
+        {
+            return;
+        }
+
+        for (int index = 0;
+             index < secondaryMotionJiggleRigs.Length;
+             index++)
+        {
+            JiggleRig rig = secondaryMotionJiggleRigs[index];
+            if (rig == null)
+            {
+                continue;
+            }
+
+            JiggleTreeSegment segment =
+                JiggleRigSegmentField.GetValue(rig) as JiggleTreeSegment;
+            while (segment != null && segment.parent != null)
+            {
+                segment = segment.parent;
+            }
+
+            JiggleTree tree = segment?.jiggleTree;
+            if (tree?.parameters == null)
+            {
+                continue;
+            }
+
+            rampedJiggleParameters.Clear();
+            for (int parameterIndex = 0;
+                 parameterIndex < tree.parameters.Length;
+                 parameterIndex++)
+            {
+                JigglePointParameters parameters =
+                    tree.parameters[parameterIndex];
+                parameters.blend = influence;
+                rampedJiggleParameters.Add(parameters);
+            }
+
+            tree.SetParameters(rampedJiggleParameters);
+        }
     }
 
     private Vector3 GetPlanarForward()
@@ -2803,6 +3020,15 @@ public sealed class ChickenController : MonoBehaviour
         secondaryMotionLodCheckIntervalFrames = Mathf.Max(
             1,
             secondaryMotionLodCheckIntervalFrames);
+        minimumSecondaryMotionWakeDelay = Mathf.Max(
+            0f,
+            minimumSecondaryMotionWakeDelay);
+        maximumSecondaryMotionWakeDelay = Mathf.Max(
+            minimumSecondaryMotionWakeDelay,
+            maximumSecondaryMotionWakeDelay);
+        secondaryMotionInfluenceRampDuration = Mathf.Max(
+            0.01f,
+            secondaryMotionInfluenceRampDuration);
         maximumAiUpdatesPerTick = Mathf.Max(
             1,
             maximumAiUpdatesPerTick);

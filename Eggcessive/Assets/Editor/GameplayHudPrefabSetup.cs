@@ -307,8 +307,8 @@ public static class GameplayHudPrefabSetup
         RectTransform panel = CreateUiObject("Pen Navigation", parent);
         SetTopRightRect(
             panel,
-            new Vector2(-24f, -476f),
-            new Vector2(168f, 128f));
+            new Vector2(-24f, -206f),
+            new Vector2(260f, 128f));
         Image panelImage = panel.gameObject.AddComponent<Image>();
         panelImage.sprite = GetUiSprite();
         panelImage.type = Image.Type.Sliced;
