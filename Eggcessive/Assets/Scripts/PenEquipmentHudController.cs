@@ -442,7 +442,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         dialogTitle.text = $"PEN {penIndex + 1}  {GetEquipmentName(dialogType)} UPGRADES";
         PenExpansionManager.EquipmentUpgrade[] upgrades =
             PenExpansionManager.GetUpgrades(dialogType);
-        float rowHeight = upgrades.Length == 3 ? 64f : 82f;
+        float rowHeight = upgrades.Length >= 3 ? 64f : 82f;
         for (int index = 0; index < upgrades.Length; index++)
         {
             PenExpansionManager.EquipmentUpgrade upgrade = upgrades[index];
@@ -565,12 +565,27 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             bool atMaximum = level >= maximum;
             bool affordable = cost > 0 && balance >= cost;
             view.button.interactable = !atMaximum && affordable;
-            view.label.text = atMaximum
-                ? $"{GetUpgradeName(view.upgrade)}  LEVEL {level}  MAX"
-                : $"{GetUpgradeName(view.upgrade)}  {level} > {level + 1}    "
-                    + (affordable
-                        ? $"UPGRADE {FormatMoney(cost)}"
-                        : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
+            if (view.upgrade == PenExpansionManager.EquipmentUpgrade.RobotVacuum)
+            {
+                float currentRadius = EggCollectorRobot.GetVacuumRadius(level);
+                float nextRadius = EggCollectorRobot.GetVacuumRadius(level + 1);
+                string current = level > 0 ? $"{currentRadius:0.#}M" : "OFF";
+                view.label.text = atMaximum
+                    ? $"VACUUM  {current}  MAX"
+                    : $"VACUUM  {current} > {nextRadius:0.#}M    "
+                        + (affordable
+                            ? $"UPGRADE {FormatMoney(cost)}"
+                            : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
+            }
+            else
+            {
+                view.label.text = atMaximum
+                    ? $"{GetUpgradeName(view.upgrade)}  LEVEL {level}  MAX"
+                    : $"{GetUpgradeName(view.upgrade)}  {level} > {level + 1}    "
+                        + (affordable
+                            ? $"UPGRADE {FormatMoney(cost)}"
+                            : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
+            }
             SetProgressFill(
                 view.progressFill,
                 atMaximum || cost <= 0
@@ -618,9 +633,12 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             return $"EVERY {AutoFeederController.GetDispenseInterval(level):0} SEC";
         }
 
+        float vacuumRadius = EggCollectorRobot.GetVacuumRadius(
+            manager.GetUpgradeLevel(penIndex, upgrades[3]));
         return $"SPD {manager.GetUpgradeLevel(penIndex, upgrades[0])}  "
             + $"CAP {manager.GetUpgradeLevel(penIndex, upgrades[1])}  "
-            + $"AI {manager.GetUpgradeLevel(penIndex, upgrades[2])}";
+            + $"AI {manager.GetUpgradeLevel(penIndex, upgrades[2])}  "
+            + $"VAC {vacuumRadius:0.#}M";
     }
 
     private static string GetEquipmentName(
@@ -645,6 +663,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             PenExpansionManager.EquipmentUpgrade.CrosshatcherQuality => "QUALITY",
             PenExpansionManager.EquipmentUpgrade.RobotSpeed => "SPEED",
             PenExpansionManager.EquipmentUpgrade.RobotCapacity => "CAPACITY",
+            PenExpansionManager.EquipmentUpgrade.RobotVacuum => "VACUUM",
             PenExpansionManager.EquipmentUpgrade.AutoFeederSpeed => "SPEED",
             _ => "LOGIC"
         };

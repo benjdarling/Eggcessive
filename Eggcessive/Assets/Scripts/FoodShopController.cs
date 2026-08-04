@@ -21,27 +21,46 @@ public sealed class FoodShopController : MonoBehaviour
         "Turbo Grain",
         "Golden Crumble",
         "Champion Mix",
-        "Eggcelerator"
+        "Eggcelerator",
+        "Super Layer",
+        "Power Pellets",
+        "Royal Ration",
+        "Hyper Harvest",
+        "Infinite Grain"
     };
 
     private static readonly float[] FeedSpeedMultipliers =
     {
-        1.25f, 1.45f, 1.7f, 2f, 2.35f, 2.75f, 3.2f, 3.7f, 4.3f, 5f
+        1.25f, 1.45f, 1.7f, 2f, 2.35f, 2.75f, 3.2f, 3.7f, 4.3f, 5f,
+        5.8f, 6.7f, 7.7f, 8.8f, 10f
     };
 
     private static readonly float[] FeedAmounts =
     {
-        100f, 110f, 120f, 130f, 145f, 160f, 180f, 200f, 225f, 250f
+        100f, 110f, 120f, 130f, 145f, 160f, 180f, 200f, 225f, 250f,
+        280f, 315f, 355f, 400f, 450f
     };
 
     private static readonly int[] FeedBagCosts =
     {
-        150, 250, 400, 600, 900, 1300, 1900, 2700, 3800, 5200
+        150, 250, 400, 600, 900, 1300, 1900, 2700, 3800, 5200,
+        7200, 10000, 14000, 19500, 27000
     };
 
     private static readonly int[] FeedUnlockCosts =
     {
-        0, 600, 1400, 2800, 5000, 8500, 14000, 22000, 34000, 50000
+        0, 600, 1400, 2800, 5000, 8500, 14000, 22000, 34000, 50000,
+        75000, 110000, 160000, 230000, 330000
+    };
+
+    private static readonly float[] PrimeFeedMultipliers =
+    {
+        1f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f
+    };
+
+    private static readonly int[] PrimeFeedUpgradeCosts =
+    {
+        2000, 7500, 25000, 80000, 250000
     };
 
     private static readonly int BaseColorProperty = Shader.PropertyToID("_BaseColor");
@@ -81,14 +100,20 @@ public sealed class FoodShopController : MonoBehaviour
     private Quaternion placementRotation = Quaternion.identity;
     private int ownedFood;
     private int unlockedFeedTier = 1;
+    [SerializeField, Range(0, MaximumPrimeFeedLevel)]
+    private int primeFeedLevel;
     private int ignorePlacementUntilFrame;
     private bool hasValidPlacement;
     private bool isPlacementActive;
-    public const int MaximumFeedTier = 10;
+    public const int MaximumFeedTier = 15;
+    public const int MaximumPrimeFeedLevel = 5;
     public static FoodShopController Instance { get; private set; }
     public static bool IsPlacementActive { get; private set; }
     public int OwnedFoodCount => ownedFood;
     public int UnlockedFeedTier => unlockedFeedTier;
+    public int PrimeFeedLevel => primeFeedLevel;
+    public float CurrentPremiumChanceMultiplier =>
+        GetPrimeFeedMultiplier(primeFeedLevel);
     public string CurrentFeedName => FeedTierNames[unlockedFeedTier - 1];
     public float CurrentFeedAmount => FeedAmounts[unlockedFeedTier - 1];
     public float CurrentFeedSpeedMultiplier => FeedSpeedMultipliers[unlockedFeedTier - 1];
@@ -118,6 +143,18 @@ public sealed class FoodShopController : MonoBehaviour
     {
         return FeedSpeedMultipliers[
             Mathf.Clamp(tier, 1, MaximumFeedTier) - 1];
+    }
+
+    public float GetPrimeFeedMultiplier(int level)
+    {
+        return PrimeFeedMultipliers[
+            Mathf.Clamp(level, 0, MaximumPrimeFeedLevel)];
+    }
+
+    public int GetPrimeFeedUpgradeCost(int targetLevel)
+    {
+        int target = Mathf.Clamp(targetLevel, 1, MaximumPrimeFeedLevel);
+        return PrimeFeedUpgradeCosts[target - 1];
     }
 
     private void Awake()
@@ -328,6 +365,40 @@ public sealed class FoodShopController : MonoBehaviour
         return true;
     }
 
+    public bool TryUpgradePrimeFeed(
+        out string message,
+        bool spendCurrency = true)
+    {
+        if (RoundSystem.Instance != null && !RoundSystem.Instance.IsSuppliesShopOpen)
+        {
+            message = "Feed upgrades are sold between rounds";
+            return false;
+        }
+
+        if (primeFeedLevel >= MaximumPrimeFeedLevel)
+        {
+            message = "Maximum Prime Feed tier";
+            return false;
+        }
+
+        int cost = GetPrimeFeedUpgradeCost(primeFeedLevel + 1);
+        if (spendCurrency && !EggScoreHud.TrySpendCents(cost))
+        {
+            message = $"Need {FormatMoney(cost)}";
+            return false;
+        }
+
+        primeFeedLevel++;
+        RefreshUi();
+        message =
+            $"Prime Feed now gives {CurrentPremiumChanceMultiplier:0.0}x premium chance";
+        if (spendCurrency)
+        {
+            RoundSystem.Instance?.PlayCashRegisterSfx();
+        }
+        return true;
+    }
+
     private void BeginPlacement()
     {
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
@@ -459,12 +530,29 @@ public sealed class FoodShopController : MonoBehaviour
         {
             placedPile.ConfigureFeed(
                 FeedAmounts[placedTier - 1],
-                FeedSpeedMultipliers[placedTier - 1]);
+                FeedSpeedMultipliers[placedTier - 1],
+                CurrentPremiumChanceMultiplier);
         }
 
         ownedFood--;
         RoundSystem.Instance?.PlayFoodPlaceSfx();
-        CancelPlacement();
+        if (ownedFood > 0)
+        {
+            placementRotation = Quaternion.Euler(
+                0f,
+                Random.Range(0f, 360f),
+                0f);
+            if (placementPreview != null)
+            {
+                placementPreview.transform.rotation = placementRotation;
+            }
+
+            SetStatus($"Place another food pile  .  {ownedFood} remaining");
+        }
+        else
+        {
+            CancelPlacement();
+        }
         RefreshUi();
     }
 
@@ -487,6 +575,11 @@ public sealed class FoodShopController : MonoBehaviour
         {
             RefreshToolButtons();
         }
+    }
+
+    public void CancelActivePlacement()
+    {
+        CancelPlacement();
     }
 
     private void SelectHandTool()
@@ -962,5 +1055,9 @@ public sealed class FoodShopController : MonoBehaviour
     {
         foodCostCents = Mathf.Max(1, foodCostCents);
         navMeshSampleDistance = Mathf.Max(0.01f, navMeshSampleDistance);
+        primeFeedLevel = Mathf.Clamp(
+            primeFeedLevel,
+            0,
+            MaximumPrimeFeedLevel);
     }
 }

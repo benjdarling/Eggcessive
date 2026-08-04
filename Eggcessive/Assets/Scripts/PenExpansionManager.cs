@@ -25,7 +25,8 @@ public sealed class PenExpansionManager : MonoBehaviour
         RobotSpeed,
         RobotCapacity,
         RobotSmartness,
-        AutoFeederSpeed
+        AutoFeederSpeed,
+        RobotVacuum
     }
 
     private const int RuntimeGroundMaskResolution = 64;
@@ -37,12 +38,12 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private static readonly int[] IncubatorCapacityCosts =
     {
-        1000, 2600, 6500, 15000, 34000, 76000, 170000, 380000, 850000
+        1000, 2600
     };
 
     private static readonly int[] IncubatorSpeedCosts =
     {
-        1400, 3800, 9500, 23000, 55000, 130000, 310000, 740000, 1800000
+        1400, 3800
     };
 
     private static readonly int[] CrosshatcherSpeedCosts =
@@ -72,6 +73,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         600000, 3500000, 12000000, 60000000
     };
 
+    private static readonly int[] RobotVacuumCosts =
+    {
+        300000, 900000, 2700000, 8000000, 24000000
+    };
+
     private static readonly int[] AutoFeederSpeedCosts =
     {
         7500000, 25000000, 90000000, 350000000
@@ -93,7 +99,8 @@ public sealed class PenExpansionManager : MonoBehaviour
     {
         EquipmentUpgrade.RobotSpeed,
         EquipmentUpgrade.RobotCapacity,
-        EquipmentUpgrade.RobotSmartness
+        EquipmentUpgrade.RobotSmartness,
+        EquipmentUpgrade.RobotVacuum
     };
 
     private static readonly EquipmentUpgrade[] AutoFeederUpgrades =
@@ -121,6 +128,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         public int robotSpeedLevel;
         public int robotCapacityLevel;
         public int robotSmartnessLevel;
+        public int robotVacuumLevel;
         public PenTruckController truck;
         public GameObject sign;
     }
@@ -374,7 +382,9 @@ public sealed class PenExpansionManager : MonoBehaviour
             : null;
     }
 
-    public static bool IsChickenCapReachedAt(Vector3 worldPosition)
+    public static bool IsChickenCapReachedAt(
+        Vector3 worldPosition,
+        bool includeReservedCrosshatcherOutput = true)
     {
         PenExpansionManager manager = Instance;
         if (manager == null || !manager.IsInitialized)
@@ -384,21 +394,36 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
 
         int penIndex = manager.GetClosestPenIndex(worldPosition);
-        return manager.GetChickenCount(penIndex)
+        int reservedOutputs = includeReservedCrosshatcherOutput
+            && manager.slots[penIndex].crosshatcher != null
+            && manager.slots[penIndex].crosshatcher.HasReservedChickenOutput
+                ? 1
+                : 0;
+        return manager.GetChickenCount(penIndex) + reservedOutputs
             >= ChickenController.MaximumChickenCount;
     }
 
     public IncubatorController GetFocusedIncubator()
     {
-        return IsValidIndex(focusedPenIndex)
-            ? slots[focusedPenIndex].incubator
+        return GetIncubator(focusedPenIndex);
+    }
+
+    public IncubatorController GetIncubator(int penIndex)
+    {
+        return IsValidIndex(penIndex) && slots[penIndex].owned
+            ? slots[penIndex].incubator
             : null;
     }
 
     public CrosshatcherController GetFocusedCrosshatcher()
     {
-        return IsValidIndex(focusedPenIndex)
-            ? slots[focusedPenIndex].crosshatcher
+        return GetCrosshatcher(focusedPenIndex);
+    }
+
+    public CrosshatcherController GetCrosshatcher(int penIndex)
+    {
+        return IsValidIndex(penIndex) && slots[penIndex].owned
+            ? slots[penIndex].crosshatcher
             : null;
     }
 
@@ -482,6 +507,8 @@ public sealed class PenExpansionManager : MonoBehaviour
                 ? slot.robotCapacityLevel : 0,
             EquipmentUpgrade.RobotSmartness => slot.robotOwned
                 ? slot.robotSmartnessLevel : 0,
+            EquipmentUpgrade.RobotVacuum => slot.robotOwned
+                ? slot.robotVacuumLevel : 0,
             EquipmentUpgrade.AutoFeederSpeed =>
                 IsEquipmentOwned(penIndex, EquipmentType.AutoFeeder)
                     ? slot.autoFeeder.SpeedLevel : 0,
@@ -504,6 +531,8 @@ public sealed class PenExpansionManager : MonoBehaviour
                     EggCarryController.MaximumRobotLevel,
             EquipmentUpgrade.RobotSmartness =>
                 EggCollectorRobot.ChickenArmsSmartnessLevel,
+            EquipmentUpgrade.RobotVacuum =>
+                EggCollectorRobot.MaximumVacuumLevel,
             EquipmentUpgrade.AutoFeederSpeed =>
                 AutoFeederController.MaximumLevel,
             _ => 3
@@ -534,10 +563,12 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentUpgrade.RobotSpeed => RobotSpeedCosts,
             EquipmentUpgrade.RobotCapacity => RobotCapacityCosts,
             EquipmentUpgrade.RobotSmartness => RobotSmartnessCosts,
+            EquipmentUpgrade.RobotVacuum => RobotVacuumCosts,
             EquipmentUpgrade.AutoFeederSpeed => AutoFeederSpeedCosts,
             _ => null
         };
         int costIndex = upgrade == EquipmentUpgrade.RobotSmartness
+            || upgrade == EquipmentUpgrade.RobotVacuum
             ? level
             : level - 1;
         return costs != null && costIndex >= 0 && costIndex < costs.Length
@@ -588,6 +619,7 @@ public sealed class PenExpansionManager : MonoBehaviour
                 slot.robotSpeedLevel = 1;
                 slot.robotCapacityLevel = 1;
                 slot.robotSmartnessLevel = 0;
+                slot.robotVacuumLevel = 0;
                 RefreshRobot(slot);
                 break;
             case EquipmentType.AutoFeeder:
@@ -647,6 +679,10 @@ public sealed class PenExpansionManager : MonoBehaviour
                 break;
             case EquipmentUpgrade.RobotSmartness:
                 slot.robotSmartnessLevel++;
+                RefreshRobot(slot);
+                break;
+            case EquipmentUpgrade.RobotVacuum:
+                slot.robotVacuumLevel++;
                 RefreshRobot(slot);
                 break;
             case EquipmentUpgrade.AutoFeederSpeed:
@@ -1273,6 +1309,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             slot.robotSpeedLevel,
             slot.robotCapacityLevel,
             slot.robotSmartnessLevel,
+            slot.robotVacuumLevel,
             slot.runtimeRoot != null ? slot.runtimeRoot.transform : null);
     }
 
@@ -1732,52 +1769,23 @@ internal sealed class PenTruckController : MonoBehaviour
 
     private void SpawnTruck(Vector3 position)
     {
-        GameObject root = new GameObject("Pen Delivery Truck");
+        RoundSystem round = RoundSystem.Instance;
+        GameObject visualPrefab = round != null
+            ? round.TruckVisualPrefab
+            : null;
+        if (visualPrefab == null)
+        {
+            Debug.LogError("Pen truck is missing the shared truck visual prefab.", this);
+            return;
+        }
+
+        GameObject root = Instantiate(visualPrefab);
+        root.name = "Pen Delivery Truck";
         truck = root.transform;
         truck.SetParent(transform, true);
         truck.SetPositionAndRotation(
             position,
             Quaternion.Euler(0f, 90f, 0f));
-        truck.localScale = Vector3.one * 0.22f;
-
-        Material body = CreateMaterial(new Color(0.92f, 0.18f, 0.11f));
-        Material dark = CreateMaterial(new Color(0.16f, 0.17f, 0.18f));
-        CreatePart("Chassis", new Vector3(0f, 0.55f, 0f),
-            new Vector3(1.55f, 0.45f, 3.35f), body);
-        CreatePart("Cab", new Vector3(0f, 1.18f, 0.82f),
-            new Vector3(1.5f, 1.05f, 1.42f), body);
-        CreatePart("Tray", new Vector3(0f, 0.95f, -0.88f),
-            new Vector3(1.48f, 0.3f, 1.55f), dark);
-    }
-
-    private void CreatePart(
-        string partName,
-        Vector3 localPosition,
-        Vector3 localScale,
-        Material material)
-    {
-        GameObject part = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        part.name = partName;
-        part.transform.SetParent(truck, false);
-        part.transform.localPosition = localPosition;
-        part.transform.localScale = localScale;
-        part.GetComponent<Renderer>().sharedMaterial = material;
-        Collider collider = part.GetComponent<Collider>();
-        if (collider != null)
-        {
-            Destroy(collider);
-        }
-    }
-
-    private static Material CreateMaterial(Color colour)
-    {
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-        if (shader == null)
-        {
-            shader = Shader.Find("Standard");
-        }
-
-        return new Material(shader) { color = colour };
     }
 
     private Vector3 GetStopPosition()
@@ -1794,16 +1802,6 @@ internal sealed class PenTruckController : MonoBehaviour
         if (truck == null)
         {
             return;
-        }
-
-        Renderer[] renderers = truck.GetComponentsInChildren<Renderer>(true);
-        for (int index = 0; index < renderers.Length; index++)
-        {
-            if (renderers[index] != null
-                && renderers[index].sharedMaterial != null)
-            {
-                Destroy(renderers[index].sharedMaterial);
-            }
         }
 
         Destroy(truck.gameObject);

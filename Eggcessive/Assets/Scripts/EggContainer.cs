@@ -14,6 +14,8 @@ public sealed class EggContainer : MonoBehaviour
     public static EggContainer Instance { get; private set; }
     public static event Action<int> EggCollected;
     public static event Action<EggContainer, int> EggCollectedFromContainer;
+    public static event Action<EggContainer, int, float>
+        EggCollectedWithWeightFromContainer;
     public static event Action<EggContainer> FocusedContainerChanged;
     public Vector3 DepositPosition => transform.position;
     public Vector3 RewardPosition => transform.position + Vector3.up * 0.22f;
@@ -28,6 +30,7 @@ public sealed class EggContainer : MonoBehaviour
         Instance = null;
         EggCollected = null;
         EggCollectedFromContainer = null;
+        EggCollectedWithWeightFromContainer = null;
         FocusedContainerChanged = null;
     }
 
@@ -107,7 +110,7 @@ public sealed class EggContainer : MonoBehaviour
             return;
         }
 
-        DepositEggValue(egg.ValueCents);
+        DepositEggValue(egg.ValueCents, egg.WeightKilograms);
         egg.ReleaseToPool();
     }
 
@@ -132,7 +135,9 @@ public sealed class EggContainer : MonoBehaviour
         return eggCount;
     }
 
-    public int DepositEggValues(System.Collections.Generic.IReadOnlyList<int> values)
+    public int DepositEggValues(
+        System.Collections.Generic.IReadOnlyList<int> values,
+        System.Collections.Generic.IReadOnlyList<float> weights = null)
     {
         if (values == null
             || (RoundSystem.Instance != null
@@ -145,7 +150,10 @@ public sealed class EggContainer : MonoBehaviour
 
         for (int index = 0; index < values.Count; index++)
         {
-            if (DepositEggValue(values[index]))
+            float weight = weights != null && index < weights.Count
+                ? weights[index]
+                : ProgressionSystem.BaseEggWeightKilograms;
+            if (DepositEggValue(values[index], weight))
             {
                 deposited++;
             }
@@ -154,7 +162,9 @@ public sealed class EggContainer : MonoBehaviour
         return deposited;
     }
 
-    public bool DepositEggValue(int valueCents)
+    public bool DepositEggValue(
+        int valueCents,
+        float weightKilograms = ProgressionSystem.BaseEggWeightKilograms)
     {
         if (RoundSystem.Instance != null
             && !RoundSystem.Instance.IsRoundAcceptingEggs)
@@ -163,7 +173,9 @@ public sealed class EggContainer : MonoBehaviour
         }
 
         int value = Mathf.Max(1, valueCents);
-        TotalDepositedCents += value;
+        TotalDepositedCents = value > long.MaxValue - TotalDepositedCents
+            ? long.MaxValue
+            : TotalDepositedCents + value;
         PenExpansionManager penManager = PenExpansionManager.Instance;
         int penIndex = penManager != null
             ? penManager.GetPenIndex(this)
@@ -174,7 +186,7 @@ public sealed class EggContainer : MonoBehaviour
 
         if (isCurrentLocalPen)
         {
-            RoundSystem.Instance?.ShowContainerCoinReward(RewardPosition, value);
+            RoundSystem.Instance?.ShowContainerCoinReward(this, value);
         }
         else if (penIndex >= 0)
         {
@@ -184,6 +196,10 @@ public sealed class EggContainer : MonoBehaviour
         EggScoreHud.AddCents(value);
         EggCollected?.Invoke(value);
         EggCollectedFromContainer?.Invoke(this, value);
+        EggCollectedWithWeightFromContainer?.Invoke(
+            this,
+            value,
+            Mathf.Max(0f, weightKilograms));
         return true;
     }
 

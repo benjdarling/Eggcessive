@@ -253,6 +253,7 @@ public sealed class ChickenController : MonoBehaviour
     private bool hasMachineControlSnapshot;
     private float foodScore;
     private float activeFoodProductionSpeed = 1f;
+    private float activeFoodPremiumChanceMultiplier = 1f;
     private float nextBlinkTime;
     private float turnLean;
     private float turnLeanVelocity;
@@ -932,6 +933,7 @@ public sealed class ChickenController : MonoBehaviour
         if (foodScore <= 0f)
         {
             activeFoodProductionSpeed = 1f;
+            activeFoodPremiumChanceMultiplier = 1f;
         }
 
         float eggIntervalMultiplier = Mathf.Lerp(
@@ -1406,6 +1408,10 @@ public sealed class ChickenController : MonoBehaviour
 
         float missingFood = returnToWanderingScore - foodScore;
         float amountRequested = Mathf.Min(foodPerBite, missingFood);
+        float consumedFoodProductionSpeed =
+            targetFood.EggProductionSpeedMultiplier;
+        float consumedFoodPremiumChance =
+            targetFood.PremiumChanceMultiplier;
         float amountConsumed = targetFood.Consume(amountRequested);
 
         if (amountConsumed <= 0f)
@@ -1417,7 +1423,10 @@ public sealed class ChickenController : MonoBehaviour
         foodScore = Mathf.Min(maximumFoodScore, foodScore + amountConsumed);
         activeFoodProductionSpeed = Mathf.Max(
             activeFoodProductionSpeed,
-            targetFood != null ? targetFood.EggProductionSpeedMultiplier : 1f);
+            consumedFoodProductionSpeed);
+        activeFoodPremiumChanceMultiplier = Mathf.Max(
+            activeFoodPremiumChanceMultiplier,
+            consumedFoodPremiumChance);
 
         // Leave the eating state on the same frame that this bite satisfies the
         // chicken. Otherwise the hunger drain on the next frame drops the score
@@ -1992,7 +2001,9 @@ public sealed class ChickenController : MonoBehaviour
         Quaternion eggRotation = Quaternion.Euler(0f, Random.Range(-180f, 180f), 0f);
         ProgressionSystem progression = ProgressionSystem.Instance;
         ChickenEgg.EggType eggType = progression != null
-            ? progression.RollEggType(breed)
+            ? progression.RollEggType(
+                breed,
+                activeFoodPremiumChanceMultiplier)
             : ChickenEgg.EggType.Common;
         GameObject selectedEggPrefab =
             eggType == ChickenEgg.EggType.Cosmic && cosmicEggPrefab != null

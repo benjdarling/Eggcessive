@@ -29,9 +29,6 @@ public sealed class ChickenEgg : MonoBehaviour
     private static MaterialPropertyBlock typePropertyBlock;
     private const float GroundContactMinimumUpDot = 0.45f;
 
-    [Header("Size Variation")]
-    [SerializeField, Min(0.01f)] private float minimumScale = 0.95f;
-    [SerializeField, Min(0.01f)] private float maximumScale = 1.05f;
     [SerializeField] private Material[] typeMaterials = null;
     [SerializeField] private bool cosmicVisualPrefab;
 
@@ -53,6 +50,7 @@ public sealed class ChickenEgg : MonoBehaviour
     private ParticleSystem[] detailedParticles =
         System.Array.Empty<ParticleSystem>();
     private Vector3 baseLocalScale;
+    private float baseRigidbodyMass;
     private readonly HashSet<Collider> groundContacts =
         new HashSet<Collider>();
     private bool isPooled;
@@ -68,6 +66,9 @@ public sealed class ChickenEgg : MonoBehaviour
         !IsHeld && !IsCollected && groundContacts.Count > 0;
     public EggType Type { get; private set; }
     public int ValueCents { get; private set; } = 100;
+    public float WeightScaleMultiplier { get; private set; } = 1f;
+    public float WeightKilograms =>
+        ProgressionSystem.BaseEggWeightKilograms * WeightScaleMultiplier;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
@@ -138,6 +139,7 @@ public sealed class ChickenEgg : MonoBehaviour
         eggColliders = GetComponentsInChildren<Collider>(true);
         grassInteractor = GetComponent<GrassInteractor>();
         baseLocalScale = transform.localScale;
+        baseRigidbodyMass = eggBody.mass;
         CacheFarImpostor();
 
         if (typeMaterials != null && typeMaterials.Length >= 5)
@@ -248,6 +250,20 @@ public sealed class ChickenEgg : MonoBehaviour
     {
         Type = type;
         ValueCents = Mathf.Max(1, valueCents);
+        WeightScaleMultiplier = ProgressionSystem.Instance != null
+            ? ProgressionSystem.Instance.RollEggWeightScale(type)
+            : 1f + (int)type * 0.075f;
+        // Weight is a volume measurement, so convert it to a linear scale via
+        // the cube root. The root still scales both visuals and colliders while
+        // Rigidbody mass continues to use the full rolled weight multiplier.
+        float linearScaleMultiplier = Mathf.Pow(
+            Mathf.Max(0.001f, WeightScaleMultiplier),
+            1f / 3f);
+        transform.localScale = baseLocalScale * linearScaleMultiplier;
+        if (eggBody != null)
+        {
+            eggBody.mass = baseRigidbodyMass * WeightScaleMultiplier;
+        }
         ApplyTypeVisual(gameObject, type);
         ApplyFarImpostorTint();
         gameObject.name = type == EggType.Common
@@ -435,8 +451,8 @@ public sealed class ChickenEgg : MonoBehaviour
         groundContacts.Clear();
         Type = EggType.Common;
         ValueCents = 100;
-        transform.localScale = baseLocalScale
-            * Random.Range(minimumScale, maximumScale);
+        WeightScaleMultiplier = 1f;
+        transform.localScale = baseLocalScale;
 
         int eggLayer = LayerMask.NameToLayer(EggLayerName);
         if (eggLayer >= 0)
@@ -457,6 +473,7 @@ public sealed class ChickenEgg : MonoBehaviour
 
         if (eggBody != null)
         {
+            eggBody.mass = baseRigidbodyMass;
             eggBody.isKinematic = false;
             eggBody.useGravity = true;
             eggBody.linearVelocity = Vector3.zero;
@@ -718,8 +735,6 @@ public sealed class ChickenEgg : MonoBehaviour
 
     private void OnValidate()
     {
-        minimumScale = Mathf.Max(0.01f, minimumScale);
-        maximumScale = Mathf.Max(minimumScale, maximumScale);
         farImpostorScreenHeightPixels = Mathf.Max(
             1f,
             farImpostorScreenHeightPixels);

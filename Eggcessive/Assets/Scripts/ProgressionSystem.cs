@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 [DisallowMultipleComponent]
 public sealed class ProgressionSystem : MonoBehaviour
@@ -9,7 +10,7 @@ public sealed class ProgressionSystem : MonoBehaviour
         FoodBag,
         FeedSpeed,
         RareEggChance,
-        EggValue,
+        EggWeight,
         IncubatorInstall,
         IncubatorCapacity,
         IncubatorSpeed,
@@ -23,7 +24,11 @@ public sealed class ProgressionSystem : MonoBehaviour
         RobotSpeed,
         RobotCapacity,
         RobotSmartness,
-        VacuumUnlock
+        VacuumUnlock,
+        EggValue,
+        PrimeFeed,
+        BasketReach,
+        TruckBonus
     }
 
     public readonly struct NodeState
@@ -111,17 +116,41 @@ public sealed class ProgressionSystem : MonoBehaviour
         0f, 0f, 0.00002f, 0.0002f, 0.001f, 0.005f, 0.02f
     };
 
+    private static readonly int[] EggWeightCosts =
+    {
+        2500, 7500, 20000, 60000, 180000, 550000, 1600000, 5000000,
+        12000000, 30000000
+    };
+
     private static readonly int[] EggValueCosts =
     {
-        2500, 7500, 20000, 60000, 180000, 550000, 1600000, 5000000
+        5000, 15000, 45000, 135000, 400000, 1200000, 3600000, 10000000,
+        30000000, 90000000, 270000000, 800000000
     };
 
     private static readonly float[] EggValueMultipliers =
     {
-        1f, 1.5f, 2.25f, 3.5f, 5.5f, 8.5f, 13f, 20f, 30f
+        1f, 1.5f, 2.25f, 3.5f, 5.5f, 8.5f, 13f, 20f, 30f,
+        45f, 70f, 110f, 170f
     };
 
+    private static readonly int[] TruckBonusCosts =
+    {
+        20000, 60000, 180000, 540000, 1600000,
+        4800000, 14000000, 42000000, 125000000, 375000000
+    };
+    private const float TruckBonusPerLevel = 0.1f;
+
+    private const float EggWeightUpperRangePerLevel = 0.075f;
+    private const float EggWeightChancePerLevel = 0.1f;
+    private const float RarityScaleStep = 0.075f;
+    public const float BaseEggWeightKilograms = 0.1f;
+
     private static readonly int[] BasketCosts = { 800, 1800, 4200, 8000 };
+    private static readonly int[] BasketReachCosts =
+    {
+        1500, 4000, 10000, 25000
+    };
     // The $90 unlock remains accessible, but the post-unlock tiers scale
     // sharply because power and especially range multiply collection income.
     private static readonly int[] VacuumPowerCosts =
@@ -139,15 +168,30 @@ public sealed class ProgressionSystem : MonoBehaviour
     private const int RobotUnlockCost = 120000;
 
     [SerializeField, Range(0, 8)] private int rareEggChanceLevel;
-    [SerializeField, Range(0, 8)] private int eggValueLevel;
+    [FormerlySerializedAs("eggValueLevel")]
+    [SerializeField, Range(0, 10)] private int eggWeightLevel;
+    [SerializeField, Range(0, 12)] private int eggSaleValueLevel;
+    [SerializeField, Range(0, 10)] private int truckBonusLevel;
 
     public static ProgressionSystem Instance { get; private set; }
     public static event Action Changed;
 
     public int RareEggChanceLevel => rareEggChanceLevel;
-    public int EggValueLevel => eggValueLevel;
+    public int EggWeightLevel => eggWeightLevel;
+    public int EggValueLevel => eggSaleValueLevel;
+    public int TruckBonusLevel => truckBonusLevel;
+    public static int MaximumEggValueLevel => EggValueCosts.Length;
+    public static int MaximumTruckBonusLevel => TruckBonusCosts.Length;
+    public float TruckBonusMultiplier =>
+        1f + truckBonusLevel * TruckBonusPerLevel;
     public float EggValueMultiplier =>
-        EggValueMultipliers[Mathf.Clamp(eggValueLevel, 0, EggValueMultipliers.Length - 1)];
+        EggValueMultipliers[Mathf.Clamp(
+            eggSaleValueLevel,
+            0,
+            EggValueMultipliers.Length - 1)];
+    public float EggWeightChance => GetEggWeightChance(eggWeightLevel);
+    public float EggWeightUpperMultiplier =>
+        GetEggWeightUpperMultiplier(eggWeightLevel);
 
     private void Awake()
     {
@@ -180,6 +224,7 @@ public sealed class ProgressionSystem : MonoBehaviour
         bool crosshatcherInstalled =
             crosshatcher != null && crosshatcher.IsInstalled;
         int basketLevel = collection != null ? collection.BasketUpgradeLevel : 0;
+        int basketReach = collection != null ? collection.BasketReachLevel : 0;
         int vacuumPower = collection != null ? collection.VacuumPowerLevel : 0;
         int vacuumRange = collection != null ? collection.VacuumRangeLevel : 0;
         bool robotUnlocked = collection != null && collection.HasRobot;
@@ -215,6 +260,27 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     food != null);
 
+            case UpgradeId.PrimeFeed:
+            {
+                int level = food != null ? food.PrimeFeedLevel : 0;
+                int nextLevel = Mathf.Min(
+                    level + 1,
+                    FoodShopController.MaximumPrimeFeedLevel);
+                return new NodeState(
+                    "Prime Feed",
+                    "P+",
+                    food != null
+                        ? $"Fed chickens get {food.GetPrimeFeedMultiplier(nextLevel):0.0}x premium egg chance"
+                        : "Feed system unavailable",
+                    level,
+                    FoodShopController.MaximumPrimeFeedLevel,
+                    food != null
+                        ? food.GetPrimeFeedUpgradeCost(nextLevel)
+                        : 0,
+                    food != null,
+                    food != null);
+            }
+
             case UpgradeId.RareEggChance:
                 return new NodeState(
                     "Premium Eggs",
@@ -226,16 +292,38 @@ public sealed class ProgressionSystem : MonoBehaviour
                     food != null,
                     food != null);
 
-            case UpgradeId.EggValue:
+            case UpgradeId.EggWeight:
                 return new NodeState(
-                    "Egg Weight",
-                    "$",
-                    $"Heavier eggs sell for {GetEggValueMultiplier(eggValueLevel + 1):0.##}x",
-                    eggValueLevel,
-                    EggValueCosts.Length,
-                    GetArrayCost(EggValueCosts, eggValueLevel),
+                    "Egg Weight/Size",
+                    "W",
+                    GetEggWeightDescription(eggWeightLevel + 1),
+                    eggWeightLevel,
+                    EggWeightCosts.Length,
+                    GetArrayCost(EggWeightCosts, eggWeightLevel),
                     rareEggChanceLevel >= 2,
                     rareEggChanceLevel >= 2);
+
+            case UpgradeId.EggValue:
+                return new NodeState(
+                    "Egg Value",
+                    "$",
+                    $"All eggs sell for {GetEggValueMultiplier(eggSaleValueLevel + 1):0.##}x value",
+                    eggSaleValueLevel,
+                    EggValueCosts.Length,
+                    GetArrayCost(EggValueCosts, eggSaleValueLevel),
+                    eggWeightLevel >= 1,
+                    eggWeightLevel >= 1);
+
+            case UpgradeId.TruckBonus:
+                return new NodeState(
+                    "Truck Bonus",
+                    "T$",
+                    $"Filled trucks pay {GetTruckBonusMultiplier(truckBonusLevel + 1):0.0}x bonus cash",
+                    truckBonusLevel,
+                    TruckBonusCosts.Length,
+                    GetArrayCost(TruckBonusCosts, truckBonusLevel),
+                    eggSaleValueLevel >= 2,
+                    eggSaleValueLevel >= 2);
 
             case UpgradeId.IncubatorInstall:
                 return new NodeState(
@@ -326,6 +414,21 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     collection != null && !collection.HasVacuum);
 
+            case UpgradeId.BasketReach:
+                return new NodeState(
+                    "Basket Reach",
+                    "B<>",
+                    basketReach >= EggCarryController.MaximumBasketReachLevel
+                        ? "Pull nearby eggs within 0.8m of the clicked egg"
+                        : $"Next: pull nearby eggs within {(basketReach + 1) * 0.2f:0.0}m",
+                    basketReach,
+                    EggCarryController.MaximumBasketReachLevel,
+                    GetArrayCost(BasketReachCosts, basketReach),
+                    basketLevel >= 1,
+                    collection != null
+                        && basketLevel >= 1
+                        && !collection.HasVacuum);
+
             case UpgradeId.VacuumUnlock:
                 return new NodeState(
                     "Egg Vacuum",
@@ -338,7 +441,9 @@ public sealed class ProgressionSystem : MonoBehaviour
                     VacuumPowerCosts[0],
                     true,
                     collection != null
-                        && basketLevel >= EggCarryController.MaximumBasketLevel);
+                        && (basketLevel >= EggCarryController.MaximumBasketLevel
+                            || basketReach
+                                >= EggCarryController.MaximumBasketReachLevel));
 
             case UpgradeId.VacuumPower:
                 return new NodeState(
@@ -350,9 +455,13 @@ public sealed class ProgressionSystem : MonoBehaviour
                     vacuumPower,
                     3,
                     GetArrayCost(VacuumPowerCosts, vacuumPower),
-                    basketLevel >= EggCarryController.MaximumBasketLevel,
+                    basketLevel >= EggCarryController.MaximumBasketLevel
+                        || basketReach
+                            >= EggCarryController.MaximumBasketReachLevel,
                     collection != null
-                        && basketLevel >= EggCarryController.MaximumBasketLevel);
+                        && (basketLevel >= EggCarryController.MaximumBasketLevel
+                            || basketReach
+                                >= EggCarryController.MaximumBasketReachLevel));
 
             case UpgradeId.VacuumRange:
                 return new NodeState(
@@ -454,6 +563,25 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     food != null && current >= target - 1);
             }
+            case UpgradeId.PrimeFeed:
+            {
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    1,
+                    FoodShopController.MaximumPrimeFeedLevel);
+                int current = food != null ? food.PrimeFeedLevel : 0;
+                return new NodeState(
+                    $"Prime Feed Tier {target}",
+                    "P+",
+                    food != null
+                        ? $"Fed chickens get {food.GetPrimeFeedMultiplier(target):0.0}x premium egg chance"
+                        : "Feed system unavailable",
+                    current,
+                    target,
+                    food != null ? food.GetPrimeFeedUpgradeCost(target) : 0,
+                    true,
+                    food != null && current >= target - 1);
+            }
             case UpgradeId.RareEggChance:
             {
                 int target = Mathf.Clamp(targetLevel, 1, RareChanceCosts.Length);
@@ -467,18 +595,48 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     food != null && rareEggChanceLevel >= target - 1);
             }
+            case UpgradeId.EggWeight:
+            {
+                int target = Mathf.Clamp(targetLevel, 1, EggWeightCosts.Length);
+                return new NodeState(
+                    $"Egg Weight/Size Tier {target}",
+                    "W",
+                    GetEggWeightDescription(target),
+                    eggWeightLevel,
+                    target,
+                    GetArrayCost(EggWeightCosts, target - 1),
+                    true,
+                    rareEggChanceLevel >= 2 && eggWeightLevel >= target - 1);
+            }
             case UpgradeId.EggValue:
             {
                 int target = Mathf.Clamp(targetLevel, 1, EggValueCosts.Length);
                 return new NodeState(
-                    $"Egg Weight Tier {target}",
+                    $"Egg Value Tier {target}",
                     "$",
-                    $"Heavier eggs sell for {GetEggValueMultiplier(target):0.##}x",
-                    eggValueLevel,
+                    $"All eggs sell for {GetEggValueMultiplier(target):0.##}x value",
+                    eggSaleValueLevel,
                     target,
                     GetArrayCost(EggValueCosts, target - 1),
                     true,
-                    rareEggChanceLevel >= 2 && eggValueLevel >= target - 1);
+                    eggWeightLevel >= 1 && eggSaleValueLevel >= target - 1);
+            }
+            case UpgradeId.TruckBonus:
+            {
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    1,
+                    TruckBonusCosts.Length);
+                return new NodeState(
+                    $"Truck Bonus Tier {target}",
+                    "T$",
+                    $"Filled trucks pay {GetTruckBonusMultiplier(target):0.0}x bonus cash",
+                    truckBonusLevel,
+                    target,
+                    GetArrayCost(TruckBonusCosts, target - 1),
+                    true,
+                    eggSaleValueLevel >= 2
+                        && truckBonusLevel >= target - 1);
             }
             case UpgradeId.IncubatorCapacity:
             {
@@ -566,6 +724,28 @@ public sealed class ProgressionSystem : MonoBehaviour
                         && !collection.HasVacuum
                         && current >= target - 1);
             }
+            case UpgradeId.BasketReach:
+            {
+                int current = collection != null
+                    ? collection.BasketReachLevel
+                    : 0;
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    1,
+                    EggCarryController.MaximumBasketReachLevel);
+                return new NodeState(
+                    $"Basket Reach Tier {target}",
+                    "B<>",
+                    $"Pull nearby eggs within {target * 0.2f:0.0}m of the clicked egg",
+                    current,
+                    target,
+                    GetArrayCost(BasketReachCosts, target - 1),
+                    true,
+                    collection != null
+                        && collection.BasketUpgradeLevel >= 1
+                        && !collection.HasVacuum
+                        && current >= target - 1);
+            }
             case UpgradeId.VacuumPower:
             {
                 int current = collection != null ? collection.VacuumPowerLevel : 0;
@@ -581,8 +761,10 @@ public sealed class ProgressionSystem : MonoBehaviour
                     GetArrayCost(VacuumPowerCosts, target - 1),
                     true,
                     collection != null
-                        && collection.BasketUpgradeLevel
-                            >= EggCarryController.MaximumBasketLevel
+                        && (collection.BasketUpgradeLevel
+                                >= EggCarryController.MaximumBasketLevel
+                            || collection.BasketReachLevel
+                                >= EggCarryController.MaximumBasketReachLevel)
                         && current >= target - 1);
             }
             case UpgradeId.VacuumRange:
@@ -759,12 +941,33 @@ public sealed class ProgressionSystem : MonoBehaviour
     public ChickenEgg.EggType RollEggType(
         ChickenController.ChickenBreed breed)
     {
+        return RollEggType(breed, 1f);
+    }
+
+    public ChickenEgg.EggType RollEggType(
+        ChickenController.ChickenBreed breed,
+        float premiumChanceMultiplier)
+    {
         GetCombinedRareChances(
             breed,
             out float rare,
             out float epic,
             out float legendary,
             out float cosmic);
+        float multiplier = Mathf.Max(1f, premiumChanceMultiplier);
+        rare *= multiplier;
+        epic *= multiplier;
+        legendary *= multiplier;
+        cosmic *= multiplier;
+        float totalPremiumChance = rare + epic + legendary + cosmic;
+        if (totalPremiumChance > 1f)
+        {
+            float normalization = 1f / totalPremiumChance;
+            rare *= normalization;
+            epic *= normalization;
+            legendary *= normalization;
+            cosmic *= normalization;
+        }
         float roll = UnityEngine.Random.value;
 
         if (roll < cosmic)
@@ -826,19 +1029,51 @@ public sealed class ProgressionSystem : MonoBehaviour
         return Mathf.RoundToInt(baseValue * EggValueMultiplier);
     }
 
+    public float RollEggWeightScale(ChickenEgg.EggType type)
+    {
+        float upperMultiplier = EggWeightUpperMultiplier;
+        if (type != ChickenEgg.EggType.Common)
+        {
+            // Premium eggs sit above the complete common-egg range. Each
+            // rarity then receives one additional flat 7.5% size/weight step.
+            return upperMultiplier + (int)type * RarityScaleStep;
+        }
+
+        if (eggWeightLevel <= 0 || UnityEngine.Random.value >= EggWeightChance)
+        {
+            return 1f;
+        }
+
+        return UnityEngine.Random.Range(1f, upperMultiplier);
+    }
+
     private bool ApplyUpgrade(UpgradeId id, out string message)
     {
         switch (id)
         {
             case UpgradeId.FeedSpeed:
                 return FoodShopController.Instance.TryUnlockNextFeedTier(out message, false);
+            case UpgradeId.PrimeFeed:
+                return FoodShopController.Instance.TryUpgradePrimeFeed(
+                    out message,
+                    false);
             case UpgradeId.RareEggChance:
                 rareEggChanceLevel++;
                 message = $"Premium egg chance level {rareEggChanceLevel}";
                 return true;
+            case UpgradeId.EggWeight:
+                eggWeightLevel++;
+                message =
+                    $"Egg weight/size: {EggWeightChance * 100f:0}% chance, " +
+                    $"up to {EggWeightUpperMultiplier * 100f:0.#}%";
+                return true;
             case UpgradeId.EggValue:
-                eggValueLevel++;
-                message = $"Egg weight increased to {EggValueMultiplier:0.##}x";
+                eggSaleValueLevel++;
+                message = $"All egg values increased to {EggValueMultiplier:0.##}x";
+                return true;
+            case UpgradeId.TruckBonus:
+                truckBonusLevel++;
+                message = $"Truck bonuses increased to {TruckBonusMultiplier:0.0}x";
                 return true;
             case UpgradeId.IncubatorInstall:
                 return IncubatorShopController.Instance.TryInstall(out message, false);
@@ -855,6 +1090,11 @@ public sealed class ProgressionSystem : MonoBehaviour
             case UpgradeId.BasketCapacity:
                 EggCarryController.Instance.UpgradeBasket();
                 message = $"Basket capacity level {EggCarryController.Instance.BasketUpgradeLevel}";
+                return true;
+            case UpgradeId.BasketReach:
+                EggCarryController.Instance.UpgradeBasketReach();
+                message =
+                    $"Basket reach increased to {EggCarryController.Instance.BasketReachRadius:0.0}m";
                 return true;
             case UpgradeId.VacuumUnlock:
                 EggCarryController.Instance.UpgradeVacuumPower();
@@ -901,6 +1141,32 @@ public sealed class ProgressionSystem : MonoBehaviour
             Mathf.Clamp(level, 0, EggValueMultipliers.Length - 1)];
     }
 
+    private static float GetTruckBonusMultiplier(int level)
+    {
+        return 1f + Mathf.Clamp(level, 0, TruckBonusCosts.Length)
+            * TruckBonusPerLevel;
+    }
+
+    private static float GetEggWeightChance(int level)
+    {
+        return Mathf.Clamp01(level * EggWeightChancePerLevel);
+    }
+
+    private static float GetEggWeightUpperMultiplier(int level)
+    {
+        return 1f + Mathf.Clamp(level, 0, EggWeightCosts.Length)
+            * EggWeightUpperRangePerLevel;
+    }
+
+    private static string GetEggWeightDescription(int level)
+    {
+        int clampedLevel = Mathf.Clamp(level, 0, EggWeightCosts.Length);
+        return
+            $"{GetEggWeightChance(clampedLevel) * 100f:0}% chance to lay " +
+            $"heavier/bigger eggs . Up to " +
+            $"{GetEggWeightUpperMultiplier(clampedLevel) * 100f:0.#}% size/weight";
+    }
+
     private static string GetRareChanceDescription(int level)
     {
         GetRareChances(
@@ -910,7 +1176,7 @@ public sealed class ProgressionSystem : MonoBehaviour
             out float legendary,
             out float cosmic);
         return
-            $"Rare {rare * 100f:0.###}% . " +
+            $"{rare * 100f:0.###}% chance to lay rare eggs . " +
             $"Epic {epic * 100f:0.###}% . " +
             $"Legendary {legendary * 100f:0.###}% . " +
             $"Cosmic {cosmic * 100f:0.####}%";

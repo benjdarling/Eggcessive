@@ -13016,7 +13016,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ProgressionSystem
   rareEggChanceLevel: 0
-  eggValueLevel: 0
+  eggWeightLevel: 0
+  eggSaleValueLevel: 0
 --- !u!114 &9137107012935798683
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -13043,8 +13044,8 @@ MonoBehaviour:
   midCashQuotaGrowth: 1.24
   midCashQuotaEndRound: 25
   lateCashQuotaGrowth: 1.18
-  maximumRoundCashQuotaCents: 2000000000
-  truckVisualScale: 0.22
+  maximumRoundCashQuotaCents: 9000000000000000000
+  truckVisualPrefab: {fileID: 919132149155446097, guid: 66cdb31714fc5094cbf9a86f6a96649e, type: 3}
   truckDepartureDuration: 2.5
   intermissionScreen: {fileID: 7682059428011074818}
   countdownDisplay: {fileID: 2177030633709322127}

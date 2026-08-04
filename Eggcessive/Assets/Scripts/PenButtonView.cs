@@ -14,6 +14,9 @@ public sealed class PenButtonView : MonoBehaviour
         new Color(0.12f, 0.07f, 0.035f, 1f);
     private static readonly Color AvailableOutlineColour =
         new Color(1f, 0.72f, 0.14f, 1f);
+    private static readonly Color FocusedOutlineColour =
+        new Color(1f, 0.92f, 0.42f, 1f);
+    private const float FocusedScale = 1.15f;
     private static readonly Color UnavailablePenTextColour =
         new Color(0.56f, 0.56f, 0.54f, 1f);
     private static readonly Color UnavailableCostTextColour =
@@ -36,9 +39,20 @@ public sealed class PenButtonView : MonoBehaviour
     private Outline buttonOutline;
     private bool purchaseAffordable;
     private Color purchaseBaseColour;
+    private Vector3 baseLocalScale = Vector3.one;
 
     public int PenIndex => penIndex;
     public Button Button => button;
+
+    private void Awake()
+    {
+        baseLocalScale = transform.localScale;
+        if (earningsText != null)
+        {
+            earningsText.enableAutoSizing = false;
+            earningsText.fontSize *= 1.2f;
+        }
+    }
 
     private void Update()
     {
@@ -116,10 +130,15 @@ public sealed class PenButtonView : MonoBehaviour
         progressRoot.SetActive(false);
         button.interactable = true;
         purchaseAffordable = false;
-        SetOutlineColour(DefaultOutlineColour);
+        transform.localScale = focused
+            ? baseLocalScale * FocusedScale
+            : baseLocalScale;
+        SetOutlineStyle(
+            focused ? FocusedOutlineColour : DefaultOutlineColour,
+            focused ? 4f : 2f);
         Color penColour = PenUiPalette.GetColour(penIndex);
         background.color = focused
-            ? penColour
+            ? Color.Lerp(penColour, Color.white, 0.16f)
             : new Color(
                 penColour.r * 0.82f,
                 penColour.g * 0.82f,
@@ -134,6 +153,7 @@ public sealed class PenButtonView : MonoBehaviour
         long currentCents)
     {
         penIndex = nextPenIndex;
+        transform.localScale = baseLocalScale;
         penLabel.text = $"BUY\nPEN {nextPenIndex + 1}";
         penLabel.color = affordable
             ? PenTextColour
@@ -172,7 +192,9 @@ public sealed class PenButtonView : MonoBehaviour
             return;
         }
 
-        accumulatedEarningsCents += cents;
+        accumulatedEarningsCents = cents > long.MaxValue - accumulatedEarningsCents
+            ? long.MaxValue
+            : accumulatedEarningsCents + cents;
         earningsText.text = $"+{FormatCompactMoney(accumulatedEarningsCents)}";
 
         if (earningsAnimation != null)
@@ -262,6 +284,11 @@ public sealed class PenButtonView : MonoBehaviour
 
     private void SetOutlineColour(Color colour)
     {
+        SetOutlineStyle(colour, 2f);
+    }
+
+    private void SetOutlineStyle(Color colour, float thickness)
+    {
         if (buttonOutline == null)
         {
             buttonOutline = GetComponent<Outline>();
@@ -270,6 +297,9 @@ public sealed class PenButtonView : MonoBehaviour
         if (buttonOutline != null)
         {
             buttonOutline.effectColor = colour;
+            buttonOutline.effectDistance = new Vector2(
+                Mathf.Max(1f, thickness),
+                -Mathf.Max(1f, thickness));
         }
     }
 }

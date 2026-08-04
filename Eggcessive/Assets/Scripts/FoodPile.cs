@@ -8,6 +8,7 @@ public sealed class FoodPile : MonoBehaviour
 
     [SerializeField, Min(0.01f)] private float startingFood = 100f;
     [SerializeField, Min(1f)] private float eggProductionSpeedMultiplier = 1f;
+    [SerializeField, Min(1f)] private float premiumChanceMultiplier = 1f;
     [SerializeField] private Transform visualRoot = null;
     [SerializeField, Range(0.05f, 1f)] private float depletedScale = 0.2f;
 
@@ -19,6 +20,7 @@ public sealed class FoodPile : MonoBehaviour
     public float RemainingFood => remainingFood;
     public bool IsAvailable => isActiveAndEnabled && remainingFood > 0f;
     public float EggProductionSpeedMultiplier => eggProductionSpeedMultiplier;
+    public float PremiumChanceMultiplier => premiumChanceMultiplier;
 
     private void Awake()
     {
@@ -69,11 +71,15 @@ public sealed class FoodPile : MonoBehaviour
         return amountConsumed;
     }
 
-    public void ConfigureFeed(float foodAmount, float productionSpeedMultiplier)
+    public void ConfigureFeed(
+        float foodAmount,
+        float productionSpeedMultiplier,
+        float premiumEggChanceMultiplier = 1f)
     {
         startingFood = Mathf.Max(0.01f, foodAmount);
         remainingFood = startingFood;
         eggProductionSpeedMultiplier = Mathf.Max(1f, productionSpeedMultiplier);
+        premiumChanceMultiplier = Mathf.Max(1f, premiumEggChanceMultiplier);
         RefreshVisualScale();
     }
 
@@ -97,6 +103,7 @@ public sealed class FoodPile : MonoBehaviour
     {
         startingFood = Mathf.Max(0.01f, startingFood);
         eggProductionSpeedMultiplier = Mathf.Max(1f, eggProductionSpeedMultiplier);
+        premiumChanceMultiplier = Mathf.Max(1f, premiumChanceMultiplier);
         depletedScale = Mathf.Clamp(depletedScale, 0.05f, 1f);
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 
 [DisallowMultipleComponent]
 public sealed class AutoFeederController : MonoBehaviour
@@ -102,6 +103,7 @@ public sealed class AutoFeederController : MonoBehaviour
         }
 
         initialized = true;
+        EnsureNavigationObstacle();
         if (dialHand != null)
         {
             dialHandStartRotation = dialHand.localRotation;
@@ -110,6 +112,37 @@ public sealed class AutoFeederController : MonoBehaviour
         if (timeUntilDispense <= 0f)
         {
             timeUntilDispense = DispenseInterval;
+        }
+    }
+
+    private void EnsureNavigationObstacle()
+    {
+        Collider sourceCollider = GetComponent<Collider>();
+        if (sourceCollider == null)
+        {
+            return;
+        }
+
+        NavMeshObstacle obstacle = GetComponent<NavMeshObstacle>();
+        if (obstacle == null)
+        {
+            obstacle = gameObject.AddComponent<NavMeshObstacle>();
+        }
+
+        obstacle.carving = true;
+        obstacle.carveOnlyStationary = true;
+        if (sourceCollider is CapsuleCollider capsule)
+        {
+            obstacle.shape = NavMeshObstacleShape.Capsule;
+            obstacle.center = capsule.center;
+            obstacle.radius = capsule.radius;
+            obstacle.height = capsule.height;
+        }
+        else if (sourceCollider is BoxCollider box)
+        {
+            obstacle.shape = NavMeshObstacleShape.Box;
+            obstacle.center = box.center;
+            obstacle.size = box.size;
         }
     }
 
@@ -181,7 +214,8 @@ public sealed class AutoFeederController : MonoBehaviour
             // do not consume a purchased bag or depend on the bag inventory.
             pile.ConfigureFeed(
                 foodShop.CurrentFeedAmount,
-                foodShop.CurrentFeedSpeedMultiplier);
+                foodShop.CurrentFeedSpeedMultiplier,
+                foodShop.CurrentPremiumChanceMultiplier);
         }
 
         timeUntilDispense = DispenseInterval;

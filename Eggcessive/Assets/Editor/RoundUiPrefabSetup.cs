@@ -20,6 +20,7 @@ public static class RoundUiPrefabSetup
     private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
     private const string CoinModelPath = "Assets/UI/meshes/ui_coin.fbx";
     private const string CoinMaterialPath = "Assets/UI/materials/mat_ui_coin.mat";
+    private const string TruckVisualPath = "Assets/Truck/meshes/truck.fbx";
     private const string CashRegisterSfxPath =
         "Assets/Sounds/UI/sfx_ui_cashregister.wav";
     private const string ButtonClickSfxPath =
@@ -88,6 +89,8 @@ public static class RoundUiPrefabSetup
                 flyingCoinPrefab;
             serializedSystem.FindProperty("floatingRewardPrefab").objectReferenceValue =
                 floatingRewardPrefab;
+            serializedSystem.FindProperty("truckVisualPrefab").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<GameObject>(TruckVisualPath);
             serializedSystem.FindProperty("cashRegisterSfx").objectReferenceValue =
                 AssetDatabase.LoadAssetAtPath<AudioClip>(CashRegisterSfxPath);
             serializedSystem.FindProperty("buttonClickSfx").objectReferenceValue =

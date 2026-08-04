@@ -7,17 +7,17 @@ public sealed class IncubatorShopController : MonoBehaviour
 {
     private static readonly int[] LevelCosts =
     {
-        400, 1000, 2200, 4500, 8000, 13000, 20000, 30000, 44000, 62000
+        400, 1000, 2200
     };
 
     private static readonly int[] CapacityCosts =
     {
-        1000, 2600, 6500, 15000, 34000, 76000, 170000, 380000, 850000
+        1000, 2600
     };
 
     private static readonly int[] SpeedCosts =
     {
-        1400, 3800, 9500, 23000, 55000, 130000, 310000, 740000, 1800000
+        1400, 3800
     };
 
     [Header("Scene Incubator")]

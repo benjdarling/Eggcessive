@@ -9,18 +9,18 @@ public sealed class IncubatorController : MonoBehaviour
 {
     private static readonly int[] LevelCapacities =
     {
-        1, 3, 5, 8, 12, 17, 23, 30, 38, 48
+        1, 3, 5
     };
 
     private static readonly float[] LevelProductionTimes =
     {
-        10f, 8f, 6.5f, 5.25f, 4.25f, 3.5f, 2.9f, 2.4f, 2f, 1.6f
+        10f, 8f, 6.5f
     };
 
     [Header("Levels")]
-    [SerializeField, Range(1, 10)] private int currentLevel = 1;
-    [SerializeField, Range(1, 10)] private int capacityLevel = 1;
-    [SerializeField, Range(1, 10)] private int speedLevel = 1;
+    [SerializeField, Range(1, 3)] private int currentLevel = 1;
+    [SerializeField, Range(1, 3)] private int capacityLevel = 1;
+    [SerializeField, Range(1, 3)] private int speedLevel = 1;
 
     [Header("Incubator Sockets")]
     [SerializeField] private Transform eggStart = null;
@@ -52,7 +52,7 @@ public sealed class IncubatorController : MonoBehaviour
     private AudioSource processingAudioSource;
     private AudioSource hatchDoneAudioSource;
 
-    public const int MaximumLevel = 10;
+    public const int MaximumLevel = 3;
     public static event Action ChickenHatched;
     public static event Action<int> EggsAccepted;
     public int CurrentLevel => Mathf.Max(capacityLevel, speedLevel);
@@ -70,6 +70,9 @@ public sealed class IncubatorController : MonoBehaviour
 
     private void Awake()
     {
+        currentLevel = Mathf.Clamp(currentLevel, 1, MaximumLevel);
+        capacityLevel = Mathf.Clamp(capacityLevel, 1, MaximumLevel);
+        speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
         InitializeAudio();
         RefreshDisplays();
     }

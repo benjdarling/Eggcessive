@@ -240,10 +240,16 @@ public sealed class ProgressionTreePreview : MonoBehaviour
                 "Adds one bag of your currently unlocked feed to your supplies.",
             ProgressionSystem.UpgradeId.FeedSpeed =>
                 "Unlocks stronger feed so fed chickens lay eggs more frequently.",
+            ProgressionSystem.UpgradeId.PrimeFeed =>
+                "Multiplies premium egg chances while chickens are benefiting from feed.",
             ProgressionSystem.UpgradeId.RareEggChance =>
                 "Increases the chance of rare, epic, legendary, and cosmic eggs being laid.",
+            ProgressionSystem.UpgradeId.EggWeight =>
+                "Raises the chance and upper range for physically heavier, larger eggs.",
             ProgressionSystem.UpgradeId.EggValue =>
-                "Heavier eggs sell for more, multiplying every egg type's value.",
+                "Multiplies the sale value of every egg type.",
+            ProgressionSystem.UpgradeId.TruckBonus =>
+                "Increases the cash bonus paid whenever a truck is filled.",
             ProgressionSystem.UpgradeId.IncubatorInstall =>
                 "Installs the incubator so deposited eggs can hatch new chickens.",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
@@ -258,6 +264,8 @@ public sealed class ProgressionTreePreview : MonoBehaviour
                 "Raises the chance that mixed breeds produce the next stronger chicken.",
             ProgressionSystem.UpgradeId.BasketCapacity =>
                 "Unlocks and expands the cursor-following egg basket.",
+            ProgressionSystem.UpgradeId.BasketReach =>
+                "Pulls additional loose eggs near the clicked egg into available basket slots.",
             ProgressionSystem.UpgradeId.VacuumUnlock =>
                 "Unlocks click-hold vacuum collection after completing the basket upgrades.",
             ProgressionSystem.UpgradeId.VacuumPower =>

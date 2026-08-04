@@ -247,10 +247,16 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         {
             ProgressionSystem.UpgradeId.FeedSpeed =>
                 $"FEED SPEED\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.PrimeFeed =>
+                $"PRIME FEED\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.RareEggChance =>
                 $"PREMIUM EGGS\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.EggWeight =>
+                $"EGG WEIGHT/SIZE\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.EggValue =>
-                $"EGG WEIGHT\nTIER {targetLevel}",
+                $"EGG VALUE\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.TruckBonus =>
+                $"TRUCK BONUS\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
                 $"CAPACITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorSpeed =>
@@ -260,6 +266,8 @@ public sealed class ProgressionNodeButton : MonoBehaviour
             ProgressionSystem.UpgradeId.CrosshatcherQuality =>
                 $"BREED QUALITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.BasketCapacity => "BASKET\nCAPACITY",
+            ProgressionSystem.UpgradeId.BasketReach =>
+                $"BASKET REACH\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.VacuumPower =>
                 $"VACUUM POWER\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.VacuumRange =>

@@ -38,12 +38,16 @@ public sealed class EggCarryController : MonoBehaviour
     };
 
     private static readonly int[] BasketCapacities = { 3, 4, 5, 6 };
+    private static readonly float[] BasketReachRadii =
+    {
+        0f, 0.2f, 0.4f, 0.6f, 0.8f
+    };
     private static readonly float[] VacuumRanges = { 0.675f, 0.95f, 1.3f };
     private static readonly float[] VacuumPowers = { 0.5f, 0.825f, 1.25f };
     private static readonly float[] VacuumConeAngles = { 34f, 43f, 52f };
     private static readonly float[] RobotSpeeds =
     {
-        2.4f, 4f, 6f, 8f, 10f, 12f
+        2.4f, 3f, 3.6f, 4.2f, 4.8f, 5.4f
     };
     private static readonly int[] RobotCapacities =
     {
@@ -65,6 +69,8 @@ public sealed class EggCarryController : MonoBehaviour
     [Header("Collection Progression")]
     [SerializeField, Range(0, MaximumCollectionLevel)] private int collectionLevel;
     [SerializeField, Range(0, MaximumBasketLevel)] private int basketUpgradeLevel;
+    [SerializeField, Range(0, MaximumBasketReachLevel)]
+    private int basketReachLevel;
     [SerializeField, Range(0, 3)] private int vacuumPowerLevel;
     [SerializeField, Range(0, 3)] private int vacuumRangeLevel;
     [SerializeField] private bool robotUnlocked;
@@ -99,6 +105,7 @@ public sealed class EggCarryController : MonoBehaviour
     private IncubatorController incubator;
     private int basketEggCount;
     private readonly List<int> basketEggValues = new List<int>();
+    private readonly List<float> basketEggWeights = new List<float>();
     private readonly List<ChickenEgg.EggType> basketEggTypes =
         new List<ChickenEgg.EggType>();
     private int basketAnimationGeneration;
@@ -109,6 +116,7 @@ public sealed class EggCarryController : MonoBehaviour
     private bool automationPreservesRareEggs;
 
     public const int MaximumBasketLevel = 4;
+    public const int MaximumBasketReachLevel = 4;
     public const int MaximumCollectionLevel = 10;
     public const int MaximumRobotLevel = 6;
     public static EggCarryController Instance { get; private set; }
@@ -148,9 +156,33 @@ public sealed class EggCarryController : MonoBehaviour
     public ChickenController HeldChicken => heldChicken;
     public float HandCarryHeight => carryHeight;
     public int BasketUpgradeLevel => basketUpgradeLevel;
+    public int BasketReachLevel => basketReachLevel;
+    public float BasketReachRadius =>
+        BasketReachRadii[Mathf.Clamp(
+            basketReachLevel,
+            0,
+            MaximumBasketReachLevel)];
     public int VacuumPowerLevel => vacuumPowerLevel;
     public int VacuumRangeLevel => vacuumRangeLevel;
     public bool HasVacuum => vacuumPowerLevel > 0;
+    public float CurrentVacuumRange
+    {
+        get
+        {
+            if (!HasVacuum)
+            {
+                return 0f;
+            }
+
+            int rangeIndex = Mathf.Clamp(
+                (vacuumRangeLevel > 0
+                    ? vacuumRangeLevel
+                    : vacuumPowerLevel) - 1,
+                0,
+                VacuumRanges.Length - 1);
+            return VacuumRanges[rangeIndex];
+        }
+    }
     public bool HasRobot => robotUnlocked;
     public PlayerTool SelectedTool => selectedTool;
     public bool IsCollectionToolUnlocked => IsBasketMode || IsVacuumMode;
@@ -169,6 +201,10 @@ public sealed class EggCarryController : MonoBehaviour
     {
         Instance = this;
         viewCamera = GetComponent<Camera>();
+        basketReachLevel = Mathf.Clamp(
+            basketReachLevel,
+            0,
+            MaximumBasketReachLevel);
         MigrateLegacyCollectionLevel();
     }
 
@@ -486,17 +522,11 @@ public sealed class EggCarryController : MonoBehaviour
         ChickenEgg egg = FindEggUnderPointer(pointerPosition);
         if (egg != null && basketEggCount < BasketCapacity)
         {
-            if (egg.TryCollectFromTool())
+            Vector3 pickupPosition = egg.transform.position;
+            if (TryAddEggToBasket(egg))
             {
                 RoundSystem.Instance?.PlayGrabSfx();
-                int slotIndex = basketEggCount;
-                basketEggValues.Add(egg.ValueCents);
-                basketEggTypes.Add(egg.Type);
-                basketEggCount++;
-                StartCoroutine(AnimateEggIntoBasket(
-                    egg,
-                    slotIndex,
-                    basketAnimationGeneration));
+                PullNearbyEggsIntoBasket(pickupPosition, egg);
             }
 
             return;
@@ -522,6 +552,76 @@ public sealed class EggCarryController : MonoBehaviour
         }
     }
 
+    private bool TryAddEggToBasket(ChickenEgg egg)
+    {
+        if (egg == null
+            || basketEggCount >= BasketCapacity
+            || !egg.TryCollectFromTool())
+        {
+            return false;
+        }
+
+        int slotIndex = basketEggCount;
+        basketEggValues.Add(egg.ValueCents);
+        basketEggWeights.Add(egg.WeightKilograms);
+        basketEggTypes.Add(egg.Type);
+        basketEggCount++;
+        StartCoroutine(AnimateEggIntoBasket(
+            egg,
+            slotIndex,
+            basketAnimationGeneration));
+        return true;
+    }
+
+    private void PullNearbyEggsIntoBasket(
+        Vector3 pickupPosition,
+        ChickenEgg clickedEgg)
+    {
+        float radius = BasketReachRadius;
+        if (radius <= 0f || basketEggCount >= BasketCapacity)
+        {
+            return;
+        }
+
+        float radiusSquared = radius * radius;
+        var candidates = new List<ChickenEgg>();
+        IReadOnlyList<ChickenEgg> activeEggs = ChickenEgg.ActiveInstances;
+        for (int index = 0; index < activeEggs.Count; index++)
+        {
+            ChickenEgg candidate = activeEggs[index];
+            if (candidate == null
+                || candidate == clickedEgg
+                || candidate.IsHeld
+                || candidate.IsCollected)
+            {
+                continue;
+            }
+
+            Vector3 offset = candidate.transform.position - pickupPosition;
+            offset.y = 0f;
+            if (offset.sqrMagnitude <= radiusSquared)
+            {
+                candidates.Add(candidate);
+            }
+        }
+
+        candidates.Sort((left, right) =>
+        {
+            Vector3 leftOffset = left.transform.position - pickupPosition;
+            Vector3 rightOffset = right.transform.position - pickupPosition;
+            leftOffset.y = 0f;
+            rightOffset.y = 0f;
+            return leftOffset.sqrMagnitude.CompareTo(rightOffset.sqrMagnitude);
+        });
+
+        for (int index = 0;
+            index < candidates.Count && basketEggCount < BasketCapacity;
+            index++)
+        {
+            TryAddEggToBasket(candidates[index]);
+        }
+    }
+
     private void EmptyBasket(EggContainer targetContainer)
     {
         if (basketEggCount <= 0 || targetContainer == null)
@@ -529,10 +629,15 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
-        int deposited = targetContainer.DepositEggValues(basketEggValues);
+        int deposited = targetContainer.DepositEggValues(
+            basketEggValues,
+            basketEggWeights);
         basketAnimationGeneration++;
         basketEggCount -= deposited;
         basketEggValues.RemoveRange(0, Mathf.Min(deposited, basketEggValues.Count));
+        basketEggWeights.RemoveRange(
+            0,
+            Mathf.Min(deposited, basketEggWeights.Count));
         basketEggTypes.RemoveRange(0, Mathf.Min(deposited, basketEggTypes.Count));
         RefreshToolEggSlots();
     }
@@ -554,6 +659,10 @@ public sealed class EggCarryController : MonoBehaviour
         if (deposited > 0 && basketEggValues.Count > 0)
         {
             basketEggValues.RemoveAt(0);
+            if (basketEggWeights.Count > 0)
+            {
+                basketEggWeights.RemoveAt(0);
+            }
             basketEggTypes.RemoveAt(0);
         }
 
@@ -792,7 +901,9 @@ public sealed class EggCarryController : MonoBehaviour
             int deposited = routeToIncubator && incubator != null
                 ? incubator.TryAcceptStoredEgg(egg.Type)
                 : eggContainer != null
-                    ? (eggContainer.DepositEggValue(egg.ValueCents) ? 1 : 0)
+                    ? (eggContainer.DepositEggValue(
+                        egg.ValueCents,
+                        egg.WeightKilograms) ? 1 : 0)
                     : 0;
 
             if (deposited > 0 && egg.TryCollectFromTool())
@@ -934,7 +1045,8 @@ public sealed class EggCarryController : MonoBehaviour
                 robotCapacityLevel - 1,
                 0,
                 MaximumRobotLevel - 1)],
-            robotSmartnessLevel);
+            robotSmartnessLevel,
+            0);
     }
 
     public EggCollectorRobot CreatePenRobot(
@@ -944,6 +1056,7 @@ public sealed class EggCarryController : MonoBehaviour
         int speedLevel,
         int capacityLevel,
         int smartnessLevel,
+        int vacuumLevel,
         Transform parent)
     {
         int resolvedSpeed = Mathf.Clamp(speedLevel, 1, MaximumRobotLevel);
@@ -997,7 +1110,8 @@ public sealed class EggCarryController : MonoBehaviour
             targetCrosshatcher,
             RobotSpeeds[resolvedSpeed - 1],
             RobotCapacities[resolvedCapacity - 1],
-            resolvedSmartness);
+            resolvedSmartness,
+            vacuumLevel);
         return robot;
     }
 
@@ -1399,6 +1513,7 @@ public sealed class EggCarryController : MonoBehaviour
             basketAnimationGeneration++;
             basketEggCount = 0;
             basketEggValues.Clear();
+            basketEggWeights.Clear();
             basketEggTypes.Clear();
             RefreshToolEggSlots();
         }
@@ -1493,6 +1608,15 @@ public sealed class EggCarryController : MonoBehaviour
             MaximumBasketLevel,
             basketUpgradeLevel + 1);
         selectedTool = PlayerTool.Collection;
+        ApplyCollectionLevel();
+        CollectionLevelChanged?.Invoke();
+    }
+
+    public void UpgradeBasketReach()
+    {
+        basketReachLevel = Mathf.Min(
+            MaximumBasketReachLevel,
+            basketReachLevel + 1);
         ApplyCollectionLevel();
         CollectionLevelChanged?.Invoke();
     }
@@ -1651,6 +1775,10 @@ public sealed class EggCarryController : MonoBehaviour
             basketUpgradeLevel,
             0,
             MaximumBasketLevel);
+        basketReachLevel = Mathf.Clamp(
+            basketReachLevel,
+            0,
+            MaximumBasketReachLevel);
         vacuumPowerLevel = Mathf.Clamp(vacuumPowerLevel, 0, 3);
         vacuumRangeLevel = Mathf.Clamp(vacuumRangeLevel, 0, 3);
         robotSpeedLevel = Mathf.Clamp(

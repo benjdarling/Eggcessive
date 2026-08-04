@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using DitzelGames.FastIK;
 using UnityEngine;
@@ -13,7 +14,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const float DestinationRefreshInterval = 0.1f;
     private const float DestinationMoveThreshold = 0.05f;
     private const float MaximumCollectionTripDuration = 3.5f;
+    private const float VacuumSuctionSpeed = 6f;
+    private const float FinalDeliveryUnloadSeconds = 0.75f;
+    private const float FinalDeliveryCongestionMultiplier = 1.35f;
+    private const float CrowdProgressSampleInterval = 0.2f;
+    private const float CrowdStallDuration = 0.65f;
+    private const float CrowdDetourDuration = 0.85f;
     public const int ChickenArmsSmartnessLevel = 4;
+    public const int MaximumVacuumLevel = 5;
 
     [SerializeField] private Transform[] visibleEggSlots = null;
     [SerializeField, Min(0.01f)] private float pickupDistance = 0.24f;
@@ -40,8 +48,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private int capacity = 3;
     private int storedEggs;
     private int smartnessLevel;
+    private float vacuumRadius;
     private int targetPenIndex = -1;
     private readonly List<int> storedEggValues = new List<int>();
+    private readonly List<float> storedEggWeights = new List<float>();
     private readonly List<ChickenEgg.EggType> storedEggTypes =
         new List<ChickenEgg.EggType>();
     private bool delivering;
@@ -63,6 +73,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private Vector3 lastDestination;
     private float nextDestinationRefreshTime;
     private bool hasDestination;
+    private Vector3 crowdProgressPosition;
+    private float nextCrowdProgressSampleTime;
+    private float crowdStallStartTime = -1f;
+    private Vector3 crowdDetourTarget;
+    private float crowdDetourUntilTime;
+    private bool finalDeliveryCommitted;
+    private float nextFinalDeliveryAssessmentTime;
+    private float cachedFinalDeliverySeconds;
     private readonly ChickenController[] carriedChickens =
         new ChickenController[2];
     private ChickenController targetChicken;
@@ -70,9 +88,12 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool deliveringChickenPair;
     private int carriedChickenCount;
     private float nextChickenMissionCheckTime;
+    private readonly HashSet<ChickenEgg> vacuumEggsInFlight =
+        new HashSet<ChickenEgg>();
 
     public int StoredEggs => storedEggs;
     public int Capacity => capacity;
+    public float VacuumRadius => vacuumRadius;
     public EggContainer TargetContainer => eggContainer;
     public static IReadOnlyList<EggCollectorRobot> ActiveInstances =>
         ActiveRobots;
@@ -112,6 +133,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private void OnDisable()
     {
         CancelChickenMission(true);
+        ReleaseVacuumEggs();
         ActiveRobots.Remove(this);
     }
 
@@ -121,7 +143,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
         CrosshatcherController targetCrosshatcher,
         float movementSpeed,
         int eggCapacity,
-        int deliverySmartnessLevel)
+        int deliverySmartnessLevel,
+        int vacuumLevel)
     {
         eggContainer = targetContainer;
         incubator = targetIncubator;
@@ -134,10 +157,19 @@ public sealed class EggCollectorRobot : MonoBehaviour
             deliverySmartnessLevel,
             0,
             ChickenArmsSmartnessLevel);
+        vacuumRadius = GetVacuumRadius(vacuumLevel);
         agent.speed = Mathf.Max(0.1f, movementSpeed);
         agent.acceleration = agent.speed * 5f;
         agent.angularSpeed = 540f;
+        agent.autoBraking = true;
+        agent.autoRepath = true;
+        agent.avoidancePriority = 10;
+        agent.obstacleAvoidanceType =
+            ObstacleAvoidanceType.HighQualityObstacleAvoidance;
         TryPlaceOnNavMesh();
+        crowdProgressPosition = transform.position;
+        nextCrowdProgressSampleTime = Time.time + CrowdProgressSampleInterval;
+        nextFinalDeliveryAssessmentTime = 0f;
         SetChickenArmsEnabled(
             smartnessLevel >= ChickenArmsSmartnessLevel);
         RefreshVisibleEggs();
@@ -156,6 +188,24 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
         if (!agent.isOnNavMesh && !TryPlaceOnNavMesh())
         {
+            return;
+        }
+
+        if (storedEggs > 0 && IsFinalDeliveryWindow())
+        {
+            finalDeliveryCommitted = true;
+            if (!delivering || deliveringToIncubator)
+            {
+                BeginDelivery(true);
+            }
+
+            UpdateDelivery();
+            return;
+        }
+
+        if (finalDeliveryCommitted && storedEggs <= 0)
+        {
+            StopMoving();
             return;
         }
 
@@ -178,9 +228,15 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
         if (storedEggs >= capacity
             || (storedEggs > 0
+                && vacuumEggsInFlight.Count == 0
                 && Time.time - collectionTripStartTime
                     >= MaximumCollectionTripDuration))
         {
+            if (vacuumEggsInFlight.Count > 0)
+            {
+                return;
+            }
+
             BeginDelivery();
             return;
         }
@@ -198,7 +254,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             noTargetTime += Time.deltaTime;
 
-            if (storedEggs > 0 && noTargetTime >= 0.35f)
+            if (storedEggs > 0
+                && vacuumEggsInFlight.Count == 0
+                && noTargetTime >= 0.35f)
             {
                 BeginDelivery();
             }
@@ -209,24 +267,42 @@ public sealed class EggCollectorRobot : MonoBehaviour
         noTargetTime = 0f;
         SetDestination(targetEgg.transform.position);
 
+        float collectionDistance = vacuumRadius > 0f
+            ? vacuumRadius
+            : pickupDistance;
         if (PlanarDistance(transform.position, targetEgg.transform.position)
-            <= pickupDistance)
+            <= collectionDistance)
         {
-            CollectTargetEgg();
+            if (vacuumRadius > 0f)
+            {
+                BeginVacuumCollection();
+            }
+            else
+            {
+                CollectTargetEgg();
+            }
         }
     }
 
     public void FinalizeRound()
     {
         CancelChickenMission(true);
+        StopAllCoroutines();
+        ReleaseVacuumEggs();
         targetEgg = null;
         StopMoving();
         storedEggs = 0;
         collectionTripStartTime = 0f;
         storedEggValues.Clear();
+        storedEggWeights.Clear();
         storedEggTypes.Clear();
         delivering = false;
         deliveringToIncubator = false;
+        finalDeliveryCommitted = false;
+        nextFinalDeliveryAssessmentTime = 0f;
+        cachedFinalDeliverySeconds = 0f;
+        crowdStallStartTime = -1f;
+        crowdDetourUntilTime = 0f;
         RefreshVisibleEggs();
     }
 
@@ -240,14 +316,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
-        if (storedEggs <= 0)
-        {
-            collectionTripStartTime = Time.time;
-        }
-
-        storedEggs++;
-        storedEggValues.Add(egg.ValueCents);
-        storedEggTypes.Add(egg.Type);
+        StoreCollectedEgg(egg);
         egg.ReleaseToPool();
         RefreshVisibleEggs();
 
@@ -257,7 +326,86 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
     }
 
-    private void BeginDelivery()
+    private void BeginVacuumCollection()
+    {
+        ChickenEgg egg = targetEgg;
+        targetEgg = null;
+        if (egg == null
+            || storedEggs >= capacity
+            || !egg.TryCollectFromTool())
+        {
+            return;
+        }
+
+        StoreCollectedEgg(egg);
+        vacuumEggsInFlight.Add(egg);
+        StartCoroutine(PullEggIntoRobot(egg));
+        RefreshVisibleEggs();
+    }
+
+    private void StoreCollectedEgg(ChickenEgg egg)
+    {
+        if (storedEggs <= 0)
+        {
+            collectionTripStartTime = Time.time;
+        }
+
+        storedEggs++;
+        storedEggValues.Add(egg.ValueCents);
+        storedEggWeights.Add(egg.WeightKilograms);
+        storedEggTypes.Add(egg.Type);
+    }
+
+    private IEnumerator PullEggIntoRobot(ChickenEgg egg)
+    {
+        while (egg != null && egg.gameObject.activeSelf)
+        {
+            Vector3 target = transform.position + Vector3.up * 0.22f;
+            egg.transform.position = Vector3.MoveTowards(
+                egg.transform.position,
+                target,
+                VacuumSuctionSpeed * Time.deltaTime);
+            egg.transform.Rotate(Vector3.up, 720f * Time.deltaTime, Space.World);
+            if ((egg.transform.position - target).sqrMagnitude <= 0.0025f)
+            {
+                break;
+            }
+
+            yield return null;
+        }
+
+        vacuumEggsInFlight.Remove(egg);
+        if (egg != null && egg.gameObject.activeSelf)
+        {
+            egg.ReleaseToPool();
+        }
+
+        if (storedEggs >= capacity && vacuumEggsInFlight.Count == 0)
+        {
+            BeginDelivery();
+        }
+    }
+
+    private void ReleaseVacuumEggs()
+    {
+        foreach (ChickenEgg egg in vacuumEggsInFlight)
+        {
+            if (egg != null && egg.gameObject.activeSelf)
+            {
+                egg.ReleaseToPool();
+            }
+        }
+
+        vacuumEggsInFlight.Clear();
+    }
+
+    public static float GetVacuumRadius(int level)
+    {
+        int clampedLevel = Mathf.Clamp(level, 0, MaximumVacuumLevel);
+        return clampedLevel > 0 ? 0.5f + clampedLevel * 0.5f : 0f;
+    }
+
+    private void BeginDelivery(bool forceContainer = false)
     {
         if (storedEggs <= 0 || eggContainer == null)
         {
@@ -266,11 +414,71 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
         delivering = true;
         targetEgg = null;
-        deliveringToIncubator = CanDeliverToIncubator();
+        deliveringToIncubator = !forceContainer
+            && !finalDeliveryCommitted
+            && CanDeliverToIncubator();
         Vector3 target = deliveringToIncubator
             ? incubator.DepositPosition
             : eggContainer.DepositPosition;
         SetDestination(target);
+    }
+
+    private bool IsFinalDeliveryWindow()
+    {
+        RoundSystem roundSystem = RoundSystem.Instance;
+        if (roundSystem == null
+            || eggContainer == null
+            || !roundSystem.IsRoundInProgress)
+        {
+            return false;
+        }
+
+        if (Time.time >= nextFinalDeliveryAssessmentTime)
+        {
+            float pathLength = GetPathLengthTo(eggContainer.DepositPosition);
+            float travelSeconds = pathLength / Mathf.Max(0.1f, agent.speed);
+            cachedFinalDeliverySeconds = travelSeconds
+                * FinalDeliveryCongestionMultiplier
+                + FinalDeliveryUnloadSeconds;
+            nextFinalDeliveryAssessmentTime = Time.time + 0.25f;
+        }
+
+        return roundSystem.TimeRemaining <= cachedFinalDeliverySeconds;
+    }
+
+    private float GetPathLengthTo(Vector3 target)
+    {
+        if (agent == null || !agent.isOnNavMesh)
+        {
+            return PlanarDistance(transform.position, target);
+        }
+
+        if (reachabilityPath == null)
+        {
+            reachabilityPath = new NavMeshPath();
+        }
+
+        if (!NavMesh.SamplePosition(
+                target,
+                out NavMeshHit hit,
+                navMeshSampleDistance,
+                agent.areaMask)
+            || !agent.CalculatePath(hit.position, reachabilityPath)
+            || reachabilityPath.status != NavMeshPathStatus.PathComplete)
+        {
+            return PlanarDistance(transform.position, target);
+        }
+
+        Vector3[] corners = reachabilityPath.corners;
+        float length = 0f;
+        Vector3 previous = transform.position;
+        for (int index = 0; index < corners.Length; index++)
+        {
+            length += PlanarDistance(previous, corners[index]);
+            previous = corners[index];
+        }
+
+        return Mathf.Max(length, PlanarDistance(transform.position, target));
     }
 
     private void UpdateDelivery()
@@ -307,11 +515,16 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
         else if (eggContainer != null)
         {
-            int deposited = eggContainer.DepositEggValues(storedEggValues);
+            int deposited = eggContainer.DepositEggValues(
+                storedEggValues,
+                storedEggWeights);
             storedEggs -= deposited;
             storedEggValues.RemoveRange(
                 0,
                 Mathf.Min(deposited, storedEggValues.Count));
+            storedEggWeights.RemoveRange(
+                0,
+                Mathf.Min(deposited, storedEggWeights.Count));
             storedEggTypes.RemoveRange(
                 0,
                 Mathf.Min(deposited, storedEggTypes.Count));
@@ -365,6 +578,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
             }
 
             storedEggValues.RemoveAt(leastValuableIndex);
+            if (leastValuableIndex < storedEggWeights.Count)
+            {
+                storedEggWeights.RemoveAt(leastValuableIndex);
+            }
             storedEggTypes.RemoveAt(leastValuableIndex);
         }
     }
@@ -373,11 +590,22 @@ public sealed class EggCollectorRobot : MonoBehaviour
     {
         return smartnessLevel > 0
             && (RoundSystem.Instance == null
-                || RoundSystem.Instance.IsCashQuotaMet)
+                || RoundSystem.Instance.IsCashQuotaMet
+                || NeedsPopulationRecovery())
             && incubator != null
             && incubator.isActiveAndEnabled
             && incubator.AvailableCapacity > 0
             && CountStoredStandardEggs() > 0;
+    }
+
+    private bool NeedsPopulationRecovery()
+    {
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        return manager != null
+            && manager.IsInitialized
+            && targetPenIndex >= 0
+            && manager.GetChickenCount(targetPenIndex)
+                < CrosshatcherController.MinimumFlockSizeForNewCycle;
     }
 
     private int CountStoredStandardEggs()
@@ -399,7 +627,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
         if (smartnessLevel < ChickenArmsSmartnessLevel
             || Time.time < nextChickenMissionCheckTime
             || crosshatcher == null
-            || !crosshatcher.isActiveAndEnabled)
+            || !crosshatcher.isActiveAndEnabled
+            || NeedsPopulationRecovery())
         {
             return false;
         }
@@ -998,10 +1227,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
+        UpdateCrowdDetour(target);
+        Vector3 navigationTarget = Time.time < crowdDetourUntilTime
+            ? crowdDetourTarget
+            : target;
         float destinationMoveThresholdSquared =
             DestinationMoveThreshold * DestinationMoveThreshold;
         bool destinationMoved = !hasDestination
-            || (target - lastDestination).sqrMagnitude
+            || (navigationTarget - lastDestination).sqrMagnitude
                 > destinationMoveThresholdSquared;
         if (!destinationMoved
             && (agent.hasPath || agent.pathPending))
@@ -1017,16 +1250,123 @@ public sealed class EggCollectorRobot : MonoBehaviour
         nextDestinationRefreshTime =
             Time.time + DestinationRefreshInterval;
         if (NavMesh.SamplePosition(
-                target,
+                navigationTarget,
                 out NavMeshHit hit,
                 navMeshSampleDistance,
                 agent.areaMask))
         {
             agent.isStopped = false;
             agent.SetDestination(hit.position);
-            lastDestination = target;
+            lastDestination = navigationTarget;
             hasDestination = true;
         }
+    }
+
+    private void UpdateCrowdDetour(Vector3 finalTarget)
+    {
+        if (Time.time < nextCrowdProgressSampleTime)
+        {
+            return;
+        }
+
+        float moved = PlanarDistance(transform.position, crowdProgressPosition);
+        bool tryingToTravel = agent.hasPath
+            && PlanarDistance(transform.position, finalTarget) > 0.55f;
+        if (tryingToTravel && moved < 0.035f)
+        {
+            if (crowdStallStartTime < 0f)
+            {
+                crowdStallStartTime = Time.time;
+            }
+            else if (Time.time - crowdStallStartTime >= CrowdStallDuration
+                && TryChooseCrowdDetour(finalTarget, out Vector3 detour))
+            {
+                crowdDetourTarget = detour;
+                crowdDetourUntilTime = Time.time + CrowdDetourDuration;
+                crowdStallStartTime = -1f;
+                hasDestination = false;
+            }
+        }
+        else
+        {
+            crowdStallStartTime = -1f;
+        }
+
+        crowdProgressPosition = transform.position;
+        nextCrowdProgressSampleTime = Time.time + CrowdProgressSampleInterval;
+    }
+
+    private bool TryChooseCrowdDetour(
+        Vector3 finalTarget,
+        out Vector3 detour)
+    {
+        detour = Vector3.zero;
+        Vector3 forward = finalTarget - transform.position;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.01f)
+        {
+            return false;
+        }
+
+        forward.Normalize();
+        Vector3 right = Vector3.Cross(Vector3.up, forward);
+        float bestScore = float.MaxValue;
+        bool found = false;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            Vector3 requested = transform.position
+                + forward * 0.35f
+                + right * (side * 0.85f);
+            if (!NavMesh.SamplePosition(
+                    requested,
+                    out NavMeshHit hit,
+                    0.45f,
+                    agent.areaMask))
+            {
+                continue;
+            }
+
+            if (reachabilityPath == null)
+            {
+                reachabilityPath = new NavMeshPath();
+            }
+
+            if (!agent.CalculatePath(hit.position, reachabilityPath)
+                || reachabilityPath.status != NavMeshPathStatus.PathComplete)
+            {
+                continue;
+            }
+
+            float crowdPenalty = 0f;
+            var chickens = ChickenController.ActiveInstances;
+            for (int index = 0; index < chickens.Count; index++)
+            {
+                ChickenController chicken = chickens[index];
+                if (chicken == null)
+                {
+                    continue;
+                }
+
+                float distance = PlanarDistance(
+                    chicken.transform.position,
+                    hit.position);
+                if (distance < 0.8f)
+                {
+                    crowdPenalty += 1f - distance / 0.8f;
+                }
+            }
+
+            float score = crowdPenalty * 4f
+                + PlanarDistance(hit.position, finalTarget);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                detour = hit.position;
+                found = true;
+            }
+        }
+
+        return found;
     }
 
     private void StopMoving()

@@ -30,6 +30,9 @@ public sealed class EggScoreHud : MonoBehaviour
 
     public static event Action<long> BalanceChanged;
     public static long CurrentCents => instance != null ? instance.targetCents : 0L;
+    public RectTransform CashTarget => scoreText != null
+        ? scoreText.rectTransform
+        : null;
 
     private void Awake()
     {
@@ -58,7 +61,7 @@ public sealed class EggScoreHud : MonoBehaviour
         }
     }
 
-    public static void AddCents(int amount)
+    public static void AddCents(long amount)
     {
         if (instance == null)
         {
@@ -66,19 +69,21 @@ public sealed class EggScoreHud : MonoBehaviour
             return;
         }
 
-        int centsToAdd = Mathf.Max(0, amount);
+        long centsToAdd = Math.Max(0L, amount);
 
         if (centsToAdd == 0)
         {
             return;
         }
 
-        instance.targetCents += centsToAdd;
+        instance.targetCents = centsToAdd > long.MaxValue - instance.targetCents
+            ? long.MaxValue
+            : instance.targetCents + centsToAdd;
         BalanceChanged?.Invoke(instance.targetCents);
         instance.AnimateToTarget();
     }
 
-    public static bool TrySpendCents(int amount)
+    public static bool TrySpendCents(long amount)
     {
         if (instance == null || amount <= 0 || instance.targetCents < amount)
         {

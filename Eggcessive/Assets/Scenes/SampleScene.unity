@@ -681,6 +681,7 @@ MonoBehaviour:
   selectedTool: 0
   collectionLevel: 0
   basketUpgradeLevel: 0
+  basketReachLevel: 0
   vacuumPowerLevel: 0
   vacuumRangeLevel: 0
   robotUnlocked: 0
@@ -1536,7 +1537,7 @@ Transform:
   m_GameObject: {fileID: 861941576}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: -7.75, y: 0, z: -3.5}
+  m_LocalPosition: {x: -7.75, y: 0, z: -4.15}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -6723,7 +6724,7 @@ Transform:
   m_GameObject: {fileID: 1304466578}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0.25, y: 0, z: -3.500001}
+  m_LocalPosition: {x: 0.25, y: 0, z: -4.15}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -8318,7 +8319,7 @@ Transform:
   m_GameObject: {fileID: 1907798045}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 7.25, y: 0, z: -3.5000017}
+  m_LocalPosition: {x: 7.25, y: 0, z: -4.15}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

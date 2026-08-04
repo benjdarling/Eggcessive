@@ -58,12 +58,16 @@ public sealed class CrosshatcherController : MonoBehaviour
     private int reservedChickenSlots;
 
     public const int MaximumLevel = 10;
+    public const int MinimumFlockSizeForNewCycle = 8;
     public int SpeedLevel => speedLevel;
     public int QualityLevel => qualityLevel;
     public float ProcessingTime => GetProcessingTime(speedLevel);
     public float ImprovementChance => GetImprovementChance(qualityLevel);
     public int OccupiedSlots => (chickenOne != null ? 1 : 0) + (chickenTwo != null ? 1 : 0);
     public bool IsProcessing => state == MachineState.Processing;
+    public bool HasReservedChickenOutput =>
+        state == MachineState.Processing
+        || state == MachineState.ReadyToRelease;
     public bool CanAcceptCarriedChicken
     {
         get
@@ -434,10 +438,12 @@ public sealed class CrosshatcherController : MonoBehaviour
 
     private void CompleteCrosshatch()
     {
-        if (PenExpansionManager.IsChickenCapReachedAt(transform.position))
+        if (PenExpansionManager.IsChickenCapReachedAt(
+                transform.position,
+                includeReservedCrosshatcherOutput: false))
         {
-            // Keep the completed output pending until a slot is available. The
-            // incubator can fill the last slot while this machine is processing.
+            // Keep the completed output pending if another producer bypassed
+            // this machine's reserved chicken-cap slot.
             processingTimeRemaining = 0f;
             state = MachineState.ReadyToRelease;
             UpdateProcessingAudio();
