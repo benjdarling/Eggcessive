@@ -577,6 +577,23 @@ public sealed class PenEquipmentHudController : MonoBehaviour
                             ? $"UPGRADE {FormatMoney(cost)}"
                             : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
             }
+            else if (view.upgrade
+                == PenExpansionManager.EquipmentUpgrade.AutoFeederRange)
+            {
+                float currentRadius =
+                    AutoFeederController.GetAttractionRadiusBonus(level);
+                float nextRadius =
+                    AutoFeederController.GetAttractionRadiusBonus(level + 1);
+                string current = level > 0
+                    ? $"+{currentRadius:0.0}M"
+                    : "OFF";
+                view.label.text = atMaximum
+                    ? $"RANGE  {current}  MAX"
+                    : $"RANGE  {current} > +{nextRadius:0.0}M    "
+                        + (affordable
+                            ? $"UPGRADE {FormatMoney(cost)}"
+                            : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
+            }
             else
             {
                 view.label.text = atMaximum
@@ -629,8 +646,15 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         }
         if (type == PenExpansionManager.EquipmentType.AutoFeeder)
         {
-            int level = manager.GetUpgradeLevel(penIndex, upgrades[0]);
-            return $"EVERY {AutoFeederController.GetDispenseInterval(level):0} SEC";
+            int speedLevel = manager.GetUpgradeLevel(penIndex, upgrades[0]);
+            int rangeLevel = manager.GetUpgradeLevel(penIndex, upgrades[1]);
+            float attractionBonus =
+                AutoFeederController.GetAttractionRadiusBonus(rangeLevel);
+            string range = rangeLevel > 0
+                ? $"+{attractionBonus:0.0}M"
+                : "OFF";
+            return $"EVERY {AutoFeederController.GetDispenseInterval(speedLevel):0} SEC  "
+                + $"RNG {range}";
         }
 
         float vacuumRadius = EggCollectorRobot.GetVacuumRadius(
@@ -665,6 +689,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             PenExpansionManager.EquipmentUpgrade.RobotCapacity => "CAPACITY",
             PenExpansionManager.EquipmentUpgrade.RobotVacuum => "VACUUM",
             PenExpansionManager.EquipmentUpgrade.AutoFeederSpeed => "SPEED",
+            PenExpansionManager.EquipmentUpgrade.AutoFeederRange => "RANGE",
             _ => "LOGIC"
         };
     }

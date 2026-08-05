@@ -6,6 +6,8 @@ using UnityEngine.AI;
 public sealed class AutoFeederController : MonoBehaviour
 {
     public const int MaximumLevel = 5;
+    public const int MaximumAttractionRangeLevel = 5;
+    private const float AttractionRadiusBonusPerLevel = 0.2f;
     private static readonly float[] DispenseIntervals =
         { 12f, 10f, 8f, 6f, 4f };
 
@@ -16,6 +18,8 @@ public sealed class AutoFeederController : MonoBehaviour
 
     [Header("Settings")]
     [SerializeField, Range(1, MaximumLevel)] private int speedLevel = 1;
+    [SerializeField, Range(0, MaximumAttractionRangeLevel)]
+    private int attractionRangeLevel;
     [SerializeField, Min(0.05f)] private float occupiedSocketRadius = 0.38f;
 
     private float timeUntilDispense;
@@ -24,6 +28,7 @@ public sealed class AutoFeederController : MonoBehaviour
     private readonly List<int> freeSocketIndices = new List<int>(4);
 
     public int SpeedLevel => speedLevel;
+    public int AttractionRangeLevel => attractionRangeLevel;
     public float DispenseInterval => GetDispenseInterval(speedLevel);
     public float TimeUntilDispense => timeUntilDispense;
 
@@ -72,6 +77,13 @@ public sealed class AutoFeederController : MonoBehaviour
 
     public void InstallOrUpgrade(int nextSpeedLevel)
     {
+        InstallOrUpgrade(nextSpeedLevel, attractionRangeLevel);
+    }
+
+    public void InstallOrUpgrade(
+        int nextSpeedLevel,
+        int nextAttractionRangeLevel)
+    {
         EnsureInitialized();
         float previousInterval = DispenseInterval;
         float elapsedNormalized = previousInterval > 0.001f
@@ -79,6 +91,10 @@ public sealed class AutoFeederController : MonoBehaviour
             : 0f;
 
         speedLevel = Mathf.Clamp(nextSpeedLevel, 1, MaximumLevel);
+        attractionRangeLevel = Mathf.Clamp(
+            nextAttractionRangeLevel,
+            0,
+            MaximumAttractionRangeLevel);
         timeUntilDispense = DispenseInterval * (1f - elapsedNormalized);
         if (timeUntilDispense <= 0f)
         {
@@ -93,6 +109,12 @@ public sealed class AutoFeederController : MonoBehaviour
     {
         return DispenseIntervals[
             Mathf.Clamp(level, 1, MaximumLevel) - 1];
+    }
+
+    public static float GetAttractionRadiusBonus(int level)
+    {
+        return Mathf.Clamp(level, 0, MaximumAttractionRangeLevel)
+            * AttractionRadiusBonusPerLevel;
     }
 
     private void EnsureInitialized()
@@ -215,7 +237,8 @@ public sealed class AutoFeederController : MonoBehaviour
             pile.ConfigureFeed(
                 foodShop.CurrentFeedAmount,
                 foodShop.CurrentFeedSpeedMultiplier,
-                foodShop.CurrentPremiumChanceMultiplier);
+                foodShop.CurrentPremiumChanceMultiplier,
+                GetAttractionRadiusBonus(attractionRangeLevel));
         }
 
         timeUntilDispense = DispenseInterval;
@@ -239,6 +262,10 @@ public sealed class AutoFeederController : MonoBehaviour
     private void OnValidate()
     {
         speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
+        attractionRangeLevel = Mathf.Clamp(
+            attractionRangeLevel,
+            0,
+            MaximumAttractionRangeLevel);
         occupiedSocketRadius = Mathf.Max(0.05f, occupiedSocketRadius);
     }
 }

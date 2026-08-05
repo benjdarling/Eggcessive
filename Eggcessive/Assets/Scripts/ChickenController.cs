@@ -1468,7 +1468,6 @@ public sealed class ChickenController : MonoBehaviour
 
         FoodPile bestFood = null;
         float bestDistanceSquared = float.PositiveInfinity;
-        float searchRadiusSquared = foodSearchRadius * foodSearchRadius;
         Vector3 chickenPosition = transform.position;
 
         foreach (FoodPile foodPile in FoodPile.ActivePiles)
@@ -1480,8 +1479,11 @@ public sealed class ChickenController : MonoBehaviour
 
             Vector3 offset = foodPile.transform.position - chickenPosition;
             float distanceSquared = offset.x * offset.x + offset.z * offset.z;
+            float attractionRadius = foodSearchRadius
+                + foodPile.AttractionRadiusBonus;
+            float attractionRadiusSquared = attractionRadius * attractionRadius;
 
-            if (distanceSquared > searchRadiusSquared
+            if (distanceSquared > attractionRadiusSquared
                 || distanceSquared >= bestDistanceSquared)
             {
                 continue;

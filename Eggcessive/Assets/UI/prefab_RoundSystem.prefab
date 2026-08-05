@@ -13172,7 +13172,9 @@ MonoBehaviour:
   cursorMovementResponse: 10
   truckEnterSfx: {fileID: 8300000, guid: 6a82217d5633cd74d92f806aeb7b725f, type: 3}
   truckExitSfx: {fileID: 8300000, guid: f3e6577d8f194a22bd5e5652ae84657d, type: 3}
+  truckBonusHornSfx: {fileID: 8300000, guid: b9d6a8e1c4f2473a91e5b0d72c6384fa, type: 3}
   truckSfxVolume: 0.8
+  truckBonusHornVolume: 0.9
   truckExitSoundLeadTime: 0.3
   farmAmbienceSfx: {fileID: 8300000, guid: 17dd832de55f30e49984d86c77c48e59, type: 3}
   farmAmbienceVolume: 1

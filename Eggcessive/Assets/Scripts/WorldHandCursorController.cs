@@ -89,7 +89,9 @@ public sealed class WorldHandCursorController : MonoBehaviour
     [SerializeField] private bool worldDepthSortWhileHoldingChicken = true;
     [Tooltip(
         "While the Editor is paused, temporarily renders the real hand mesh on the Default layer for Scene view inspection.")]
+#if UNITY_EDITOR
     [SerializeField] private bool showHandInSceneViewWhenPaused = true;
+#endif
 
     [Header("Shadow Presentation")]
     [SerializeField] private bool castWorldShadow = true;

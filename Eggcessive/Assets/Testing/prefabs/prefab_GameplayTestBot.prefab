@@ -143,14 +143,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameplayTestBot
   startEnabled: 0
-  pointerSpeed: 3600
-  pointerSpringFrequency: 5.5
-  pointerSpringDamping: 0.68
+  pointerSpeed: 6000
+  pointerAcceleration: 40000
+  pointerSpringFrequency: 3.8
+  pointerSpringDamping: 0.92
+  pointerPrecisionDamping: 1.12
+  pointerPrecisionRadius: 85
+  pointerMaximumOvershoot: 1.5
+  pointerOvershootSpeedRatio: 0.88
   pointerDwellTime: 0.08
   actionPause: 0.2
   vacuumHoldTime: 4
   minimumFeedBags: 1
-  maximumShopPurchasesPerVisit: 12
+  maximumShopPurchasesPerVisit: 20
   statusText: {fileID: 5336482332662369525}
 --- !u!1 &7747379801060926983
 GameObject:

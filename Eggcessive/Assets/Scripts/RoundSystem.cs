@@ -251,7 +251,9 @@ public sealed class RoundSystem : MonoBehaviour
     [Header("Truck Audio")]
     [SerializeField] private AudioClip truckEnterSfx = null;
     [SerializeField] private AudioClip truckExitSfx = null;
+    [SerializeField] private AudioClip truckBonusHornSfx = null;
     [SerializeField, Range(0f, 1f)] private float truckSfxVolume = 0.8f;
+    [SerializeField, Range(0f, 1f)] private float truckBonusHornVolume = 0.9f;
     [SerializeField, Min(0f)] private float truckExitSoundLeadTime = 0.3f;
 
     [Header("Ambience")]
@@ -322,6 +324,7 @@ public sealed class RoundSystem : MonoBehaviour
     private AudioSource[] coinAudioSources = Array.Empty<AudioSource>();
     private AudioSource truckEnterAudioSource;
     private AudioSource truckExitAudioSource;
+    private AudioSource truckBonusHornAudioSource;
     private AudioSource farmAmbienceAudioSource;
     private Vector2 lastCursorPosition;
     private float cursorMovementIntensity;
@@ -501,6 +504,7 @@ public sealed class RoundSystem : MonoBehaviour
 
         truckEnterAudioSource = Create2dAudioSource();
         truckExitAudioSource = Create2dAudioSource();
+        truckBonusHornAudioSource = Create2dAudioSource();
         StartFarmAmbience();
     }
 
@@ -1139,7 +1143,10 @@ public sealed class RoundSystem : MonoBehaviour
         ShowResults();
     }
 
-    private IEnumerator MoveTruck(Transform destination, float duration)
+    private IEnumerator MoveTruck(
+        Transform destination,
+        float duration,
+        bool playBonusHorn = false)
     {
         if (truck == null)
         {
@@ -1155,6 +1162,11 @@ public sealed class RoundSystem : MonoBehaviour
             {
                 yield break;
             }
+        }
+
+        if (playBonusHorn)
+        {
+            PlayTruckBonusHornSfx();
         }
 
         Vector3 startPosition = truck.position;
@@ -1209,6 +1221,19 @@ public sealed class RoundSystem : MonoBehaviour
 
         source.pitch = 1f;
         source.PlayOneShot(clip, truckSfxVolume);
+    }
+
+    public void PlayTruckBonusHornSfx()
+    {
+        if (truckBonusHornAudioSource == null || truckBonusHornSfx == null)
+        {
+            return;
+        }
+
+        truckBonusHornAudioSource.pitch = 1f;
+        truckBonusHornAudioSource.PlayOneShot(
+            truckBonusHornSfx,
+            truckBonusHornVolume);
     }
 
     private float GetTruckArrivalDuration()
@@ -1974,7 +1999,8 @@ public sealed class RoundSystem : MonoBehaviour
             pendingTruckReplacements--;
             yield return MoveTruck(
                 truckEnd,
-                truckDepartureDuration * 0.5f);
+                truckDepartureDuration * 0.5f,
+                true);
             DestroyTruck();
 
             if (Phase != RoundPhase.InProgress)

@@ -26,7 +26,8 @@ public sealed class PenExpansionManager : MonoBehaviour
         RobotCapacity,
         RobotSmartness,
         AutoFeederSpeed,
-        RobotVacuum
+        RobotVacuum,
+        AutoFeederRange
     }
 
     private const int RuntimeGroundMaskResolution = 64;
@@ -83,6 +84,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         7500000, 25000000, 90000000, 350000000
     };
 
+    private static readonly int[] AutoFeederRangeCosts =
+    {
+        2500000, 7500000, 25000000, 90000000, 350000000
+    };
+
     private static readonly EquipmentUpgrade[] IncubatorUpgrades =
     {
         EquipmentUpgrade.IncubatorCapacity,
@@ -105,7 +111,8 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private static readonly EquipmentUpgrade[] AutoFeederUpgrades =
     {
-        EquipmentUpgrade.AutoFeederSpeed
+        EquipmentUpgrade.AutoFeederSpeed,
+        EquipmentUpgrade.AutoFeederRange
     };
 
     private sealed class PenSlot
@@ -512,6 +519,9 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentUpgrade.AutoFeederSpeed =>
                 IsEquipmentOwned(penIndex, EquipmentType.AutoFeeder)
                     ? slot.autoFeeder.SpeedLevel : 0,
+            EquipmentUpgrade.AutoFeederRange =>
+                IsEquipmentOwned(penIndex, EquipmentType.AutoFeeder)
+                    ? slot.autoFeeder.AttractionRangeLevel : 0,
             _ => 0
         };
     }
@@ -535,6 +545,8 @@ public sealed class PenExpansionManager : MonoBehaviour
                 EggCollectorRobot.MaximumVacuumLevel,
             EquipmentUpgrade.AutoFeederSpeed =>
                 AutoFeederController.MaximumLevel,
+            EquipmentUpgrade.AutoFeederRange =>
+                AutoFeederController.MaximumAttractionRangeLevel,
             _ => 3
         };
     }
@@ -565,10 +577,12 @@ public sealed class PenExpansionManager : MonoBehaviour
             EquipmentUpgrade.RobotSmartness => RobotSmartnessCosts,
             EquipmentUpgrade.RobotVacuum => RobotVacuumCosts,
             EquipmentUpgrade.AutoFeederSpeed => AutoFeederSpeedCosts,
+            EquipmentUpgrade.AutoFeederRange => AutoFeederRangeCosts,
             _ => null
         };
         int costIndex = upgrade == EquipmentUpgrade.RobotSmartness
             || upgrade == EquipmentUpgrade.RobotVacuum
+            || upgrade == EquipmentUpgrade.AutoFeederRange
             ? level
             : level - 1;
         return costs != null && costIndex >= 0 && costIndex < costs.Length
@@ -623,7 +637,7 @@ public sealed class PenExpansionManager : MonoBehaviour
                 RefreshRobot(slot);
                 break;
             case EquipmentType.AutoFeeder:
-                slot.autoFeeder?.InstallOrUpgrade(1);
+                slot.autoFeeder?.InstallOrUpgrade(1, 0);
                 break;
         }
 
@@ -689,6 +703,11 @@ public sealed class PenExpansionManager : MonoBehaviour
                 slot.autoFeeder.InstallOrUpgrade(
                     slot.autoFeeder.SpeedLevel + 1);
                 break;
+            case EquipmentUpgrade.AutoFeederRange:
+                slot.autoFeeder.InstallOrUpgrade(
+                    slot.autoFeeder.SpeedLevel,
+                    slot.autoFeeder.AttractionRangeLevel + 1);
+                break;
         }
 
         RoundSystem.Instance?.PlayCashRegisterSfx();
@@ -731,7 +750,8 @@ public sealed class PenExpansionManager : MonoBehaviour
                 or EquipmentUpgrade.IncubatorSpeed => EquipmentType.Incubator,
             EquipmentUpgrade.CrosshatcherSpeed
                 or EquipmentUpgrade.CrosshatcherQuality => EquipmentType.Crosshatcher,
-            EquipmentUpgrade.AutoFeederSpeed => EquipmentType.AutoFeeder,
+            EquipmentUpgrade.AutoFeederSpeed
+                or EquipmentUpgrade.AutoFeederRange => EquipmentType.AutoFeeder,
             _ => EquipmentType.Robot
         };
     }
@@ -1714,6 +1734,7 @@ internal sealed class PenTruckController : MonoBehaviour
             pendingReplacements--;
             if (truck != null)
             {
+                RoundSystem.Instance?.PlayTruckBonusHornSfx();
                 yield return MoveTruck(
                     GetStopPosition() + Vector3.right * 7f,
                     0.6f);

@@ -151,11 +151,12 @@ public sealed class ProgressionSystem : MonoBehaviour
     {
         1500, 4000, 10000, 25000
     };
-    // The $90 unlock remains accessible, but the post-unlock tiers scale
-    // sharply because power and especially range multiply collection income.
+    // Vacuum entry sits beyond both completed basket branches. Its $600 unlock
+    // costs more than Basket Reach 4 ($250), while later power and range tiers
+    // continue scaling sharply because they multiply collection income.
     private static readonly int[] VacuumPowerCosts =
     {
-        9000, 150000, 1500000
+        60000, 150000, 1500000
     };
     private static readonly int[] VacuumRangeCosts =
     {
@@ -435,14 +436,14 @@ public sealed class ProgressionSystem : MonoBehaviour
                     "V",
                     collection != null && collection.HasVacuum
                         ? "Vacuum collection unlocked"
-                        : "Replace the full basket with click-hold suction",
+                        : "Requires Capacity 4 and Reach 4; replaces the basket with click-hold suction",
                     collection != null && collection.HasVacuum ? 1 : 0,
                     1,
                     VacuumPowerCosts[0],
                     true,
                     collection != null
                         && (basketLevel >= EggCarryController.MaximumBasketLevel
-                            || basketReach
+                            && basketReach
                                 >= EggCarryController.MaximumBasketReachLevel));
 
             case UpgradeId.VacuumPower:
@@ -456,11 +457,11 @@ public sealed class ProgressionSystem : MonoBehaviour
                     3,
                     GetArrayCost(VacuumPowerCosts, vacuumPower),
                     basketLevel >= EggCarryController.MaximumBasketLevel
-                        || basketReach
+                        && basketReach
                             >= EggCarryController.MaximumBasketReachLevel,
                     collection != null
                         && (basketLevel >= EggCarryController.MaximumBasketLevel
-                            || basketReach
+                            && basketReach
                                 >= EggCarryController.MaximumBasketReachLevel));
 
             case UpgradeId.VacuumRange:
@@ -513,8 +514,8 @@ public sealed class ProgressionSystem : MonoBehaviour
                     "AI",
                     smartness switch
                     {
-                        0 => "Route spare eggs to incubator",
-                        1 => "Prioritise valuable eggs and open incubator slots",
+                        0 => "Route spare eggs to the incubator after quota",
+                        1 => "Keep the incubator supplied until the pen is full",
                         2 => "Upgrade to collect strictly by egg rarity",
                         3 => "Add paired chicken arms for the crosshatcher",
                         _ => "Carries two chickens to an available crosshatcher"
@@ -763,7 +764,7 @@ public sealed class ProgressionSystem : MonoBehaviour
                     collection != null
                         && (collection.BasketUpgradeLevel
                                 >= EggCarryController.MaximumBasketLevel
-                            || collection.BasketReachLevel
+                            && collection.BasketReachLevel
                                 >= EggCarryController.MaximumBasketReachLevel)
                         && current >= target - 1);
             }
@@ -824,8 +825,8 @@ public sealed class ProgressionSystem : MonoBehaviour
                     "AI",
                     target switch
                     {
-                        1 => "Route spare eggs to the incubator",
-                        2 => "Prioritise valuable eggs and open incubator slots",
+                        1 => "Route spare eggs to the incubator after quota and recover tiny flocks",
+                        2 => "Keep the incubator supplied with common eggs until the pen is full",
                         3 => "Collect highest-rarity eggs before closer common eggs",
                         _ => "Add two IK arms and carry paired chickens to the crosshatcher"
                     },
@@ -1065,7 +1066,7 @@ public sealed class ProgressionSystem : MonoBehaviour
                 eggWeightLevel++;
                 message =
                     $"Egg weight/size: {EggWeightChance * 100f:0}% chance, " +
-                    $"up to {EggWeightUpperMultiplier * 100f:0.#}%";
+                    $"up to {EggWeightUpperMultiplier * 100f:0.#}% size and sale value";
                 return true;
             case UpgradeId.EggValue:
                 eggSaleValueLevel++;
@@ -1163,8 +1164,8 @@ public sealed class ProgressionSystem : MonoBehaviour
         int clampedLevel = Mathf.Clamp(level, 0, EggWeightCosts.Length);
         return
             $"{GetEggWeightChance(clampedLevel) * 100f:0}% chance to lay " +
-            $"heavier/bigger eggs . Up to " +
-            $"{GetEggWeightUpperMultiplier(clampedLevel) * 100f:0.#}% size/weight";
+            $"heavier/bigger eggs . Weight multiplies cash value . Up to " +
+            $"{GetEggWeightUpperMultiplier(clampedLevel) * 100f:0.#}% size/weight/value";
     }
 
     private static string GetRareChanceDescription(int level)

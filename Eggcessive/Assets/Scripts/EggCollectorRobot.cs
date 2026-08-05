@@ -20,6 +20,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const float CrowdProgressSampleInterval = 0.2f;
     private const float CrowdStallDuration = 0.65f;
     private const float CrowdDetourDuration = 0.85f;
+    public const int IncubatorRoutingSmartnessLevel = 1;
+    public const int PopulationGrowthSmartnessLevel = 2;
     public const int ChickenArmsSmartnessLevel = 4;
     public const int MaximumVacuumLevel = 5;
 
@@ -564,9 +566,20 @@ public sealed class EggCollectorRobot : MonoBehaviour
                     continue;
                 }
 
+                float candidateWeight = candidate < storedEggWeights.Count
+                    ? storedEggWeights[candidate]
+                    : ProgressionSystem.BaseEggWeightKilograms;
+                float currentWeight = leastValuableIndex >= 0
+                        && leastValuableIndex < storedEggWeights.Count
+                    ? storedEggWeights[leastValuableIndex]
+                    : ProgressionSystem.BaseEggWeightKilograms;
                 if (leastValuableIndex < 0
-                    || storedEggValues[candidate]
-                        < storedEggValues[leastValuableIndex])
+                    || EggContainer.CalculateSaleValueCents(
+                        storedEggValues[candidate],
+                        candidateWeight)
+                        < EggContainer.CalculateSaleValueCents(
+                            storedEggValues[leastValuableIndex],
+                            currentWeight))
                 {
                     leastValuableIndex = candidate;
                 }
@@ -588,14 +601,16 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private bool CanDeliverToIncubator()
     {
-        return smartnessLevel > 0
-            && (RoundSystem.Instance == null
-                || RoundSystem.Instance.IsCashQuotaMet
-                || NeedsPopulationRecovery())
+        return smartnessLevel >= IncubatorRoutingSmartnessLevel
             && incubator != null
             && incubator.isActiveAndEnabled
             && incubator.AvailableCapacity > 0
-            && CountStoredStandardEggs() > 0;
+            && CountStoredStandardEggs() > 0
+            && (RoundSystem.Instance == null
+                || RoundSystem.Instance.IsCashQuotaMet
+                || NeedsPopulationRecovery()
+                || (smartnessLevel >= PopulationGrowthSmartnessLevel
+                    && NeedsPopulationGrowth()));
     }
 
     private bool NeedsPopulationRecovery()
@@ -606,6 +621,16 @@ public sealed class EggCollectorRobot : MonoBehaviour
             && targetPenIndex >= 0
             && manager.GetChickenCount(targetPenIndex)
                 < CrosshatcherController.MinimumFlockSizeForNewCycle;
+    }
+
+    private bool NeedsPopulationGrowth()
+    {
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        return manager != null
+            && manager.IsInitialized
+            && targetPenIndex >= 0
+            && manager.GetChickenCount(targetPenIndex)
+                < ChickenController.MaximumChickenCount;
     }
 
     private int CountStoredStandardEggs()

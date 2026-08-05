@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
@@ -75,6 +77,8 @@ public sealed class PenHudController : MonoBehaviour
             return;
         }
 
+        HandlePenCyclingInput();
+
         rateRefreshTimer -= Time.unscaledDeltaTime;
         if (rateRefreshTimer <= 0f)
         {
@@ -135,6 +139,59 @@ public sealed class PenHudController : MonoBehaviour
     public Button GetPurchaseButton()
     {
         return buyButton != null ? buyButton.Button : null;
+    }
+
+    private void HandlePenCyclingInput()
+    {
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard == null
+            || !keyboard.tabKey.wasPressedThisFrame
+            || manager.OwnedPenCount <= 1
+            || IsTextInputFocused())
+        {
+            return;
+        }
+
+        bool cycleBackward = keyboard.leftShiftKey.isPressed
+            || keyboard.rightShiftKey.isPressed;
+        int direction = cycleBackward ? -1 : 1;
+        int penCount = manager.PenCount;
+        int currentIndex = manager.FocusedPenIndex;
+        for (int offset = 1; offset <= penCount; offset++)
+        {
+            int candidateIndex = (currentIndex + direction * offset)
+                % penCount;
+            if (candidateIndex < 0)
+            {
+                candidateIndex += penCount;
+            }
+
+            if (manager.IsPenOwned(candidateIndex))
+            {
+                manager.FocusPen(candidateIndex);
+                return;
+            }
+        }
+    }
+
+    private static bool IsTextInputFocused()
+    {
+        GameObject selected = EventSystem.current != null
+            ? EventSystem.current.currentSelectedGameObject
+            : null;
+        if (selected == null)
+        {
+            return false;
+        }
+
+        TMP_InputField tmpInput = selected.GetComponentInParent<TMP_InputField>();
+        if (tmpInput != null && tmpInput.isFocused)
+        {
+            return true;
+        }
+
+        InputField input = selected.GetComponentInParent<InputField>();
+        return input != null && input.isFocused;
     }
 
     private void TryBindManager()

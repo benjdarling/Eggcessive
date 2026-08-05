@@ -279,7 +279,7 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             ProgressionSystem.UpgradeId.RobotCapacity =>
                 "Allows the collector robot to carry more eggs each trip.",
             ProgressionSystem.UpgradeId.RobotSmartness =>
-                "Improves incubator routing, value awareness, and rarity-first egg selection.",
+                "Adds incubator routing, proactive population growth, value awareness, and rarity-first egg selection.",
             _ => string.Empty
         };
     }

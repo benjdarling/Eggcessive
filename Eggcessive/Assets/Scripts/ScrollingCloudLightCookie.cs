@@ -19,7 +19,9 @@ public sealed class ScrollingCloudLightCookie : MonoBehaviour
     [Header("Movement")]
     [Tooltip("Cookie UVs travelled per second. One UV unit is one complete cookie tile.")]
     [SerializeField] private Vector2 scrollSpeed = new Vector2(0.006f, 0.0025f);
+#if UNITY_EDITOR
     [SerializeField] private bool animateInEditMode = true;
+#endif
 
     private Light targetLight;
     private UniversalAdditionalLightData urpLightData;

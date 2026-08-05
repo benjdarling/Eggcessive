@@ -172,7 +172,9 @@ public sealed class EggContainer : MonoBehaviour
             return false;
         }
 
-        int value = Mathf.Max(1, valueCents);
+        int value = CalculateSaleValueCents(
+            valueCents,
+            weightKilograms);
         TotalDepositedCents = value > long.MaxValue - TotalDepositedCents
             ? long.MaxValue
             : TotalDepositedCents + value;
@@ -201,6 +203,24 @@ public sealed class EggContainer : MonoBehaviour
             value,
             Mathf.Max(0f, weightKilograms));
         return true;
+    }
+
+    public static int CalculateSaleValueCents(
+        int valueCents,
+        float weightKilograms)
+    {
+        float safeWeight = weightKilograms > 0f
+            ? weightKilograms
+            : ProgressionSystem.BaseEggWeightKilograms;
+        double weightMultiplier = safeWeight
+            / ProgressionSystem.BaseEggWeightKilograms;
+        return (int)Math.Min(
+            int.MaxValue,
+            Math.Max(
+                1d,
+                Math.Round(
+                    Mathf.Max(1, valueCents) * weightMultiplier,
+                    MidpointRounding.AwayFromZero)));
     }
 
     private void OnValidate()
