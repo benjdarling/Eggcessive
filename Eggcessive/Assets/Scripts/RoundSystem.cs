@@ -15,9 +15,7 @@ using UnityEngine.UI;
 public sealed class RoundSystem : MonoBehaviour
 {
     private const float RewardAccumulationWindow = 0.75f;
-#if UNITY_EDITOR
     private static Sprite hudRoundedSprite;
-#endif
     private const float ContainerRewardVisualDelay = 0.06f;
     private const float RewardFlightDuration = 0.62f;
     private const int RewardParticleCapacity = 8000;
@@ -28,7 +26,8 @@ public sealed class RoundSystem : MonoBehaviour
     private const float CashParticlePixelSize = 82f;
     private const int MaximumParticleEmissionsPerFrame = 256;
     private const int MaximumUsefulRewardParticlesPerBurst = 1200;
-    private const float MaximumCashNoteRandomRotationDegrees = 5f;
+    private const float MaximumCashBlend = 0.85f;
+    private const float MaximumCashNoteRandomRotationDegrees = 30f;
 
     public enum RoundPhase
     {
@@ -199,9 +198,9 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Range(0f, 100f)]
     private float cashRewardEmitterRadiusPixels = 18f;
     [SerializeField, Min(0f)]
-    private float flyingCashMinimumSpinDegreesPerSecond = 0f;
+    private float flyingCashMinimumSpinDegreesPerSecond = 60f;
     [SerializeField, Min(0f)]
-    private float flyingCashMaximumSpinDegreesPerSecond = 0f;
+    private float flyingCashMaximumSpinDegreesPerSecond = 120f;
     [SerializeField] private GameObject floatingRewardPrefab = null;
 
     [Header("UI Audio")]
@@ -2214,13 +2213,16 @@ public sealed class RoundSystem : MonoBehaviour
 
         Vector2 targetScreenPosition = GetCashHudTargetScreenPosition();
         int particleCount = CalculateRewardParticleCount(cents);
-        bool useCashNotes =
-            forceCashNotesForTesting && CanShowCashNotes();
+        CalculateRewardParticleMix(
+            cents,
+            particleCount,
+            out int coinParticleCount,
+            out int cashNoteParticleCount);
         SpawnRewardParticles(
             worldPosition,
             targetScreenPosition,
-            useCashNotes ? 0 : particleCount,
-            useCashNotes ? CalculateCashNoteParticleCount(particleCount) : 0);
+            coinParticleCount,
+            cashNoteParticleCount);
     }
 
     private void ShowTruckBonusText(
@@ -2487,6 +2489,24 @@ public sealed class RoundSystem : MonoBehaviour
         containerRewardVisualCoroutine = null;
 
         int rewardParticleCount = CalculateRewardParticleCount(rewardCents);
+        CalculateRewardParticleMix(
+            denominationCents,
+            rewardParticleCount,
+            out int coinParticleCount,
+            out int cashNoteParticleCount);
+        SpawnRewardParticles(
+            startWorldPosition,
+            targetScreenPosition,
+            coinParticleCount,
+            cashNoteParticleCount);
+    }
+
+    private void CalculateRewardParticleMix(
+        long denominationCents,
+        int rewardParticleCount,
+        out int coinParticleCount,
+        out int cashNoteParticleCount)
+    {
         bool canShowCashNotes = CanShowCashNotes();
         float cashBlend = 0f;
         if (forceCashNotesForTesting && canShowCashNotes)
@@ -2497,10 +2517,10 @@ public sealed class RoundSystem : MonoBehaviour
             && canShowCashNotes)
         {
             cashBlend = denominationCents >= cashRewardThresholdCents
-                ? 1f
+                ? MaximumCashBlend
                 : Mathf.Lerp(
                     0.25f,
-                    1f,
+                    MaximumCashBlend,
                     Mathf.InverseLerp(
                     cashTransitionStartCents,
                     cashRewardThresholdCents,
@@ -2515,15 +2535,10 @@ public sealed class RoundSystem : MonoBehaviour
                 1,
                 rewardParticleCount)
             : 0;
-        int cashNoteParticleCount =
+        cashNoteParticleCount =
             CalculateCashNoteParticleCount(requestedCashNoteCount);
-        int coinParticleCount =
+        coinParticleCount =
             rewardParticleCount - requestedCashNoteCount;
-        SpawnRewardParticles(
-            startWorldPosition,
-            targetScreenPosition,
-            coinParticleCount,
-            cashNoteParticleCount);
     }
 
     private int CalculateRewardParticleCount(long rewardCents)
@@ -2686,6 +2701,8 @@ public sealed class RoundSystem : MonoBehaviour
             worldCamera.transform,
             new[] { coinMesh },
             coinRewardParticleMaterial,
+            new Vector3(0f, 180f, 0f),
+            new Vector3(0f, 1f, 0f),
             flyingCoinSpinDegreesPerSecond,
             flyingCoinSpinDegreesPerSecond);
 
@@ -2705,11 +2722,21 @@ public sealed class RoundSystem : MonoBehaviour
             }
         }
 
-        if (cashMeshes.Count == 0 || flyingCashMaterial == null)
+        if (cashMeshes.Count == 0)
+        {
+            for (int index = 0; index < 2; index++)
+            {
+                Mesh cashMesh = CreateFallbackCashParticleMesh(index);
+                cashMeshes.Add(cashMesh);
+                rewardParticleMeshes.Add(cashMesh);
+            }
+        }
+
+        if (flyingCashMaterial == null)
         {
             Debug.LogWarning(
-                "Cash note particles are unavailable because no readable " +
-                "cash mesh/material is assigned.",
+                "Cash note particles are unavailable because no cash " +
+                "material is assigned.",
                 this);
             return;
         }
@@ -2727,6 +2754,8 @@ public sealed class RoundSystem : MonoBehaviour
             worldCamera.transform,
             cashMeshes.ToArray(),
             cashRewardParticleMaterial,
+            new Vector3(30f, 30f, 30f),
+            new Vector3(0.4f, 1f, 0.65f),
             flyingCashMinimumSpinDegreesPerSecond,
             flyingCashMaximumSpinDegreesPerSecond);
     }
@@ -2736,6 +2765,8 @@ public sealed class RoundSystem : MonoBehaviour
         Transform cameraTransform,
         Mesh[] meshes,
         Material material,
+        Vector3 maximumStartRotationDegrees,
+        Vector3 rotationAxisWeights,
         float minimumSpinDegreesPerSecond,
         float maximumSpinDegreesPerSecond)
     {
@@ -2752,11 +2783,15 @@ public sealed class RoundSystem : MonoBehaviour
         main.startSpeed = 0f;
         main.startSize = 1f;
         main.startRotation3D = true;
-        main.startRotationX = 0f;
+        main.startRotationX = new ParticleSystem.MinMaxCurve(
+            -maximumStartRotationDegrees.x * Mathf.Deg2Rad,
+            maximumStartRotationDegrees.x * Mathf.Deg2Rad);
         main.startRotationY = new ParticleSystem.MinMaxCurve(
-            -Mathf.PI,
-            Mathf.PI);
-        main.startRotationZ = 0f;
+            -maximumStartRotationDegrees.y * Mathf.Deg2Rad,
+            maximumStartRotationDegrees.y * Mathf.Deg2Rad);
+        main.startRotationZ = new ParticleSystem.MinMaxCurve(
+            -maximumStartRotationDegrees.z * Mathf.Deg2Rad,
+            maximumStartRotationDegrees.z * Mathf.Deg2Rad);
         main.maxParticles = RewardParticleCapacity;
 
         ParticleSystem.EmissionModule emission = particleSystem.emission;
@@ -2767,11 +2802,21 @@ public sealed class RoundSystem : MonoBehaviour
             particleSystem.rotationOverLifetime;
         rotation.enabled = true;
         rotation.separateAxes = true;
-        rotation.x = 0f;
+        rotation.x = new ParticleSystem.MinMaxCurve(
+            minimumSpinDegreesPerSecond
+                * rotationAxisWeights.x * Mathf.Deg2Rad,
+            maximumSpinDegreesPerSecond
+                * rotationAxisWeights.x * Mathf.Deg2Rad);
         rotation.y = new ParticleSystem.MinMaxCurve(
-            minimumSpinDegreesPerSecond * Mathf.Deg2Rad,
-            maximumSpinDegreesPerSecond * Mathf.Deg2Rad);
-        rotation.z = 0f;
+            minimumSpinDegreesPerSecond
+                * rotationAxisWeights.y * Mathf.Deg2Rad,
+            maximumSpinDegreesPerSecond
+                * rotationAxisWeights.y * Mathf.Deg2Rad);
+        rotation.z = new ParticleSystem.MinMaxCurve(
+            minimumSpinDegreesPerSecond
+                * rotationAxisWeights.z * Mathf.Deg2Rad,
+            maximumSpinDegreesPerSecond
+                * rotationAxisWeights.z * Mathf.Deg2Rad);
 
         ParticleSystemRenderer particleRenderer =
             particleObject.GetComponent<ParticleSystemRenderer>();
@@ -2782,6 +2827,8 @@ public sealed class RoundSystem : MonoBehaviour
         particleRenderer.sortingOrder = 1000;
         particleRenderer.enableGPUInstancing = true;
         particleRenderer.sharedMaterial = material;
+        particleRenderer.meshDistribution =
+            ParticleSystemMeshDistribution.UniformRandom;
         particleRenderer.SetMeshes(meshes, meshes.Length);
 
         particleSystem.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
@@ -3200,12 +3247,23 @@ public sealed class RoundSystem : MonoBehaviour
             return null;
         }
 
-        MeshFilter[] meshFilters =
-            sourceModel.GetComponentsInChildren<MeshFilter>(true);
+        MeshFilter[] meshFilters;
+        Matrix4x4 rootWorldToLocal;
+        try
+        {
+            meshFilters =
+                sourceModel.GetComponentsInChildren<MeshFilter>(true);
+            rootWorldToLocal = sourceModel.transform.worldToLocalMatrix;
+        }
+        catch (MissingReferenceException)
+        {
+            // Asset reimports can invalidate an editor preview's serialized
+            // model reference between the null check and component lookup.
+            return null;
+        }
+
         List<CombineInstance> combineInstances =
             new List<CombineInstance>(meshFilters.Length);
-        Matrix4x4 rootWorldToLocal =
-            sourceModel.transform.worldToLocalMatrix;
         for (int index = 0; index < meshFilters.Length; index++)
         {
             MeshFilter meshFilter = meshFilters[index];
@@ -3262,35 +3320,77 @@ public sealed class RoundSystem : MonoBehaviour
                 GetAxis(centered, depthAxis)) * inverseSize;
         }
         particleMesh.vertices = vertices;
-
-        Vector3[] normals = particleMesh.normals;
-        for (int index = 0; index < normals.Length; index++)
-        {
-            Vector3 normal = normals[index];
-            normals[index] = new Vector3(
-                GetAxis(normal, horizontalAxis),
-                GetAxis(normal, verticalAxis),
-                GetAxis(normal, depthAxis)).normalized;
-        }
-        particleMesh.normals = normals;
-
-        Vector4[] tangents = particleMesh.tangents;
-        for (int index = 0; index < tangents.Length; index++)
-        {
-            Vector4 tangent = tangents[index];
-            Vector3 direction = new Vector3(
-                GetAxis(tangent, horizontalAxis),
-                GetAxis(tangent, verticalAxis),
-                GetAxis(tangent, depthAxis)).normalized;
-            tangents[index] = new Vector4(
-                direction.x,
-                direction.y,
-                direction.z,
-                tangent.w);
-        }
-        particleMesh.tangents = tangents;
+        // The axis remap can include a reflection, so imported normals can
+        // disagree with the transformed triangle winding. Rebuild the final
+        // shading basis from the geometry the particle renderer actually uses.
+        particleMesh.RecalculateNormals();
+        particleMesh.RecalculateTangents();
         particleMesh.RecalculateBounds();
         return particleMesh;
+    }
+
+    private static Mesh CreateFallbackCashParticleMesh(int variant)
+    {
+        const int HorizontalSegments = 4;
+        const int VerticalSegments = 2;
+        const float NoteHeight = 0.46f;
+        int verticesPerRow = HorizontalSegments + 1;
+        Vector3[] vertices = new Vector3[
+            verticesPerRow * (VerticalSegments + 1)];
+        Vector2[] uvs = new Vector2[vertices.Length];
+        Color32[] colors = new Color32[vertices.Length];
+
+        for (int row = 0; row <= VerticalSegments; row++)
+        {
+            float vertical01 = row / (float)VerticalSegments;
+            for (int column = 0; column <= HorizontalSegments; column++)
+            {
+                float horizontal01 = column / (float)HorizontalSegments;
+                float x = horizontal01 - 0.5f;
+                float y = (vertical01 - 0.5f) * NoteHeight;
+                float z = variant == 0
+                    ? x * x * 0.32f - 0.04f
+                    : Mathf.Sin(horizontal01 * Mathf.PI * 2f) * 0.055f
+                        + x * (vertical01 - 0.5f) * 0.08f;
+                int vertexIndex = row * verticesPerRow + column;
+                vertices[vertexIndex] = new Vector3(x, y, z);
+                uvs[vertexIndex] = new Vector2(horizontal01, vertical01);
+                colors[vertexIndex] = new Color32(255, 255, 255, 255);
+            }
+        }
+
+        int[] triangles = new int[
+            HorizontalSegments * VerticalSegments * 6];
+        int triangleIndex = 0;
+        for (int row = 0; row < VerticalSegments; row++)
+        {
+            for (int column = 0; column < HorizontalSegments; column++)
+            {
+                int lowerLeft = row * verticesPerRow + column;
+                int lowerRight = lowerLeft + 1;
+                int upperLeft = lowerLeft + verticesPerRow;
+                int upperRight = upperLeft + 1;
+                triangles[triangleIndex++] = lowerLeft;
+                triangles[triangleIndex++] = lowerRight;
+                triangles[triangleIndex++] = upperLeft;
+                triangles[triangleIndex++] = lowerRight;
+                triangles[triangleIndex++] = upperRight;
+                triangles[triangleIndex++] = upperLeft;
+            }
+        }
+
+        Mesh mesh = new Mesh
+        {
+            name = $"Generated Cash Reward Particle Mesh {variant + 1}",
+            vertices = vertices,
+            uv = uvs,
+            colors32 = colors,
+            triangles = triangles
+        };
+        mesh.RecalculateNormals();
+        mesh.RecalculateTangents();
+        mesh.RecalculateBounds();
+        return mesh;
     }
 
     private static void GetProjectionAxes(
@@ -3897,7 +3997,6 @@ public sealed class RoundSystem : MonoBehaviour
             1f / 3f);
     }
 
-#if UNITY_EDITOR
     public static Sprite GetHudRoundedSprite()
     {
         if (hudRoundedSprite != null)
@@ -3944,7 +4043,6 @@ public sealed class RoundSystem : MonoBehaviour
         hudRoundedSprite.name = "Runtime HUD Rounded Sprite";
         return hudRoundedSprite;
     }
-#endif
 
     private long CalculateRoundCashQuotaCents(int round)
     {

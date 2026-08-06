@@ -91,10 +91,11 @@ Shader "Eggcessive/Particles/Reward Mesh"
                     GetVertexPositionInputs(input.positionOS.xyz);
                 output.positionCS = positionInputs.positionCS;
                 output.uv = TRANSFORM_TEX(input.uv, _MainTex);
-                float3 viewNormal = normalize(
-                    mul(
-                        (float3x3)UNITY_MATRIX_IT_MV,
-                        input.normalOS));
+                float3 worldNormal = TransformObjectToWorldNormal(
+                    input.normalOS);
+                float3 viewNormal = TransformWorldToViewDir(
+                    worldNormal,
+                    true);
                 output.viewNormal = viewNormal;
                 output.matCapUv = viewNormal.xy * 0.5 + 0.5;
                 output.color = input.color * _Color;
@@ -122,8 +123,10 @@ Shader "Eggcessive/Particles/Reward Mesh"
                         -1.0h);
                     half3 twoSidedViewNormal =
                         normalize(input.viewNormal) * faceSign;
-                    half2 lightingMatCapUv =
-                        twoSidedViewNormal.xy * 0.5h + 0.5h;
+                    // Expand the normal range a little so curvature remains
+                    // readable on the small, fast-moving cash particles.
+                    half2 lightingMatCapUv = saturate(
+                        twoSidedViewNormal.xy * 0.75h + 0.5h);
 
                     // The particles render on a camera-relative plane, so real
                     // world lighting would not match their apparent path. Use a
@@ -147,8 +150,18 @@ Shader "Eggcessive/Particles/Reward Mesh"
                         fallbackLighting,
                         authoredLighting,
                         _HasCustomLightingMatCap);
-                    color.rgb *= _LightingAmbientColor.rgb
-                        + matCapLighting * _LightingMatCapStrength;
+                    // Treat the lookup as contrast over the authored cash
+                    // texture, not absolute illumination. This keeps dark
+                    // MatCaps from suppressing the bill's base colour while
+                    // still allowing their highlights to read clearly.
+                    half lightingInfluence = saturate(
+                        _LightingMatCapStrength / 3.0h);
+                    half3 lighting = 0.85h
+                        + matCapLighting;
+                    color.rgb *= lerp(
+                        1.0h.xxx,
+                        lighting,
+                        lightingInfluence);
                 }
 
                 return color;

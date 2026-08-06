@@ -21857,9 +21857,11 @@ MonoBehaviour:
   coinHudTarget: {fileID: 6141976038429337275}
   flyingCoinPrefab: {fileID: 5029729844846779995, guid: ca99090701c09514d840eaa7ee5eea5b, type: 3}
   flyingCoinSpinDegreesPerSecond: 2880
-  flyingCashModels: []
-  flyingCashMaterial: {fileID: 0}
-  flyingCashLightingMatCap: {fileID: 0}
+  flyingCashModels:
+  - {fileID: 100100000, guid: 05571bede1c79304d8240bcd67403cd1, type: 3}
+  - {fileID: 100100000, guid: 569d4f1d69c74d94e99e78dba0590909, type: 3}
+  flyingCashMaterial: {fileID: 2100000, guid: 534edf33aa2bd094fb240e43244c937b, type: 2}
+  flyingCashLightingMatCap: {fileID: 2800000, guid: 8ff54edb70f2f4e4d90611387242893b, type: 3}
   flyingCashMatCapLightStrength: 3
   rewardParticleShader: {fileID: 0}
   cashTransitionStartCents: 50000
@@ -21872,8 +21874,8 @@ MonoBehaviour:
   rewardParticleEmissionJitter: 0.35
   coinRewardEmitterRadiusPixels: 12
   cashRewardEmitterRadiusPixels: 18
-  flyingCashMinimumSpinDegreesPerSecond: 0
-  flyingCashMaximumSpinDegreesPerSecond: 0
+  flyingCashMinimumSpinDegreesPerSecond: 60
+  flyingCashMaximumSpinDegreesPerSecond: 120
   floatingRewardPrefab: {fileID: 3103224535744667012, guid: d2b78e050a97a9f48932de71fd312e81, type: 3}
   buttonClickSfx: {fileID: 8300000, guid: d480ab8825cb4e5591918d7d8b61a0bc, type: 3}
   cashRegisterSfx: {fileID: 8300000, guid: 86187ad3cbb8f9a4ab032e83cdad9d35, type: 3}
