@@ -35,13 +35,13 @@ public sealed class WorldHandCursorController : MonoBehaviour
         Shader.PropertyToID("_UiClipRect");
 
     [Header("Authored Hand")]
-    [SerializeField] private Transform visualRoot;
-    [SerializeField] private Animator handAnimator;
-    [SerializeField] private Transform heldItemAttachPoint;
+    [SerializeField] private Transform visualRoot = null;
+    [SerializeField] private Animator handAnimator = null;
+    [SerializeField] private Transform heldItemAttachPoint = null;
     [Tooltip(
         "Distal index-finger bone used to keep the visible fingertip on the " +
         "true pointer hotspot.")]
-    [SerializeField] private Transform cursorHotspotBone;
+    [SerializeField] private Transform cursorHotspotBone = null;
     [Tooltip(
         "Hotspot position relative to the distal index-finger bone. Adjust " +
         "this in Play Mode if the mesh fingertip is not exactly on the native cursor.")]

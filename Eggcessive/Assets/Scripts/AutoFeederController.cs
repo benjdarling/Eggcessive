@@ -5,16 +5,16 @@ using UnityEngine.AI;
 [DisallowMultipleComponent]
 public sealed class AutoFeederController : MonoBehaviour
 {
-    public const int MaximumLevel = 5;
+    public const int MaximumLevel = 3;
     public const int MaximumAttractionRangeLevel = 5;
     private const float AttractionRadiusBonusPerLevel = 0.2f;
     private static readonly float[] DispenseIntervals =
-        { 12f, 10f, 8f, 6f, 4f };
+        { 12f, 10f, 8f };
 
     [Header("Authored Parts")]
-    [SerializeField] private GameObject foodPrefab;
-    [SerializeField] private Transform[] foodSockets;
-    [SerializeField] private Transform dialHand;
+    [SerializeField] private GameObject foodPrefab = null;
+    [SerializeField] private Transform[] foodSockets = null;
+    [SerializeField] private Transform dialHand = null;
 
     [Header("Settings")]
     [SerializeField, Range(1, MaximumLevel)] private int speedLevel = 1;
@@ -125,6 +125,11 @@ public sealed class AutoFeederController : MonoBehaviour
         }
 
         initialized = true;
+        speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
+        attractionRangeLevel = Mathf.Clamp(
+            attractionRangeLevel,
+            0,
+            MaximumAttractionRangeLevel);
         EnsureNavigationObstacle();
         if (dialHand != null)
         {

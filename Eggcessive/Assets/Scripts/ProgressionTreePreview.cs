@@ -238,12 +238,26 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         {
             ProgressionSystem.UpgradeId.FoodBag =>
                 "Adds one bag of your currently unlocked feed to your supplies.",
+            ProgressionSystem.UpgradeId.IncubatorTurbo
+                or ProgressionSystem.UpgradeId.CrosshatcherTurbo
+                or ProgressionSystem.UpgradeId.RobotTurbo =>
+                "Adds one instant-use machine turbo to your HUD inventory. Pressing it boosts every installed machine of that type.",
+            ProgressionSystem.UpgradeId.IncubatorTurboPower
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboPower
+                or ProgressionSystem.UpgradeId.RobotTurboPower =>
+                "Raises the temporary productivity percentage supplied by this turbo.",
+            ProgressionSystem.UpgradeId.IncubatorTurboDuration
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration
+                or ProgressionSystem.UpgradeId.RobotTurboDuration =>
+                "Extends how many real-time seconds this turbo remains active.",
             ProgressionSystem.UpgradeId.FeedSpeed =>
                 "Unlocks stronger feed so fed chickens lay eggs more frequently.",
             ProgressionSystem.UpgradeId.PrimeFeed =>
                 "Multiplies premium egg chances while chickens are benefiting from feed.",
             ProgressionSystem.UpgradeId.RareEggChance =>
                 "Increases the chance of rare, epic, legendary, and cosmic eggs being laid.",
+            ProgressionSystem.UpgradeId.ChickenPerks =>
+                "Multiplies premium egg odds by chicken breed, with stronger benefits for advanced breeds.",
             ProgressionSystem.UpgradeId.EggWeight =>
                 "Raises the chance and upper range for physically heavier, larger eggs.",
             ProgressionSystem.UpgradeId.EggValue =>
@@ -282,11 +296,6 @@ public sealed class ProgressionTreePreview : MonoBehaviour
                 "Adds incubator routing, proactive population growth, value awareness, and rarity-first egg selection.",
             _ => string.Empty
         };
-    }
-
-    private static string FormatMoney(int cents)
-    {
-        return FormatMoney((long)cents);
     }
 
     private static string FormatMoney(long cents)

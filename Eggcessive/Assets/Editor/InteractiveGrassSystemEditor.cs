@@ -13,9 +13,9 @@ public sealed class InteractiveGrassSystemEditor : Editor
     private const string DirtTexturePath = "Assets/Env/textures/t_ground_dirt_placeholder.png";
     private const string LayerMaskPath = "Assets/Env/textures/t_ground_layer_mask.png";
     private const string OuterLayerMaskPath = "Assets/Env/textures/t_ground_layer_mask_outer.png";
-    private const string MaskGeneratorVersion = "EggcessiveGroundMask:v16";
-    // v8 regenerates distribution and coverage for the adjusted gameplay pen.
-    private const string OuterMaskGeneratorVersion = "EggcessiveOuterGroundMask:v8";
+    private const string MaskGeneratorVersion = "EggcessiveGroundMask:v17";
+    // v9 slightly increases dirt coverage while retaining a mostly grassy pen.
+    private const string OuterMaskGeneratorVersion = "EggcessiveOuterGroundMask:v9";
     private const double SetupPollingDuration = 15.0;
 
     private static double setupPollingDeadline;

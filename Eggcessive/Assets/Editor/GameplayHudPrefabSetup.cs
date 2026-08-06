@@ -22,7 +22,8 @@ public static class GameplayHudPrefabSetup
         "EGGS / MIN",
         "CASH",
         "CHICKENS",
-        "TRUCKS"
+        "TRUCKS",
+        "WEIGHT"
     };
 
     [MenuItem("Tools/Eggcessive/Rebuild Editable Gameplay HUD Prefabs")]
@@ -59,6 +60,9 @@ public static class GameplayHudPrefabSetup
             root.transform,
             existingText != null ? existingText.font : null,
             controller);
+        ConfigurePenEquipmentHud(
+            root,
+            existingText != null ? existingText.font : null);
     }
 
     public static void ConfigureRoundHud(GameObject root)
@@ -91,31 +95,22 @@ public static class GameplayHudPrefabSetup
         statsRect.anchorMin = Vector2.one;
         statsRect.anchorMax = Vector2.one;
         statsRect.pivot = Vector2.one;
-        statsRect.anchoredPosition = new Vector2(-24f, -62f);
-        statsRect.sizeDelta = new Vector2(260f, 170f);
+        statsRect.anchoredPosition = new Vector2(-24f, -24f);
+        statsRect.sizeDelta = new Vector2(260f, 198f);
 
         Image outer = stats.GetComponent<Image>();
         outer.sprite = GetUiSprite();
         outer.type = Image.Type.Sliced;
-        outer.color = new Color(0.28f, 0.16f, 0.085f, 0.97f);
+        outer.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
         outer.raycastTarget = false;
         ConfigureOutline(
             stats.gameObject,
             new Color(0.12f, 0.07f, 0.035f, 1f),
-            new Vector2(3f, -3f));
+            new Vector2(2f, -2f));
         ConfigureShadow(
             stats.gameObject,
-            new Color(0f, 0f, 0f, 0.62f),
-            new Vector2(4f, -5f));
-
-        RectTransform inner = CreateUiObject("Stats Inner Panel", stats);
-        Stretch(inner, 6f);
-        Image innerImage = inner.gameObject.AddComponent<Image>();
-        innerImage.sprite = GetUiSprite();
-        innerImage.type = Image.Type.Sliced;
-        innerImage.color = new Color(0.055f, 0.06f, 0.048f, 0.98f);
-        innerImage.raycastTarget = false;
-        inner.SetAsFirstSibling();
+            new Color(0f, 0f, 0f, 0.5f),
+            new Vector2(3f, -4f));
 
         if (legacyLabels != null)
         {
@@ -195,8 +190,11 @@ public static class GameplayHudPrefabSetup
                 "The HUD prefab has no authored food icon button.");
         }
 
-        DestroyNamedDescendant(panel, "Hand Tool Button");
-        DestroyNamedDescendant(panel, "Collection Tool Button");
+        DestroyNamedDescendant(root.transform, "Hand Tool Button");
+        DestroyNamedDescendant(root.transform, "Collection Tool Button");
+        DestroyNamedDescendant(root.transform, "Incubator Turbo Button");
+        DestroyNamedDescendant(root.transform, "Crosshatcher Turbo Button");
+        DestroyNamedDescendant(root.transform, "Robot Turbo Button");
 
         RectTransform panelRect = panel as RectTransform;
         panelRect.anchorMin = new Vector2(0.85f, panelRect.anchorMin.y);
@@ -206,10 +204,11 @@ public static class GameplayHudPrefabSetup
 
         Transform oldFoodPanel =
             FindDescendant(root.transform, "Food Shop");
-        foodButton.transform.SetParent(panel, false);
-        SetTopRightRect(
+        Transform toolPaletteParent = root.transform;
+        foodButton.transform.SetParent(toolPaletteParent, false);
+        SetBottomLeftRect(
             foodButton.GetComponent<RectTransform>(),
-            new Vector2(-24f, -396f),
+            new Vector2(172f, 24f),
             new Vector2(64f, 64f));
         SetLayerRecursively(foodButton.gameObject, 5);
         Image foodImage = foodButton.GetComponent<Image>();
@@ -241,11 +240,11 @@ public static class GameplayHudPrefabSetup
         Texture2D atlas =
             AssetDatabase.LoadAssetAtPath<Texture2D>(IconAtlasPath);
         Button handButton = CreateToolButton(
-            panel,
+            toolPaletteParent,
             font,
             atlas,
             "Hand Tool Button",
-            new Vector2(-24f, -248f),
+            new Vector2(24f, 24f),
             "HAND",
             "1",
             5,
@@ -254,11 +253,11 @@ public static class GameplayHudPrefabSetup
             out RawImage handIcon,
             out _);
         Button collectionButton = CreateToolButton(
-            panel,
+            toolPaletteParent,
             font,
             atlas,
             "Collection Tool Button",
-            new Vector2(-24f, -322f),
+            new Vector2(98f, 24f),
             "BASKET",
             "2",
             6,
@@ -271,6 +270,31 @@ public static class GameplayHudPrefabSetup
             atlas,
             7);
         CreateShortcutBadge(foodButton.transform, font, "3");
+
+        Button[] turboButtons = new Button[3];
+        Image[] turboImages = new Image[3];
+        TMP_Text[] turboCounts = new TMP_Text[3];
+        TMP_Text[] turboTimers = new TMP_Text[3];
+        Color[] turboColors =
+        {
+            new Color(0.72f, 0.27f, 0.06f, 1f),
+            new Color(0.12f, 0.5f, 0.22f, 1f),
+            new Color(0.42f, 0.2f, 0.64f, 1f)
+        };
+        for (int index = 0; index < turboButtons.Length; index++)
+        {
+            TurboConsumableSystem.TurboType type =
+                (TurboConsumableSystem.TurboType)index;
+            turboButtons[index] = CreateTurboButton(
+                toolPaletteParent,
+                font,
+                type,
+                new Vector2(264f + index * 74f, 24f),
+                turboColors[index],
+                out turboImages[index],
+                out turboCounts[index],
+                out turboTimers[index]);
+        }
 
         if (oldFoodPanel != null)
         {
@@ -293,6 +317,7 @@ public static class GameplayHudPrefabSetup
         }
 
         ConfigurePenNavigation(root.transform, font, penHud);
+        ConfigurePenEquipmentHud(root, font);
 
         serializedController.FindProperty("handToolButton")
             .objectReferenceValue = handButton;
@@ -312,6 +337,18 @@ public static class GameplayHudPrefabSetup
             .objectReferenceValue = collectionIcon;
         serializedController.FindProperty("foodToolIcon")
             .objectReferenceValue = foodIcon;
+        AssignObjectArray(
+            serializedController.FindProperty("turboButtons"),
+            turboButtons);
+        AssignObjectArray(
+            serializedController.FindProperty("turboButtonImages"),
+            turboImages);
+        AssignObjectArray(
+            serializedController.FindProperty("turboCountTexts"),
+            turboCounts);
+        AssignObjectArray(
+            serializedController.FindProperty("turboTimerTexts"),
+            turboTimers);
         serializedController.ApplyModifiedPropertiesWithoutUndo();
         EditorUtility.SetDirty(controller);
         EditorUtility.SetDirty(penHud);
@@ -465,6 +502,35 @@ public static class GameplayHudPrefabSetup
         earningsCanvas.interactable = false;
         earningsCanvas.blocksRaycasts = false;
 
+        RectTransform purchaseLock = CreateUiObject(
+            "Additional Pen Lock Icon",
+            templateRect);
+        SetCenteredRect(
+            purchaseLock,
+            new Vector2(0f, 7f),
+            new Vector2(34f, 40f));
+        CreateLockPiece(
+            purchaseLock,
+            "Lock Body",
+            new Vector2(0f, -5f),
+            new Vector2(28f, 22f));
+        CreateLockPiece(
+            purchaseLock,
+            "Left Shackle",
+            new Vector2(-10f, 10f),
+            new Vector2(5f, 15f));
+        CreateLockPiece(
+            purchaseLock,
+            "Right Shackle",
+            new Vector2(10f, 10f),
+            new Vector2(5f, 15f));
+        CreateLockPiece(
+            purchaseLock,
+            "Top Shackle",
+            new Vector2(0f, 17f),
+            new Vector2(25f, 5f));
+        purchaseLock.gameObject.SetActive(false);
+
         PenButtonView view = templateRect.gameObject.AddComponent<PenButtonView>();
         SerializedObject serializedView = new SerializedObject(view);
         serializedView.FindProperty("button").objectReferenceValue = button;
@@ -475,6 +541,8 @@ public static class GameplayHudPrefabSetup
         serializedView.FindProperty("progressFill").objectReferenceValue = fill;
         serializedView.FindProperty("earningsText").objectReferenceValue = earningsText;
         serializedView.FindProperty("earningsCanvasGroup").objectReferenceValue = earningsCanvas;
+        serializedView.FindProperty("purchaseLockRoot").objectReferenceValue =
+            purchaseLock.gameObject;
         serializedView.ApplyModifiedPropertiesWithoutUndo();
         PenButtonView[] authoredButtons =
             new PenButtonView[AuthoredPenButtonCount];
@@ -506,6 +574,306 @@ public static class GameplayHudPrefabSetup
         SetLayerRecursively(panel.gameObject, 5);
     }
 
+    private static void ConfigurePenEquipmentHud(
+        GameObject root,
+        TMP_FontAsset font)
+    {
+        DestroyNamedDescendant(root.transform, "Local Pen Equipment");
+        DestroyNamedDescendant(
+            root.transform,
+            "Pen Equipment Upgrade Dialog");
+
+        PenEquipmentHudController controller =
+            root.GetComponent<PenEquipmentHudController>();
+        if (controller == null)
+        {
+            controller = root.AddComponent<PenEquipmentHudController>();
+        }
+
+        RectTransform panel = CreateUiObject(
+            "Local Pen Equipment",
+            root.transform);
+        SetTopLeftRect(
+            panel,
+            new Vector2(24f, -24f),
+            new Vector2(260f, 310f));
+        Image panelImage = panel.gameObject.AddComponent<Image>();
+        panelImage.sprite = GetUiSprite();
+        panelImage.type = Image.Type.Sliced;
+        panelImage.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+        ConfigureOutline(
+            panel.gameObject,
+            new Color(0.12f, 0.07f, 0.035f, 1f),
+            new Vector2(2f, -2f));
+        ConfigureShadow(
+            panel.gameObject,
+            new Color(0f, 0f, 0f, 0.5f),
+            new Vector2(3f, -4f));
+
+        TMP_Text panelTitle = CreateText(
+            "Panel Title",
+            panel,
+            font,
+            "PEN 1 TECH",
+            15f,
+            TextAlignmentOptions.Center);
+        panelTitle.fontStyle = FontStyles.Bold;
+        SetTopLeftRect(
+            panelTitle.rectTransform,
+            new Vector2(8f, -7f),
+            new Vector2(244f, 25f));
+
+        PenExpansionManager.EquipmentType[] types =
+        {
+            PenExpansionManager.EquipmentType.Incubator,
+            PenExpansionManager.EquipmentType.Crosshatcher,
+            PenExpansionManager.EquipmentType.Robot,
+            PenExpansionManager.EquipmentType.AutoFeeder
+        };
+        string[] titles =
+        {
+            "INCUBATOR",
+            "CROSSHATCHER",
+            "ROBOT",
+            "AUTO-FEEDER"
+        };
+
+        Button[] equipmentButtons = new Button[types.Length];
+        Image[] equipmentBackgrounds = new Image[types.Length];
+        TMP_Text[] equipmentTitles = new TMP_Text[types.Length];
+        TMP_Text[] equipmentDetails = new TMP_Text[types.Length];
+        TMP_Text[] equipmentActions = new TMP_Text[types.Length];
+        GameObject[] equipmentProgressRoots = new GameObject[types.Length];
+        Image[] equipmentProgressFills = new Image[types.Length];
+        TMP_Text[] equipmentProgressTexts = new TMP_Text[types.Length];
+
+        for (int index = 0; index < types.Length; index++)
+        {
+            RectTransform card = CreateUiObject(
+                $"Local {titles[index]} Button",
+                panel);
+            SetTopLeftRect(
+                card,
+                new Vector2(8f, -38f - index * 66f),
+                new Vector2(244f, 59f));
+            Image background = card.gameObject.AddComponent<Image>();
+            background.sprite = GetUiSprite();
+            background.type = Image.Type.Sliced;
+            background.color = new Color(0.16f, 0.24f, 0.14f, 1f);
+            Button button = card.gameObject.AddComponent<Button>();
+            button.targetGraphic = background;
+            button.navigation = new Navigation { mode = Navigation.Mode.None };
+
+            TMP_Text title = CreateText(
+                "Title", card, font, titles[index], 14f,
+                TextAlignmentOptions.TopLeft);
+            title.fontStyle = FontStyles.Bold;
+            SetTopLeftRect(
+                title.rectTransform,
+                new Vector2(8f, -5f),
+                new Vector2(130f, 22f));
+            TMP_Text details = CreateText(
+                "Details", card, font, "NOT OWNED", 10f,
+                TextAlignmentOptions.BottomLeft);
+            details.color = new Color(0.72f, 0.78f, 0.68f);
+            SetTopLeftRect(
+                details.rectTransform,
+                new Vector2(8f, -28f),
+                new Vector2(135f, 23f));
+            TMP_Text action = CreateText(
+                "Action", card, font, "SAVING", 11f,
+                TextAlignmentOptions.Center);
+            action.fontStyle = FontStyles.Bold;
+            action.color = new Color(1f, 0.84f, 0.25f);
+            SetTopLeftRect(
+                action.rectTransform,
+                new Vector2(142f, -8f),
+                new Vector2(94f, 38f));
+
+            RectTransform progress = CreateUiObject("Cash Progress", card);
+            SetTopLeftRect(
+                progress,
+                new Vector2(142f, -42f),
+                new Vector2(94f, 10f));
+            Image progressBack = progress.gameObject.AddComponent<Image>();
+            progressBack.color = new Color(0.08f, 0.08f, 0.06f, 1f);
+            progressBack.raycastTarget = false;
+            RectTransform fillRect = CreateUiObject("Fill", progress);
+            Stretch(fillRect, 0f);
+            Image fill = fillRect.gameObject.AddComponent<Image>();
+            fill.color = new Color(1f, 0.68f, 0.08f, 1f);
+            fill.raycastTarget = false;
+            TMP_Text progressText = CreateText(
+                "Cash Text", card, font, "$0.00 / $0.00", 8f,
+                TextAlignmentOptions.Center);
+            progressText.fontStyle = FontStyles.Bold;
+            SetTopLeftRect(
+                progressText.rectTransform,
+                new Vector2(137f, -32f),
+                new Vector2(104f, 12f));
+
+            equipmentButtons[index] = button;
+            equipmentBackgrounds[index] = background;
+            equipmentTitles[index] = title;
+            equipmentDetails[index] = details;
+            equipmentActions[index] = action;
+            equipmentProgressRoots[index] = progress.gameObject;
+            equipmentProgressFills[index] = fill;
+            equipmentProgressTexts[index] = progressText;
+        }
+
+        RectTransform overlayRect = CreateUiObject(
+            "Pen Equipment Upgrade Dialog",
+            root.transform);
+        Stretch(overlayRect, 0f);
+        Image overlayImage = overlayRect.gameObject.AddComponent<Image>();
+        overlayImage.color = new Color(0f, 0f, 0f, 0.68f);
+        RectTransform dialogCard = CreateUiObject("Upgrade Card", overlayRect);
+        SetCenteredRect(dialogCard, Vector2.zero, new Vector2(520f, 330f));
+        Image dialogCardImage = dialogCard.gameObject.AddComponent<Image>();
+        dialogCardImage.sprite = GetUiSprite();
+        dialogCardImage.type = Image.Type.Sliced;
+        dialogCardImage.color = new Color(0.055f, 0.06f, 0.045f, 1f);
+        ConfigureOutline(
+            dialogCard.gameObject,
+            new Color(0.35f, 0.22f, 0.06f, 1f),
+            new Vector2(4f, -4f));
+
+        TMP_Text dialogTitle = CreateText(
+            "Dialog Title", dialogCard, font, "PEN 1 UPGRADES", 24f,
+            TextAlignmentOptions.Center);
+        dialogTitle.fontStyle = FontStyles.Bold;
+        SetTopLeftRect(
+            dialogTitle.rectTransform,
+            new Vector2(50f, -18f),
+            new Vector2(420f, 42f));
+
+        RectTransform closeRect = CreateUiObject(
+            "Close Local Upgrade Dialog",
+            dialogCard);
+        SetTopLeftRect(
+            closeRect,
+            new Vector2(466f, -16f),
+            new Vector2(38f, 38f));
+        Image closeImage = closeRect.gameObject.AddComponent<Image>();
+        closeImage.sprite = GetUiSprite();
+        closeImage.type = Image.Type.Sliced;
+        closeImage.color = new Color(0.55f, 0.16f, 0.08f, 1f);
+        Button closeButton = closeRect.gameObject.AddComponent<Button>();
+        closeButton.targetGraphic = closeImage;
+        TMP_Text closeLabel = CreateText(
+            "Label", closeRect, font, "X", 22f,
+            TextAlignmentOptions.Center);
+        closeLabel.fontStyle = FontStyles.Bold;
+        Stretch(closeLabel.rectTransform, 0f);
+
+        RectTransform rows = CreateUiObject("Upgrade Rows", dialogCard);
+        SetTopLeftRect(
+            rows,
+            new Vector2(28f, -78f),
+            new Vector2(464f, 224f));
+        Button[] upgradeButtons = new Button[4];
+        TMP_Text[] upgradeLabels = new TMP_Text[4];
+        Image[] upgradeFills = new Image[4];
+        for (int index = 0; index < upgradeButtons.Length; index++)
+        {
+            RectTransform row = CreateUiObject(
+                $"Authored Upgrade Slot {index + 1}",
+                rows);
+            SetTopLeftRect(
+                row,
+                new Vector2(0f, -index * 72f),
+                new Vector2(464f, 64f));
+            Image rowImage = row.gameObject.AddComponent<Image>();
+            rowImage.sprite = GetUiSprite();
+            rowImage.type = Image.Type.Sliced;
+            rowImage.color = new Color(0.16f, 0.24f, 0.14f, 1f);
+            Button rowButton = row.gameObject.AddComponent<Button>();
+            rowButton.targetGraphic = rowImage;
+            TMP_Text rowLabel = CreateText(
+                "Label", row, font, "UPGRADE", 15f,
+                TextAlignmentOptions.Center);
+            rowLabel.fontStyle = FontStyles.Bold;
+            Stretch(rowLabel.rectTransform, 10f);
+            RectTransform rowProgress = CreateUiObject("Cash Progress", row);
+            rowProgress.anchorMin = new Vector2(0f, 0f);
+            rowProgress.anchorMax = new Vector2(1f, 0f);
+            rowProgress.pivot = new Vector2(0.5f, 0f);
+            rowProgress.anchoredPosition = new Vector2(0f, 3f);
+            rowProgress.sizeDelta = new Vector2(-12f, 6f);
+            Image rowProgressBack =
+                rowProgress.gameObject.AddComponent<Image>();
+            rowProgressBack.color = new Color(0.06f, 0.06f, 0.05f, 1f);
+            rowProgressBack.raycastTarget = false;
+            RectTransform rowFillRect = CreateUiObject("Fill", rowProgress);
+            Stretch(rowFillRect, 0f);
+            Image rowFill = rowFillRect.gameObject.AddComponent<Image>();
+            rowFill.color = new Color(1f, 0.68f, 0.08f, 1f);
+            rowFill.raycastTarget = false;
+            upgradeButtons[index] = rowButton;
+            upgradeLabels[index] = rowLabel;
+            upgradeFills[index] = rowFill;
+        }
+        overlayRect.gameObject.SetActive(false);
+
+        SerializedObject serializedController = new SerializedObject(controller);
+        serializedController.FindProperty("panel").objectReferenceValue =
+            panel.gameObject;
+        serializedController.FindProperty("panelTitle").objectReferenceValue =
+            panelTitle;
+        serializedController.FindProperty("dialogOverlay").objectReferenceValue =
+            overlayRect.gameObject;
+        serializedController.FindProperty("dialogTitle").objectReferenceValue =
+            dialogTitle;
+        serializedController.FindProperty("dialogCloseButton")
+            .objectReferenceValue = closeButton;
+
+        SerializedProperty equipmentProperty =
+            serializedController.FindProperty("equipmentViews");
+        equipmentProperty.arraySize = types.Length;
+        for (int index = 0; index < types.Length; index++)
+        {
+            SerializedProperty view =
+                equipmentProperty.GetArrayElementAtIndex(index);
+            view.FindPropertyRelative("type").enumValueIndex = (int)types[index];
+            view.FindPropertyRelative("button").objectReferenceValue =
+                equipmentButtons[index];
+            view.FindPropertyRelative("background").objectReferenceValue =
+                equipmentBackgrounds[index];
+            view.FindPropertyRelative("title").objectReferenceValue =
+                equipmentTitles[index];
+            view.FindPropertyRelative("details").objectReferenceValue =
+                equipmentDetails[index];
+            view.FindPropertyRelative("action").objectReferenceValue =
+                equipmentActions[index];
+            view.FindPropertyRelative("progressRoot").objectReferenceValue =
+                equipmentProgressRoots[index];
+            view.FindPropertyRelative("progressFill").objectReferenceValue =
+                equipmentProgressFills[index];
+            view.FindPropertyRelative("progressText").objectReferenceValue =
+                equipmentProgressTexts[index];
+        }
+
+        SerializedProperty upgradesProperty =
+            serializedController.FindProperty("upgradeViews");
+        upgradesProperty.arraySize = upgradeButtons.Length;
+        for (int index = 0; index < upgradeButtons.Length; index++)
+        {
+            SerializedProperty view =
+                upgradesProperty.GetArrayElementAtIndex(index);
+            view.FindPropertyRelative("button").objectReferenceValue =
+                upgradeButtons[index];
+            view.FindPropertyRelative("label").objectReferenceValue =
+                upgradeLabels[index];
+            view.FindPropertyRelative("progressFill").objectReferenceValue =
+                upgradeFills[index];
+        }
+        serializedController.ApplyModifiedPropertiesWithoutUndo();
+        SetLayerRecursively(panel.gameObject, 5);
+        SetLayerRecursively(overlayRect.gameObject, 5);
+        EditorUtility.SetDirty(controller);
+    }
+
     private static TMP_Text CreateStatRow(
         Transform parent,
         TMP_FontAsset font,
@@ -516,7 +884,7 @@ public static class GameplayHudPrefabSetup
         RectTransform row = CreateUiObject($"HUD Stat Row {index}", parent);
         SetCenteredRect(
             row,
-            new Vector2(0f, 56f - index * 28f),
+            new Vector2(0f, 70f - index * 28f),
             new Vector2(228f, 26f));
         HorizontalLayoutGroup layout =
             row.gameObject.AddComponent<HorizontalLayoutGroup>();
@@ -574,6 +942,19 @@ public static class GameplayHudPrefabSetup
         return valueText;
     }
 
+    private static void CreateLockPiece(
+        Transform parent,
+        string objectName,
+        Vector2 position,
+        Vector2 size)
+    {
+        RectTransform rect = CreateUiObject(objectName, parent);
+        SetCenteredRect(rect, position, size);
+        Image image = rect.gameObject.AddComponent<Image>();
+        image.color = new Color(1f, 0.72f, 0.14f, 1f);
+        image.raycastTarget = false;
+    }
+
     private static Button CreateToolButton(
         Transform parent,
         TMP_FontAsset font,
@@ -589,7 +970,7 @@ public static class GameplayHudPrefabSetup
         out TMP_Text labelText)
     {
         RectTransform rect = CreateUiObject(objectName, parent);
-        SetTopRightRect(rect, position, new Vector2(64f, 64f));
+        SetBottomLeftRect(rect, position, new Vector2(64f, 64f));
         image = rect.gameObject.AddComponent<Image>();
         image.color = color;
         Button button = rect.gameObject.AddComponent<Button>();
@@ -611,6 +992,99 @@ public static class GameplayHudPrefabSetup
         CreateShortcutBadge(rect, font, shortcut);
         SetLayerRecursively(rect.gameObject, 5);
         return button;
+    }
+
+    private static Button CreateTurboButton(
+        Transform parent,
+        TMP_FontAsset font,
+        TurboConsumableSystem.TurboType type,
+        Vector2 position,
+        Color color,
+        out Image frameImage,
+        out TMP_Text countText,
+        out TMP_Text timerText)
+    {
+        RectTransform rect = CreateUiObject(
+            $"{TurboConsumableSystem.GetDisplayName(type)} Turbo Button",
+            parent);
+        SetBottomLeftRect(rect, position, new Vector2(64f, 64f));
+        frameImage = rect.gameObject.AddComponent<Image>();
+        frameImage.sprite = GetUiSprite();
+        frameImage.type = Image.Type.Sliced;
+        frameImage.color = color;
+        Button button = rect.gameObject.AddComponent<Button>();
+        button.targetGraphic = frameImage;
+        button.navigation = new Navigation { mode = Navigation.Mode.None };
+        StyleToolButton(button, frameImage, color);
+
+        RectTransform iconRect = CreateUiObject("Turbo Icon", rect);
+        SetCenteredRect(iconRect, new Vector2(0f, 2f), new Vector2(55f, 55f));
+        RawImage icon = iconRect.gameObject.AddComponent<RawImage>();
+        icon.texture = Resources.Load<Texture2D>(
+            TurboConsumableSystem.GetResourcePath(type));
+        icon.color = Color.white;
+        icon.raycastTarget = false;
+
+        countText = CreateHudCounterText(
+            "Owned Count",
+            rect,
+            font,
+            new Vector2(4f, 3f),
+            new Vector2(34f, 18f),
+            12f,
+            TextAlignmentOptions.BottomLeft);
+        countText.text = "x0";
+        timerText = CreateHudCounterText(
+            "Active Timer",
+            rect,
+            font,
+            new Vector2(3f, 44f),
+            new Vector2(58f, 17f),
+            11f,
+            TextAlignmentOptions.TopRight);
+        SetLayerRecursively(rect.gameObject, 5);
+        return button;
+    }
+
+    private static TMP_Text CreateHudCounterText(
+        string objectName,
+        Transform parent,
+        TMP_FontAsset font,
+        Vector2 position,
+        Vector2 size,
+        float fontSize,
+        TextAlignmentOptions alignment)
+    {
+        TMP_Text text = CreateText(
+            objectName,
+            parent,
+            font,
+            string.Empty,
+            fontSize,
+            alignment);
+        RectTransform rect = text.rectTransform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.zero;
+        rect.pivot = Vector2.zero;
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+        text.fontStyle = FontStyles.Bold;
+        text.outlineWidth = 0.25f;
+        text.outlineColor = new Color32(22, 12, 4, 255);
+        return text;
+    }
+
+    private static void AssignObjectArray<T>(
+        SerializedProperty property,
+        T[] values)
+        where T : Object
+    {
+        property.arraySize = values.Length;
+        for (int index = 0; index < values.Length; index++)
+        {
+            property.GetArrayElementAtIndex(index).objectReferenceValue =
+                values[index];
+        }
     }
 
     private static RawImage CreateToolIcon(
@@ -778,6 +1252,30 @@ public static class GameplayHudPrefabSetup
         rect.anchorMin = Vector2.one;
         rect.anchorMax = Vector2.one;
         rect.pivot = Vector2.one;
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+    }
+
+    private static void SetBottomLeftRect(
+        RectTransform rect,
+        Vector2 position,
+        Vector2 size)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.zero;
+        rect.pivot = Vector2.zero;
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+    }
+
+    private static void SetTopLeftRect(
+        RectTransform rect,
+        Vector2 position,
+        Vector2 size)
+    {
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
         rect.anchoredPosition = position;
         rect.sizeDelta = size;
     }

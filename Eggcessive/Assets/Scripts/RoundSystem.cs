@@ -27,6 +27,8 @@ public sealed class RoundSystem : MonoBehaviour
     private const float CoinParticlePixelSize = 40f;
     private const float CashParticlePixelSize = 82f;
     private const int MaximumParticleEmissionsPerFrame = 256;
+    private const int MaximumUsefulRewardParticlesPerBurst = 1200;
+    private const float MaximumCashNoteRandomRotationDegrees = 5f;
 
     public enum RoundPhase
     {
@@ -88,6 +90,8 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Range(1f, 2f)] private float midCashQuotaGrowth = 1.24f;
     [SerializeField, Min(2)] private int midCashQuotaEndRound = 25;
     [SerializeField, Range(1f, 2f)] private float lateCashQuotaGrowth = 1.18f;
+    [SerializeField, Min(3)] private int endgameCashQuotaStartRound = 30;
+    [SerializeField, Range(1f, 2f)] private float endgameCashQuotaGrowth = 1.27f;
     [SerializeField, Min(100)]
     private long maximumRoundCashQuotaCents = 9_000_000_000_000_000_000L;
 
@@ -171,16 +175,16 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Min(1)] private int cashTransitionStartCents = 50000;
     [SerializeField, Min(1)] private int cashRewardThresholdCents = 300000;
     [SerializeField, Range(250, 10000)]
-    private int maximumRewardParticlesPerBurst = 6000;
+    private int maximumRewardParticlesPerBurst = 1200;
     [Tooltip("Cash notes are visually much larger than coins, so emit only this fraction.")]
     [SerializeField, Range(0.05f, 1f)]
-    private float cashNoteParticleDensity = 0.18f;
+    private float cashNoteParticleDensity = 0.1f;
     [SerializeField, Range(25, 1000)]
-    private int maximumCashNotesPerBurst = 400;
+    private int maximumCashNotesPerBurst = 120;
     [SerializeField, Range(0.5f, 5f)]
     private float rewardParticleTrailDuration = 1f;
     [SerializeField, Range(100f, 5000f)]
-    private float maximumRewardParticlesPerSecond = 4000f;
+    private float maximumRewardParticlesPerSecond = 1200f;
     [Tooltip(
         "Random timing variation applied between consecutive reward particles. "
         + "This prevents simultaneous trails from locking into visible clumps.")]
@@ -195,9 +199,9 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Range(0f, 100f)]
     private float cashRewardEmitterRadiusPixels = 18f;
     [SerializeField, Min(0f)]
-    private float flyingCashMinimumSpinDegreesPerSecond = 2160f;
+    private float flyingCashMinimumSpinDegreesPerSecond = 0f;
     [SerializeField, Min(0f)]
-    private float flyingCashMaximumSpinDegreesPerSecond = 5760f;
+    private float flyingCashMaximumSpinDegreesPerSecond = 0f;
     [SerializeField] private GameObject floatingRewardPrefab = null;
 
     [Header("UI Audio")]
@@ -264,6 +268,8 @@ public sealed class RoundSystem : MonoBehaviour
     private Coroutine resultsAnimation;
     private float roundTimeRemaining;
     private float roundElapsed;
+    private double roundStartedRealtime;
+    private double roundEndsRealtime;
     private float liveStatsRefreshTime;
     private int roundNumber;
     private int roundEggsCollected;
@@ -340,6 +346,9 @@ public sealed class RoundSystem : MonoBehaviour
     private readonly int[] roundEggContributions = new int[8];
     private TMP_Text resultsSubtitleText;
     private TMP_Text resultsQuotaLabelText;
+    [SerializeField] private GameObject additionalPenMilestoneScreen = null;
+    [SerializeField] private Button additionalPenMilestoneButton = null;
+    private bool milestoneReturnsToShop;
 
     public static RoundSystem Instance { get; private set; }
     public RoundPhase Phase { get; private set; } = RoundPhase.Intermission;
@@ -418,6 +427,8 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void Start()
     {
+        Application.runInBackground = true;
+
         if (!configured)
         {
             GameObject start = GameObject.Find(StartMarkerName);
@@ -454,10 +465,8 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        EnsureTotalWeightHudRow();
         coinEffectLayer.SetAsLastSibling();
         InitializeRewardParticleSystems();
-        ApplyWideSuppliesShopLayout();
         BindButtonClickSfx();
         BindUiEvents();
         EggScoreHud gameplayHud = FindFirstObjectByType<EggScoreHud>(
@@ -786,6 +795,8 @@ public sealed class RoundSystem : MonoBehaviour
             && intermissionShopButton != null
             && resultsShopButton != null
             && resultsContinueButton != null
+            && additionalPenMilestoneScreen != null
+            && additionalPenMilestoneButton != null
             && doneShoppingButton != null
             && shopBalanceText != null
             && shopStatusText != null
@@ -806,7 +817,67 @@ public sealed class RoundSystem : MonoBehaviour
         intermissionShopButton.onClick.AddListener(HandleIntermissionShopClicked);
         resultsShopButton.onClick.AddListener(HandleResultsShopClicked);
         resultsContinueButton.onClick.AddListener(HandleResultsContinueClicked);
+        additionalPenMilestoneButton.onClick.AddListener(
+            HandleAdditionalPenMilestoneClicked);
         doneShoppingButton.onClick.AddListener(ShowIntermission);
+        BindSupplyShopTabs();
+    }
+
+    private void BindSupplyShopTabs()
+    {
+        RectTransform card = suppliesShopScreen != null
+            ? suppliesShopScreen.transform.Find("Supplies") as RectTransform
+            : null;
+        RectTransform treeContent = card != null
+            ? card.Find("Progression Scroll View/Tree Viewport/Tree Content")
+                as RectTransform
+            : null;
+        if (treeContent == null)
+        {
+            return;
+        }
+
+        RectTransform[] headers =
+        {
+            treeContent.Find("FOOD Branch") as RectTransform,
+            treeContent.Find("TECH Branch") as RectTransform,
+            treeContent.Find("COLLECTION Branch") as RectTransform
+        };
+        RectTransform[] groups =
+        {
+            treeContent.Find("Food Tree Group") as RectTransform,
+            treeContent.Find("Tech Tree Group") as RectTransform,
+            treeContent.Find("Collection Tree Group") as RectTransform
+        };
+        Color[] tabColors =
+        {
+            new Color(0.65f, 0.28f, 0.055f, 1f),
+            new Color(0.34f, 0.17f, 0.48f, 1f),
+            new Color(0.12f, 0.34f, 0.57f, 1f)
+        };
+
+        for (int index = 0; index < headers.Length; index++)
+        {
+            Button tab = headers[index] != null
+                ? headers[index].GetComponent<Button>()
+                : null;
+            if (tab == null || groups[index] == null)
+            {
+                Debug.LogError(
+                    "The authored supplies-shop prefab is missing a tab "
+                    + "button or tree group.",
+                    this);
+                continue;
+            }
+
+            int selectedIndex = index;
+            tab.onClick.AddListener(
+                () => SetSupplyShopTreeTab(
+                    selectedIndex,
+                    headers,
+                    groups,
+                    tabColors));
+        }
     }
 
     private void Update()
@@ -841,10 +912,16 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        roundElapsed += Time.deltaTime;
-        roundTimeRemaining = Mathf.Max(0f, roundTimeRemaining - Time.deltaTime);
+        double realtimeNow = Time.realtimeSinceStartupAsDouble;
+        roundElapsed = Mathf.Clamp(
+            (float)(realtimeNow - roundStartedRealtime),
+            0f,
+            roundDuration);
+        roundTimeRemaining = Mathf.Max(
+            0f,
+            (float)(roundEndsRealtime - realtimeNow));
         RefreshTimer();
-        liveStatsRefreshTime -= Time.deltaTime;
+        liveStatsRefreshTime -= Time.unscaledDeltaTime;
 
         if (liveStatsRefreshTime <= 0f)
         {
@@ -934,6 +1011,8 @@ public sealed class RoundSystem : MonoBehaviour
         intermissionShopButton?.onClick.RemoveListener(HandleIntermissionShopClicked);
         resultsShopButton?.onClick.RemoveListener(HandleResultsShopClicked);
         resultsContinueButton?.onClick.RemoveListener(HandleResultsContinueClicked);
+        additionalPenMilestoneButton?.onClick.RemoveListener(
+            HandleAdditionalPenMilestoneClicked);
         doneShoppingButton?.onClick.RemoveListener(ShowIntermission);
 
         EggContainer.EggCollectedWithWeightFromContainer -= HandleEggCollected;
@@ -1005,6 +1084,8 @@ public sealed class RoundSystem : MonoBehaviour
         roundPassed = false;
         roundTimeRemaining = roundDuration;
         roundElapsed = 0f;
+        roundStartedRealtime = Time.realtimeSinceStartupAsDouble;
+        roundEndsRealtime = roundStartedRealtime + roundDuration;
         roundEggsCollected = 0;
         roundCashMade = 0;
         Array.Clear(
@@ -1332,7 +1413,7 @@ public sealed class RoundSystem : MonoBehaviour
         yield return CountResult(
             resultsPerMinuteText,
             eggsPerMinute,
-            value => value.ToString("0.0"));
+            value => Mathf.RoundToInt(value).ToString());
         yield return CountResult(
             resultsHatchedText,
             roundChickensHatched,
@@ -1470,7 +1551,10 @@ public sealed class RoundSystem : MonoBehaviour
     {
         if (Phase == RoundPhase.Results)
         {
-            ShowIntermission();
+            if (!TryShowAdditionalPenMilestone(false))
+            {
+                ShowIntermission();
+            }
         }
     }
 
@@ -1478,7 +1562,49 @@ public sealed class RoundSystem : MonoBehaviour
     {
         if (Phase == RoundPhase.Results)
         {
+            if (!TryShowAdditionalPenMilestone(true))
+            {
+                ShowSuppliesShop();
+            }
+        }
+    }
+
+    private bool TryShowAdditionalPenMilestone(bool returnToShop)
+    {
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        if (!roundPassed
+            || roundNumber < PenExpansionManager.AdditionalPenUnlockRound
+            || manager == null
+            || manager.AreAdditionalPensUnlocked
+            || additionalPenMilestoneScreen == null)
+        {
+            return false;
+        }
+
+        milestoneReturnsToShop = returnToShop;
+        manager.UnlockAdditionalPens();
+        resultsScreen.SetActive(false);
+        additionalPenMilestoneScreen.SetActive(true);
+        additionalPenMilestoneScreen.transform.SetAsLastSibling();
+        return true;
+    }
+
+    private void HandleAdditionalPenMilestoneClicked()
+    {
+        if (additionalPenMilestoneScreen == null
+            || !additionalPenMilestoneScreen.activeSelf)
+        {
+            return;
+        }
+
+        additionalPenMilestoneScreen.SetActive(false);
+        if (milestoneReturnsToShop)
+        {
             ShowSuppliesShop();
+        }
+        else
+        {
+            ShowIntermission();
         }
     }
 
@@ -2051,6 +2177,17 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        if (manager != null && manager.IsInitialized)
+        {
+            worldPosition = manager.GetTruckStopPosition(penIndex)
+                + Vector3.up * 0.45f;
+        }
+        else if (truckStop != null)
+        {
+            worldPosition = truckStop.position + Vector3.up * 0.45f;
+        }
+
         Camera worldCamera = Camera.main;
         Camera canvasCamera = GetRoundCanvasCamera();
         if (worldCamera == null)
@@ -2395,12 +2532,16 @@ public sealed class RoundSystem : MonoBehaviour
             1d,
             rewardCents / 100d);
         double magnitude = Math.Log10(rewardDollars + 1d);
-        int scaledParticleCount = 50 + Mathf.RoundToInt(
-            (float)(magnitude * magnitude * 60d));
+        double largeRewardFalloff = 1d / (
+            1d + Math.Max(0d, magnitude - 3d) * 0.35d);
+        int scaledParticleCount = 30 + Mathf.RoundToInt(
+            (float)(magnitude * magnitude * 35d * largeRewardFalloff));
         return Mathf.Clamp(
             scaledParticleCount,
             1,
-            maximumRewardParticlesPerBurst);
+            Mathf.Min(
+                maximumRewardParticlesPerBurst,
+                MaximumUsefulRewardParticlesPerBurst));
     }
 
     private int CalculateCashNoteParticleCount(int requestedCount)
@@ -2843,9 +2984,15 @@ public sealed class RoundSystem : MonoBehaviour
                 startColor = Color.white,
                 rotation3D = trail.IsCashNote
                     ? new Vector3(
-                        UnityEngine.Random.Range(-180f, 180f),
-                        UnityEngine.Random.Range(-180f, 180f),
-                        UnityEngine.Random.Range(-180f, 180f))
+                        UnityEngine.Random.Range(
+                            -MaximumCashNoteRandomRotationDegrees,
+                            MaximumCashNoteRandomRotationDegrees),
+                        UnityEngine.Random.Range(
+                            -MaximumCashNoteRandomRotationDegrees,
+                            MaximumCashNoteRandomRotationDegrees),
+                        UnityEngine.Random.Range(
+                            -MaximumCashNoteRandomRotationDegrees,
+                            MaximumCashNoteRandomRotationDegrees))
                     : new Vector3(
                         0f,
                         UnityEngine.Random.Range(-180f, 180f),
@@ -3340,20 +3487,28 @@ public sealed class RoundSystem : MonoBehaviour
         RectTransform[] headers =
         {
             treeContent.Find("FOOD Branch") as RectTransform,
+            treeContent.Find("TECH Branch") as RectTransform,
             treeContent.Find("COLLECTION Branch") as RectTransform
         };
         RectTransform[] groups =
         {
             treeContent.Find("Food Tree Group") as RectTransform,
+            treeContent.Find("Tech Tree Group") as RectTransform,
             treeContent.Find("Collection Tree Group") as RectTransform
         };
-        int selectedIndex = groups[1] != null && groups[1].gameObject.activeSelf
-            ? 1
-            : 0;
+        int selectedIndex = 0;
+        for (int index = 0; index < groups.Length; index++)
+        {
+            if (groups[index] != null && groups[index].gameObject.activeSelf)
+            {
+                selectedIndex = index;
+                break;
+            }
+        }
         RefreshSupplyShopTabIndicators(headers, groups, selectedIndex);
     }
 
-    public void AnimateShopSpend(int cents)
+    public void AnimateShopSpend(long cents)
     {
         if (cents <= 0
             || Phase != RoundPhase.SuppliesShop
@@ -3469,73 +3624,6 @@ public sealed class RoundSystem : MonoBehaviour
         }
     }
 
-    private void EnsureTotalWeightHudRow()
-    {
-        const int statCount = 6;
-        if (liveStatRowValues == null)
-        {
-            liveStatRowValues = new TMP_Text[statCount];
-        }
-        else if (liveStatRowValues.Length < statCount)
-        {
-            Array.Resize(ref liveStatRowValues, statCount);
-        }
-
-        if (liveStatRowValues[5] == null && liveStatRowValues[4] != null)
-        {
-            Transform sourceRow = liveStatRowValues[4].transform.parent;
-            GameObject rowObject = Instantiate(
-                sourceRow.gameObject,
-                sourceRow.parent);
-            rowObject.name = "HUD Stat Row 5";
-            TMP_Text[] texts = rowObject.GetComponentsInChildren<TMP_Text>(true);
-            for (int index = 0; index < texts.Length; index++)
-            {
-                if (texts[index].name == "Label")
-                {
-                    texts[index].text = "WEIGHT";
-                }
-                else if (texts[index].name == "Value")
-                {
-                    liveStatRowValues[5] = texts[index];
-                }
-            }
-
-            RawImage icon = rowObject.GetComponentInChildren<RawImage>(true);
-            if (icon != null)
-            {
-                icon.uvRect = GetHudIconUv(5);
-            }
-        }
-
-        if (liveStatRowValues[0] != null)
-        {
-            for (int index = 0; index < liveStatRowValues.Length; index++)
-            {
-                RectTransform row = liveStatRowValues[index] != null
-                    ? liveStatRowValues[index].transform.parent as RectTransform
-                    : null;
-                if (row != null)
-                {
-                    row.anchoredPosition = new Vector2(0f, 70f - index * 28f);
-                }
-            }
-        }
-        else if (liveStatsText != null)
-        {
-            liveStatsText.text =
-                "EGGS\nEGGS/MIN\nCASH\nCHICKENS\nTRUCKS\nWEIGHT";
-        }
-
-        RectTransform statsRect = liveStatsDisplay != null
-            ? liveStatsDisplay.GetComponent<RectTransform>()
-            : null;
-        if (statsRect != null)
-        {
-            statsRect.sizeDelta = new Vector2(statsRect.sizeDelta.x, 198f);
-        }
-    }
-
     private static string FormatWeight(double weight)
     {
         if (weight >= 1000000d)
@@ -3567,14 +3655,14 @@ public sealed class RoundSystem : MonoBehaviour
         statsRect.anchorMax = Vector2.one;
         statsRect.pivot = Vector2.one;
         statsRect.anchoredPosition = new Vector2(-24f, -24f);
-        statsRect.sizeDelta = new Vector2(260f, 170f);
+        statsRect.sizeDelta = new Vector2(260f, 198f);
 
         Image outer = liveStatsDisplay.GetComponent<Image>();
         if (outer != null)
         {
             outer.sprite = GetHudRoundedSprite();
             outer.type = Image.Type.Sliced;
-            outer.color = new Color(0.28f, 0.16f, 0.085f, 0.97f);
+            outer.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
             outer.raycastTarget = false;
         }
 
@@ -3585,7 +3673,7 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         outline.effectColor = new Color(0.12f, 0.07f, 0.035f, 1f);
-        outline.effectDistance = new Vector2(3f, -3f);
+        outline.effectDistance = new Vector2(2f, -2f);
         outline.useGraphicAlpha = false;
 
         Shadow shadow = null;
@@ -3605,8 +3693,8 @@ public sealed class RoundSystem : MonoBehaviour
             shadow = liveStatsDisplay.AddComponent<Shadow>();
         }
 
-        shadow.effectColor = new Color(0f, 0f, 0f, 0.62f);
-        shadow.effectDistance = new Vector2(4f, -5f);
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.5f);
+        shadow.effectDistance = new Vector2(3f, -4f);
 
         RectTransform inner =
             liveStatsDisplay.transform.Find("Stats Inner Panel")
@@ -3868,11 +3956,18 @@ public sealed class RoundSystem : MonoBehaviour
             safeRound - earlyCashQuotaEndRound,
             0,
             midCashQuotaEndRound - earlyCashQuotaEndRound);
-        int lateGrowthSteps = Mathf.Max(0, safeRound - midCashQuotaEndRound);
+        int lateGrowthSteps = Mathf.Clamp(
+            safeRound - midCashQuotaEndRound,
+            0,
+            endgameCashQuotaStartRound - midCashQuotaEndRound);
+        int endgameGrowthSteps = Mathf.Max(
+            0,
+            safeRound - endgameCashQuotaStartRound);
         double target = baseRoundCashQuotaCents
             * Math.Pow(earlyCashQuotaGrowth, earlyGrowthSteps)
             * Math.Pow(midCashQuotaGrowth, midGrowthSteps)
-            * Math.Pow(lateCashQuotaGrowth, lateGrowthSteps);
+            * Math.Pow(lateCashQuotaGrowth, lateGrowthSteps)
+            * Math.Pow(endgameCashQuotaGrowth, endgameGrowthSteps);
 
         // Whole-dollar targets are easier to scan during a fast 30-second round.
         double roundedToDollar = Math.Round(
@@ -4125,21 +4220,104 @@ public sealed class RoundSystem : MonoBehaviour
 
         timerDisplay = CreateUiObject("Round Timer", canvasObject.transform).gameObject;
         RectTransform timerRect = timerDisplay.GetComponent<RectTransform>();
-        timerRect.anchorMin = new Vector2(0.5f, 0f);
-        timerRect.anchorMax = new Vector2(0.5f, 0f);
-        timerRect.pivot = new Vector2(0.5f, 0f);
-        timerRect.anchoredPosition = new Vector2(0f, 24f);
-        timerRect.sizeDelta = new Vector2(430f, 82f);
+        timerRect.anchorMin = new Vector2(0.5f, 1f);
+        timerRect.anchorMax = new Vector2(0.5f, 1f);
+        timerRect.pivot = new Vector2(0.5f, 1f);
+        timerRect.anchoredPosition = new Vector2(0f, -104f);
+        timerRect.sizeDelta = new Vector2(200f, 78f);
         Image timerBackground = timerDisplay.AddComponent<Image>();
-        timerBackground.color = new Color(0.08f, 0.09f, 0.075f, 0.88f);
-        timerBackground.raycastTarget = false;
+        StyleAuthoredHudPanel(timerDisplay, timerBackground);
 
-        timerText = CreateText("Timer Text", timerDisplay.transform, 28f, TextAlignmentOptions.Center);
+        roundNumberText = CreateText(
+            "Round Number",
+            timerDisplay.transform,
+            20f,
+            TextAlignmentOptions.Center);
+        roundNumberText.fontStyle = FontStyles.Bold;
+        roundNumberText.color = Color.white;
+        roundNumberText.raycastTarget = false;
+        SetRect(
+            roundNumberText.rectTransform,
+            new Vector2(0f, 22f),
+            new Vector2(184f, 27f));
+        roundNumberText.text = "ROUND 1";
+
+        timerText = CreateText(
+            "Timer Text",
+            timerDisplay.transform,
+            34f,
+            TextAlignmentOptions.Center);
         timerText.color = new Color(1f, 0.9f, 0.42f);
         timerText.fontStyle = FontStyles.Bold;
-        timerText.lineSpacing = -8f;
         timerText.raycastTarget = false;
-        StretchToParent(timerText.rectTransform);
+        SetRect(
+            timerText.rectTransform,
+            new Vector2(0f, -13f),
+            new Vector2(184f, 42f));
+        timerText.text = "--:--";
+
+        quotaDisplay = CreateUiObject(
+            "Cash Quota HUD",
+            canvasObject.transform).gameObject;
+        RectTransform quotaRect = quotaDisplay.GetComponent<RectTransform>();
+        quotaRect.anchorMin = new Vector2(0.5f, 1f);
+        quotaRect.anchorMax = new Vector2(0.5f, 1f);
+        quotaRect.pivot = new Vector2(0.5f, 1f);
+        quotaRect.anchoredPosition = new Vector2(0f, -24f);
+        quotaRect.sizeDelta = new Vector2(320f, 82f);
+        Image quotaBackground = quotaDisplay.AddComponent<Image>();
+        StyleAuthoredHudPanel(quotaDisplay, quotaBackground);
+
+        quotaTitleText = CreateText(
+            "Quota Title",
+            quotaDisplay.transform,
+            12f,
+            TextAlignmentOptions.Center);
+        quotaTitleText.fontStyle = FontStyles.Bold;
+        quotaTitleText.color = Color.white;
+        SetRect(
+            quotaTitleText.rectTransform,
+            new Vector2(0f, 29f),
+            new Vector2(300f, 17f));
+        quotaTitleText.text = "CASH QUOTA";
+
+        quotaValueText = CreateText(
+            "Quota Value",
+            quotaDisplay.transform,
+            24f,
+            TextAlignmentOptions.Center);
+        quotaValueText.fontStyle = FontStyles.Bold;
+        quotaValueText.color = new Color(1f, 0.84f, 0.3f);
+        SetRect(
+            quotaValueText.rectTransform,
+            new Vector2(0f, 5f),
+            new Vector2(300f, 32f));
+        quotaValueText.text = "$0 / $0";
+
+        RectTransform quotaTrack = CreateUiObject(
+            "Pen Contribution Track",
+            quotaDisplay.transform);
+        SetRect(quotaTrack, new Vector2(0f, -29f), new Vector2(292f, 8f));
+        Image quotaTrackImage = quotaTrack.gameObject.AddComponent<Image>();
+        quotaTrackImage.color = new Color(0.025f, 0.03f, 0.025f, 1f);
+        quotaTrackImage.raycastTarget = false;
+        quotaContributionFills = new Image[PenUiPalette.Count];
+        for (int index = 0; index < quotaContributionFills.Length; index++)
+        {
+            RectTransform fillRect = CreateUiObject(
+                $"Pen {index + 1} Contribution",
+                quotaTrack);
+            float previewStart = (float)index / PenUiPalette.Count;
+            float previewEnd = (float)(index + 1) / PenUiPalette.Count;
+            fillRect.anchorMin = new Vector2(previewStart, 0f);
+            fillRect.anchorMax = new Vector2(previewEnd, 1f);
+            fillRect.offsetMin = Vector2.zero;
+            fillRect.offsetMax = Vector2.zero;
+            Image fill = fillRect.gameObject.AddComponent<Image>();
+            fill.color = PenUiPalette.GetColour(index);
+            fill.raycastTarget = false;
+            quotaContributionFills[index] = fill;
+        }
 
         liveStatsDisplay = CreateUiObject("Live Round Stats", canvasObject.transform).gameObject;
         RectTransform liveStatsRect = liveStatsDisplay.GetComponent<RectTransform>();
@@ -4186,6 +4364,27 @@ public sealed class RoundSystem : MonoBehaviour
 
         BuildResultsUi(canvasObject.transform);
         BuildSuppliesShopUi(canvasObject.transform);
+    }
+
+    private static void StyleAuthoredHudPanel(
+        GameObject panel,
+        Image background)
+    {
+        background.sprite = UnityEditor.AssetDatabase
+            .GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+        background.type = Image.Type.Sliced;
+        background.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+        background.raycastTarget = false;
+
+        Outline outline = panel.AddComponent<Outline>();
+        outline.effectColor = new Color(0.12f, 0.07f, 0.035f, 1f);
+        outline.effectDistance = new Vector2(2f, -2f);
+        outline.useGraphicAlpha = false;
+
+        Shadow shadow = panel.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.5f);
+        shadow.effectDistance = new Vector2(3f, -4f);
+        shadow.useGraphicAlpha = true;
     }
 
     private void BuildResultsUi(Transform canvasTransform)
@@ -4398,6 +4597,7 @@ public sealed class RoundSystem : MonoBehaviour
         Color foodColor = new Color(0.62f, 0.31f, 0.07f);
         Color primeFeedColor = new Color(0.72f, 0.43f, 0.08f);
         Color premiumColor = new Color(0.44f, 0.2f, 0.62f);
+        Color chickenPerksColor = new Color(0.68f, 0.22f, 0.42f);
         Color valueColor = new Color(0.66f, 0.48f, 0.08f);
         Color incubationColor = new Color(0.08f, 0.48f, 0.28f);
         Color crosshatcherColor = new Color(0.18f, 0.5f, 0.46f);
@@ -4459,7 +4659,10 @@ public sealed class RoundSystem : MonoBehaviour
 
         Vector2 premiumPrevious = new Vector2(-430f, 620f);
         Vector2 premiumTierTwoPosition = Vector2.zero;
-        for (int tier = 1; tier <= 8; tier++)
+        Vector2 premiumTierEightPosition = Vector2.zero;
+        for (int tier = 1;
+            tier <= ProgressionSystem.MaximumRareEggChanceLevel;
+            tier++)
         {
             Vector2 position = new Vector2(-430f, 550f - (tier - 1) * 95f);
             CreateTreeConnector(treeContent, premiumPrevious, position, premiumColor);
@@ -4474,12 +4677,41 @@ public sealed class RoundSystem : MonoBehaviour
             {
                 premiumTierTwoPosition = position;
             }
+            if (tier == 8)
+            {
+                premiumTierEightPosition = position;
+            }
+            premiumPrevious = position;
+        }
+
+        premiumPrevious = premiumTierEightPosition;
+        for (int tier = 1;
+            tier <= ProgressionSystem.MaximumChickenPerksLevel;
+            tier++)
+        {
+            Vector2 position = new Vector2(
+                -570f,
+                -210f - (tier - 1) * 95f);
+            CreateTreeConnector(
+                treeContent,
+                premiumPrevious,
+                position,
+                chickenPerksColor);
+            CreateProgressionNode(
+                $"Upgrade Chicken Perks {tier}",
+                treeContent,
+                position,
+                ProgressionSystem.UpgradeId.ChickenPerks,
+                chickenPerksColor,
+                tier);
             premiumPrevious = position;
         }
 
         Vector2 weightPrevious = premiumTierTwoPosition;
         Vector2 weightTierOnePosition = Vector2.zero;
-        for (int tier = 1; tier <= 10; tier++)
+        for (int tier = 1;
+            tier <= ProgressionSystem.MaximumEggWeightLevel;
+            tier++)
         {
             Vector2 position = new Vector2(-290f, 360f - (tier - 1) * 95f);
             CreateTreeConnector(treeContent, weightPrevious, position, valueColor);
@@ -4732,15 +4964,20 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        treeContent.sizeDelta = new Vector2(1800f, treeContent.sizeDelta.y);
+        treeContent.sizeDelta = new Vector2(
+            1800f,
+            Mathf.Max(3000f, treeContent.sizeDelta.y));
         EnsureRobotRarityLogicTier(treeContent);
         EnsureVacuumUnlockNode(treeContent);
         EnsureBasketCapacityTierFour(treeContent);
         EnsureBasketReachTiers(treeContent);
         EnsureFeedSpeedTiers(treeContent);
         EnsurePrimeFeedTiers(treeContent);
+        EnsurePremiumEggTiers(treeContent);
         EnsureEggProgressionTiers(treeContent);
+        EnsureChickenPerkTiers(treeContent);
         EnsureTruckBonusTiers(treeContent);
+        EnsureTurboConsumableNodes(treeContent);
         ApplyProgressionTreeLayout(treeContent);
         ApplySuppliesShopVisualPolish(card, treeContent);
     }
@@ -4840,8 +5077,8 @@ public sealed class RoundSystem : MonoBehaviour
         CreateTreePanel(
             treeContent,
             "Consumables Column Frame",
-            new Vector2(-735f, 105f),
-            new Vector2(330f, 1090f),
+            new Vector2(-735f, 350f),
+            new Vector2(330f, 620f),
             new Color(0.15f, 0.13f, 0.065f, 0.98f),
             new Color(0.66f, 0.48f, 0.13f, 1f));
 
@@ -4864,7 +5101,13 @@ public sealed class RoundSystem : MonoBehaviour
 
         if (techGroup != null)
         {
-            techGroup.gameObject.SetActive(false);
+            CreateTreePanel(
+                techGroup,
+                "Active Tree Frame",
+                new Vector2(175f, 105f),
+                new Vector2(1450f, 1090f),
+                new Color(0.105f, 0.065f, 0.14f, 0.98f),
+                new Color(0.62f, 0.35f, 0.82f, 1f));
         }
 
         if (collectionGroup != null)
@@ -4888,12 +5131,11 @@ public sealed class RoundSystem : MonoBehaviour
             "FOOD Branch",
             new Color(0.65f, 0.28f, 0.055f, 1f),
             new Color(0.9f, 0.47f, 0.1f, 1f));
-        RectTransform techHeader =
-            treeContent.Find("TECH Branch") as RectTransform;
-        if (techHeader != null)
-        {
-            techHeader.gameObject.SetActive(false);
-        }
+        StyleTreeHeader(
+            treeContent,
+            "TECH Branch",
+            new Color(0.34f, 0.17f, 0.48f, 1f),
+            new Color(0.68f, 0.42f, 0.9f, 1f));
         StyleTreeHeader(
             treeContent,
             "COLLECTION Branch",
@@ -4925,16 +5167,19 @@ public sealed class RoundSystem : MonoBehaviour
         RectTransform[] headers =
         {
             treeContent.Find("FOOD Branch") as RectTransform,
+            treeContent.Find("TECH Branch") as RectTransform,
             treeContent.Find("COLLECTION Branch") as RectTransform
         };
         RectTransform[] groups =
         {
             foodGroup,
+            techGroup,
             collectionGroup
         };
         Color[] tabColors =
         {
             new Color(0.65f, 0.28f, 0.055f, 1f),
+            new Color(0.34f, 0.17f, 0.48f, 1f),
             new Color(0.12f, 0.34f, 0.57f, 1f)
         };
 
@@ -5025,6 +5270,12 @@ public sealed class RoundSystem : MonoBehaviour
         }
 
         RefreshSupplyShopTabIndicators(headers, groups, selectedIndex);
+        ProgressionTreePanController panController = headers.Length > 0
+            && headers[0] != null
+                ? headers[0].GetComponentInParent<ProgressionTreePanController>(
+                    true)
+                : null;
+        panController?.ResetToTop();
     }
 
     private static void EnsureSupplyShopTabIndicator(RectTransform header)
@@ -5255,8 +5506,9 @@ public sealed class RoundSystem : MonoBehaviour
         shadow.useGraphicAlpha = true;
 
         int atlasIndex = GetShopIconAtlasIndex(node);
+        Texture2D standaloneIcon = GetTurboShopIcon(node.UpgradeId);
         Transform oldBadge = node.transform.Find("Node Icon");
-        if (oldBadge != null && atlasIndex >= 0)
+        if (oldBadge != null && (atlasIndex >= 0 || standaloneIcon != null))
         {
             oldBadge.gameObject.SetActive(false);
         }
@@ -5264,11 +5516,13 @@ public sealed class RoundSystem : MonoBehaviour
         TMP_Text label = node.transform.Find("Label")?.GetComponent<TMP_Text>();
         TMP_Text cost =
             node.transform.Find("Node Cost")?.GetComponent<TMP_Text>();
-        if (atlasIndex >= 0 && iconAtlas != null)
+        if ((atlasIndex >= 0 && iconAtlas != null) || standaloneIcon != null)
         {
             RawImage icon = EnsureAtlasIcon(node.transform);
-            icon.texture = iconAtlas;
-            icon.uvRect = GetShopIconUv(atlasIndex);
+            icon.texture = standaloneIcon != null ? standaloneIcon : iconAtlas;
+            icon.uvRect = standaloneIcon != null
+                ? new Rect(0f, 0f, 1f, 1f)
+                : GetShopIconUv(atlasIndex);
             icon.color = Color.white;
             icon.raycastTarget = false;
             float iconSize = root ? 68f : 56f;
@@ -5362,6 +5616,7 @@ public sealed class RoundSystem : MonoBehaviour
             ProgressionSystem.UpgradeId.FeedSpeed => node.TargetLevel == 2,
             ProgressionSystem.UpgradeId.PrimeFeed => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.RareEggChance => node.TargetLevel == 1,
+            ProgressionSystem.UpgradeId.ChickenPerks => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.EggWeight => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.EggValue => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.TruckBonus => node.TargetLevel == 1,
@@ -5382,6 +5637,8 @@ public sealed class RoundSystem : MonoBehaviour
                 when node.TargetLevel == 1 => 1,
             ProgressionSystem.UpgradeId.RareEggChance
                 when node.TargetLevel == 1 => 2,
+            ProgressionSystem.UpgradeId.ChickenPerks
+                when node.TargetLevel == 1 => 2,
             ProgressionSystem.UpgradeId.EggWeight
                 when node.TargetLevel == 1 => 3,
             ProgressionSystem.UpgradeId.EggValue
@@ -5397,6 +5654,27 @@ public sealed class RoundSystem : MonoBehaviour
                 when node.TargetLevel == 1 => 7,
             _ => -1
         };
+    }
+
+    private static Texture2D GetTurboShopIcon(
+        ProgressionSystem.UpgradeId id)
+    {
+        string path = id switch
+        {
+            ProgressionSystem.UpgradeId.IncubatorTurbo =>
+                TurboConsumableSystem.GetResourcePath(
+                    TurboConsumableSystem.TurboType.Incubator),
+            ProgressionSystem.UpgradeId.CrosshatcherTurbo =>
+                TurboConsumableSystem.GetResourcePath(
+                    TurboConsumableSystem.TurboType.Crosshatcher),
+            ProgressionSystem.UpgradeId.RobotTurbo =>
+                TurboConsumableSystem.GetResourcePath(
+                    TurboConsumableSystem.TurboType.Robot),
+            _ => string.Empty
+        };
+        return string.IsNullOrEmpty(path)
+            ? null
+            : Resources.Load<Texture2D>(path);
     }
 
     private static Rect GetShopIconUv(int atlasIndex)
@@ -5419,8 +5697,22 @@ public sealed class RoundSystem : MonoBehaviour
                 or ProgressionSystem.UpgradeId.FeedSpeed
                 or ProgressionSystem.UpgradeId.PrimeFeed =>
                 new Color(0.82f, 0.45f, 0.11f, 1f),
+            ProgressionSystem.UpgradeId.IncubatorTurbo
+                or ProgressionSystem.UpgradeId.IncubatorTurboPower
+                or ProgressionSystem.UpgradeId.IncubatorTurboDuration =>
+                new Color(0.95f, 0.48f, 0.12f, 1f),
+            ProgressionSystem.UpgradeId.CrosshatcherTurbo
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboPower
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration =>
+                new Color(0.35f, 0.76f, 0.32f, 1f),
+            ProgressionSystem.UpgradeId.RobotTurbo
+                or ProgressionSystem.UpgradeId.RobotTurboPower
+                or ProgressionSystem.UpgradeId.RobotTurboDuration =>
+                new Color(0.68f, 0.42f, 0.9f, 1f),
             ProgressionSystem.UpgradeId.RareEggChance =>
                 new Color(0.62f, 0.34f, 0.74f, 1f),
+            ProgressionSystem.UpgradeId.ChickenPerks =>
+                new Color(0.82f, 0.3f, 0.5f, 1f),
             ProgressionSystem.UpgradeId.EggWeight =>
                 new Color(0.8f, 0.62f, 0.13f, 1f),
             ProgressionSystem.UpgradeId.EggValue =>
@@ -5446,6 +5738,7 @@ public sealed class RoundSystem : MonoBehaviour
 
     private static void ApplyProgressionTreeLayout(RectTransform treeContent)
     {
+        EnsureTechTreeHeader(treeContent);
         ProgressionNodeButton[] nodes =
             treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
 
@@ -5458,12 +5751,17 @@ public sealed class RoundSystem : MonoBehaviour
             treeContent,
             "FOOD Branch",
             new Vector2(-315f, 650f),
-            470f);
+            450f);
+        SetRuntimeTreeHeader(
+            treeContent,
+            "TECH Branch",
+            new Vector2(175f, 650f),
+            450f);
         SetRuntimeTreeHeader(
             treeContent,
             "COLLECTION Branch",
-            new Vector2(655f, 650f),
-            470f);
+            new Vector2(665f, 650f),
+            450f);
 
         RectTransform[] treeRects =
             treeContent.GetComponentsInChildren<RectTransform>(true);
@@ -5553,6 +5851,7 @@ public sealed class RoundSystem : MonoBehaviour
 
         Color foodColor = new Color(0.62f, 0.31f, 0.07f);
         Color premiumColor = new Color(0.44f, 0.2f, 0.62f);
+        Color chickenPerksColor = new Color(0.68f, 0.22f, 0.42f);
         Color valueColor = new Color(0.66f, 0.48f, 0.08f);
         Color incubationColor = new Color(0.08f, 0.48f, 0.28f);
         Color crosshatcherColor = new Color(0.18f, 0.5f, 0.46f);
@@ -5564,6 +5863,47 @@ public sealed class RoundSystem : MonoBehaviour
             ProgressionSystem.UpgradeId.FoodBag,
             0,
             new Vector2(-735f, 535f));
+
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.IncubatorTurbo,
+            0,
+            new Vector2(-735f, 400f));
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.CrosshatcherTurbo,
+            0,
+            new Vector2(-735f, 265f));
+        SetRuntimeNodePosition(
+            nodes,
+            ProgressionSystem.UpgradeId.RobotTurbo,
+            0,
+            new Vector2(-735f, 130f));
+
+        LayoutTurboTechBranch(
+            techGroup,
+            nodes,
+            ProgressionSystem.UpgradeId.IncubatorTurboPower,
+            ProgressionSystem.UpgradeId.IncubatorTurboDuration,
+            TurboConsumableSystem.TurboType.Incubator,
+            -300f,
+            new Color(0.95f, 0.48f, 0.12f, 1f));
+        LayoutTurboTechBranch(
+            techGroup,
+            nodes,
+            ProgressionSystem.UpgradeId.CrosshatcherTurboPower,
+            ProgressionSystem.UpgradeId.CrosshatcherTurboDuration,
+            TurboConsumableSystem.TurboType.Crosshatcher,
+            175f,
+            new Color(0.35f, 0.76f, 0.32f, 1f));
+        LayoutTurboTechBranch(
+            techGroup,
+            nodes,
+            ProgressionSystem.UpgradeId.RobotTurboPower,
+            ProgressionSystem.UpgradeId.RobotTurboDuration,
+            TurboConsumableSystem.TurboType.Robot,
+            650f,
+            new Color(0.68f, 0.42f, 0.9f, 1f));
 
         Vector2 previousFeed = Vector2.zero;
         Vector2 feedTierTwo = Vector2.zero;
@@ -5618,7 +5958,10 @@ public sealed class RoundSystem : MonoBehaviour
 
         Vector2 previousPremium = Vector2.zero;
         Vector2 premiumTierTwo = Vector2.zero;
-        for (int tier = 1; tier <= 8; tier++)
+        Vector2 premiumTierEight = Vector2.zero;
+        for (int tier = 1;
+            tier <= ProgressionSystem.MaximumRareEggChanceLevel;
+            tier++)
         {
             Vector2 position = new Vector2(
                 175f,
@@ -5641,13 +5984,40 @@ public sealed class RoundSystem : MonoBehaviour
             {
                 premiumTierTwo = position;
             }
+            if (tier == 8)
+            {
+                premiumTierEight = position;
+            }
 
             previousPremium = position;
         }
 
+        Vector2 previousChickenPerk = premiumTierEight;
+        for (int tier = 1;
+            tier <= ProgressionSystem.MaximumChickenPerksLevel;
+            tier++)
+        {
+            Vector2 position = new Vector2(
+                -100f,
+                -326f - (tier - 1) * 90f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.ChickenPerks,
+                tier,
+                position);
+            CreateRuntimeTreeConnector(
+                foodGroup,
+                previousChickenPerk,
+                position,
+                chickenPerksColor);
+            previousChickenPerk = position;
+        }
+
         Vector2 previousWeight = premiumTierTwo;
         Vector2 weightTierOne = Vector2.zero;
-        for (int tier = 1; tier <= 10; tier++)
+        for (int tier = 1;
+            tier <= ProgressionSystem.MaximumEggWeightLevel;
+            tier++)
         {
             Vector2 position = new Vector2(
                 505f,
@@ -5849,6 +6219,7 @@ public sealed class RoundSystem : MonoBehaviour
             ProgressionSystem.UpgradeId.FeedSpeed
                 or ProgressionSystem.UpgradeId.PrimeFeed
                 or ProgressionSystem.UpgradeId.RareEggChance
+                or ProgressionSystem.UpgradeId.ChickenPerks
                 or ProgressionSystem.UpgradeId.EggWeight
                 or ProgressionSystem.UpgradeId.EggValue => foodGroup,
             ProgressionSystem.UpgradeId.IncubatorInstall
@@ -5856,7 +6227,13 @@ public sealed class RoundSystem : MonoBehaviour
                 or ProgressionSystem.UpgradeId.IncubatorSpeed
                 or ProgressionSystem.UpgradeId.CrosshatcherInstall
                 or ProgressionSystem.UpgradeId.CrosshatcherSpeed
-                or ProgressionSystem.UpgradeId.CrosshatcherQuality => techGroup,
+                or ProgressionSystem.UpgradeId.CrosshatcherQuality
+                or ProgressionSystem.UpgradeId.IncubatorTurboPower
+                or ProgressionSystem.UpgradeId.IncubatorTurboDuration
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboPower
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration
+                or ProgressionSystem.UpgradeId.RobotTurboPower
+                or ProgressionSystem.UpgradeId.RobotTurboDuration => techGroup,
             ProgressionSystem.UpgradeId.BasketCapacity
                 or ProgressionSystem.UpgradeId.BasketReach
                 or ProgressionSystem.UpgradeId.VacuumUnlock
@@ -5869,6 +6246,49 @@ public sealed class RoundSystem : MonoBehaviour
                 or ProgressionSystem.UpgradeId.RobotSmartness => collectionGroup,
             _ => null
         };
+    }
+
+    private static void EnsureTechTreeHeader(RectTransform treeContent)
+    {
+        RectTransform techHeader = treeContent.Find("TECH Branch")
+            as RectTransform;
+        if (techHeader == null)
+        {
+            RectTransform foodHeader = treeContent.Find("FOOD Branch")
+                as RectTransform;
+            if (foodHeader == null)
+            {
+                return;
+            }
+
+            GameObject clone = Instantiate(foodHeader.gameObject, treeContent);
+            clone.name = "TECH Branch";
+            techHeader = clone.transform as RectTransform;
+            TMP_Text[] texts = clone.GetComponentsInChildren<TMP_Text>(true);
+            for (int index = 0; index < texts.Length; index++)
+            {
+                if (texts[index].text == "FOOD")
+                {
+                    texts[index].text = "TECH";
+                }
+                else if (texts[index].text == "F")
+                {
+                    texts[index].text = "T";
+                }
+            }
+        }
+
+        Transform oldIcon = techHeader.Find("FOOD Icon");
+        if (oldIcon != null)
+        {
+            oldIcon.name = "TECH Icon";
+        }
+        Transform oldLabel = techHeader.Find("FOOD Label");
+        if (oldLabel != null)
+        {
+            oldLabel.name = "TECH Label";
+        }
+        techHeader.gameObject.SetActive(true);
     }
 
     private static void SetRuntimeTreeHeader(
@@ -5894,6 +6314,142 @@ public sealed class RoundSystem : MonoBehaviour
             headerName.Replace(" Branch", " Label"),
             new Vector2(20f, 0f),
             new Vector2(width - 64f, 46f));
+    }
+
+    private static void LayoutTurboTechBranch(
+        RectTransform techGroup,
+        ProgressionNodeButton[] nodes,
+        ProgressionSystem.UpgradeId powerId,
+        ProgressionSystem.UpgradeId durationId,
+        TurboConsumableSystem.TurboType type,
+        float centerX,
+        Color color)
+    {
+        if (techGroup == null)
+        {
+            return;
+        }
+
+        Vector2 headerPosition = new Vector2(centerX, 535f);
+        EnsureTurboTechSectionHeader(
+            techGroup,
+            type,
+            headerPosition,
+            color);
+        Vector2 previousPower = headerPosition;
+        Vector2 previousDuration = headerPosition;
+        int maximum = Mathf.Max(
+            TurboConsumableSystem.MaximumPowerLevel,
+            TurboConsumableSystem.MaximumDurationLevel);
+        for (int tier = 1; tier <= maximum; tier++)
+        {
+            if (tier <= TurboConsumableSystem.MaximumPowerLevel)
+            {
+                Vector2 position = new Vector2(
+                    centerX - 82f,
+                    420f - (tier - 1) * 95f);
+                SetRuntimeNodePosition(nodes, powerId, tier, position);
+                CreateRuntimeTreeConnector(
+                    techGroup,
+                    previousPower,
+                    position,
+                    color);
+                previousPower = position;
+            }
+
+            if (tier <= TurboConsumableSystem.MaximumDurationLevel)
+            {
+                Vector2 position = new Vector2(
+                    centerX + 82f,
+                    420f - (tier - 1) * 95f);
+                SetRuntimeNodePosition(nodes, durationId, tier, position);
+                CreateRuntimeTreeConnector(
+                    techGroup,
+                    previousDuration,
+                    position,
+                    color);
+                previousDuration = position;
+            }
+        }
+    }
+
+    private static void EnsureTurboTechSectionHeader(
+        RectTransform parent,
+        TurboConsumableSystem.TurboType type,
+        Vector2 position,
+        Color color)
+    {
+        string displayName = TurboConsumableSystem.GetDisplayName(type);
+        string objectName = $"{displayName} Turbo Tech Header";
+        RectTransform header = parent.Find(objectName) as RectTransform;
+        if (header == null)
+        {
+            GameObject headerObject = new GameObject(
+                objectName,
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Outline));
+            headerObject.transform.SetParent(parent, false);
+            header = headerObject.transform as RectTransform;
+        }
+
+        SetRuntimeRect(header, position, new Vector2(390f, 72f));
+        Image background = header.GetComponent<Image>();
+        background.sprite = GetHudRoundedSprite();
+        background.type = Image.Type.Sliced;
+        background.color = Color.Lerp(color, Color.black, 0.28f);
+        background.raycastTarget = false;
+        Outline outline = header.GetComponent<Outline>();
+        outline.effectColor = color;
+        outline.effectDistance = new Vector2(2f, -2f);
+
+        RawImage icon = header.Find("Machine Icon")?.GetComponent<RawImage>();
+        if (icon == null)
+        {
+            GameObject iconObject = new GameObject(
+                "Machine Icon",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(RawImage));
+            iconObject.transform.SetParent(header, false);
+            icon = iconObject.GetComponent<RawImage>();
+        }
+        icon.texture = Resources.Load<Texture2D>(
+            TurboConsumableSystem.GetResourcePath(type));
+        icon.color = Color.white;
+        icon.raycastTarget = false;
+        SetRuntimeRect(
+            icon.rectTransform,
+            new Vector2(-153f, 0f),
+            new Vector2(58f, 58f));
+
+        TMP_Text label = header.Find("Machine Label")?.GetComponent<TMP_Text>();
+        if (label == null)
+        {
+            GameObject labelObject = new GameObject(
+                "Machine Label",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(TextMeshProUGUI));
+            labelObject.transform.SetParent(header, false);
+            label = labelObject.GetComponent<TMP_Text>();
+            TMP_Text fontSource = parent.GetComponentInChildren<TMP_Text>(true);
+            if (fontSource != null)
+            {
+                label.font = fontSource.font;
+            }
+        }
+        label.text = $"{displayName.ToUpperInvariant()} TURBO TECH";
+        label.fontSize = 19f;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = Color.white;
+        label.raycastTarget = false;
+        SetRuntimeRect(
+            label.rectTransform,
+            new Vector2(27f, 0f),
+            new Vector2(295f, 48f));
     }
 
     private static void SetRuntimeNodePosition(
@@ -5942,6 +6498,128 @@ public sealed class RoundSystem : MonoBehaviour
         connectorImage.color = new Color(color.r, color.g, color.b, 0.45f);
         connectorImage.raycastTarget = false;
         connector.SetAsFirstSibling();
+    }
+
+    private static void EnsureTurboConsumableNodes(RectTransform treeContent)
+    {
+        ProgressionNodeButton[] existing =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        ProgressionSystem.UpgradeId[] roots =
+        {
+            ProgressionSystem.UpgradeId.IncubatorTurbo,
+            ProgressionSystem.UpgradeId.CrosshatcherTurbo,
+            ProgressionSystem.UpgradeId.RobotTurbo
+        };
+        ProgressionSystem.UpgradeId[] powers =
+        {
+            ProgressionSystem.UpgradeId.IncubatorTurboPower,
+            ProgressionSystem.UpgradeId.CrosshatcherTurboPower,
+            ProgressionSystem.UpgradeId.RobotTurboPower
+        };
+        ProgressionSystem.UpgradeId[] durations =
+        {
+            ProgressionSystem.UpgradeId.IncubatorTurboDuration,
+            ProgressionSystem.UpgradeId.CrosshatcherTurboDuration,
+            ProgressionSystem.UpgradeId.RobotTurboDuration
+        };
+        Color[] colors =
+        {
+            new Color(0.78f, 0.31f, 0.07f, 1f),
+            new Color(0.18f, 0.55f, 0.25f, 1f),
+            new Color(0.46f, 0.25f, 0.67f, 1f)
+        };
+
+        ProgressionNodeButton rootTemplate = null;
+        ProgressionNodeButton tierTemplate = null;
+        for (int index = 0; index < existing.Length; index++)
+        {
+            ProgressionNodeButton node = existing[index];
+            if (node == null)
+            {
+                continue;
+            }
+
+            if (node.IsTierNode)
+            {
+                tierTemplate ??= node;
+            }
+            else if (node.UpgradeId == ProgressionSystem.UpgradeId.FoodBag)
+            {
+                rootTemplate = node;
+            }
+        }
+
+        if (rootTemplate == null || tierTemplate == null)
+        {
+            return;
+        }
+
+        for (int typeIndex = 0; typeIndex < roots.Length; typeIndex++)
+        {
+            if (!HasProgressionNode(existing, roots[typeIndex], 0))
+            {
+                GameObject clone = Instantiate(
+                    rootTemplate.gameObject,
+                    treeContent);
+                clone.name = $"Buy {roots[typeIndex]}";
+                ProgressionNodeButton node =
+                    clone.GetComponent<ProgressionNodeButton>();
+                node?.SetUpgrade(roots[typeIndex]);
+                node?.SetVisualColor(colors[typeIndex]);
+            }
+
+            for (int tier = 1;
+                 tier <= TurboConsumableSystem.MaximumPowerLevel;
+                 tier++)
+            {
+                if (!HasProgressionNode(existing, powers[typeIndex], tier))
+                {
+                    GameObject clone = Instantiate(
+                        tierTemplate.gameObject,
+                        treeContent);
+                    clone.name = $"Upgrade {powers[typeIndex]} {tier}";
+                    ProgressionNodeButton node =
+                        clone.GetComponent<ProgressionNodeButton>();
+                    node?.SetUpgrade(powers[typeIndex], tier);
+                    node?.SetVisualColor(colors[typeIndex]);
+                }
+            }
+
+            for (int tier = 1;
+                 tier <= TurboConsumableSystem.MaximumDurationLevel;
+                 tier++)
+            {
+                if (!HasProgressionNode(existing, durations[typeIndex], tier))
+                {
+                    GameObject clone = Instantiate(
+                        tierTemplate.gameObject,
+                        treeContent);
+                    clone.name = $"Upgrade {durations[typeIndex]} {tier}";
+                    ProgressionNodeButton node =
+                        clone.GetComponent<ProgressionNodeButton>();
+                    node?.SetUpgrade(durations[typeIndex], tier);
+                    node?.SetVisualColor(colors[typeIndex]);
+                }
+            }
+        }
+    }
+
+    private static bool HasProgressionNode(
+        ProgressionNodeButton[] nodes,
+        ProgressionSystem.UpgradeId id,
+        int targetLevel)
+    {
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            if (nodes[index] != null
+                && nodes[index].UpgradeId == id
+                && nodes[index].TargetLevel == targetLevel)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void EnsureRobotRarityLogicTier(RectTransform treeContent)
@@ -6266,7 +6944,7 @@ public sealed class RoundSystem : MonoBehaviour
 
     private static void EnsureEggProgressionTiers(RectTransform treeContent)
     {
-        const int maximumWeightTier = 10;
+        int maximumWeightTier = ProgressionSystem.MaximumEggWeightLevel;
         int maximumValueTier = ProgressionSystem.MaximumEggValueLevel;
         ProgressionNodeButton[] weightNodes =
             new ProgressionNodeButton[maximumWeightTier + 1];
@@ -6344,6 +7022,108 @@ public sealed class RoundSystem : MonoBehaviour
             clone.name = $"Upgrade Egg Value {tier}";
             clone.GetComponent<ProgressionNodeButton>()?.SetUpgrade(
                 ProgressionSystem.UpgradeId.EggValue,
+                tier);
+        }
+    }
+
+    private static void EnsurePremiumEggTiers(RectTransform treeContent)
+    {
+        int maximumTier = ProgressionSystem.MaximumRareEggChanceLevel;
+        bool[] existing = new bool[maximumTier + 1];
+        ProgressionNodeButton template = null;
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node == null
+                || node.UpgradeId
+                    != ProgressionSystem.UpgradeId.RareEggChance
+                || node.TargetLevel <= 0)
+            {
+                continue;
+            }
+
+            if (node.TargetLevel <= maximumTier)
+            {
+                existing[node.TargetLevel] = true;
+            }
+            if (template == null || node.TargetLevel == 8)
+            {
+                template = node;
+            }
+        }
+
+        if (template == null)
+        {
+            return;
+        }
+
+        for (int tier = 1; tier <= maximumTier; tier++)
+        {
+            if (existing[tier])
+            {
+                continue;
+            }
+
+            GameObject clone = Instantiate(
+                template.gameObject,
+                template.transform.parent);
+            clone.name = $"Upgrade Premium Eggs {tier}";
+            clone.GetComponent<ProgressionNodeButton>()?.SetUpgrade(
+                ProgressionSystem.UpgradeId.RareEggChance,
+                tier);
+        }
+    }
+
+    private static void EnsureChickenPerkTiers(RectTransform treeContent)
+    {
+        int maximumTier = ProgressionSystem.MaximumChickenPerksLevel;
+        bool[] existing = new bool[maximumTier + 1];
+        ProgressionNodeButton template = null;
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node == null)
+            {
+                continue;
+            }
+
+            if (node.UpgradeId == ProgressionSystem.UpgradeId.ChickenPerks
+                && node.TargetLevel > 0
+                && node.TargetLevel <= maximumTier)
+            {
+                existing[node.TargetLevel] = true;
+            }
+            else if (node.UpgradeId
+                    == ProgressionSystem.UpgradeId.RareEggChance
+                && (template == null || node.TargetLevel == 8))
+            {
+                template = node;
+            }
+        }
+
+        if (template == null)
+        {
+            return;
+        }
+
+        for (int tier = 1; tier <= maximumTier; tier++)
+        {
+            if (existing[tier])
+            {
+                continue;
+            }
+
+            GameObject clone = Instantiate(
+                template.gameObject,
+                template.transform.parent);
+            clone.name = $"Upgrade Chicken Perks {tier}";
+            clone.GetComponent<ProgressionNodeButton>()?.SetUpgrade(
+                ProgressionSystem.UpgradeId.ChickenPerks,
                 tier);
         }
     }
@@ -7080,6 +7860,13 @@ public sealed class RoundSystem : MonoBehaviour
             earlyCashQuotaEndRound + 1,
             midCashQuotaEndRound);
         lateCashQuotaGrowth = Mathf.Clamp(lateCashQuotaGrowth, 1f, 2f);
+        endgameCashQuotaStartRound = Mathf.Max(
+            midCashQuotaEndRound + 1,
+            endgameCashQuotaStartRound);
+        endgameCashQuotaGrowth = Mathf.Clamp(
+            endgameCashQuotaGrowth,
+            1f,
+            2f);
         maximumRoundCashQuotaCents = Math.Max(
             baseRoundCashQuotaCents,
             maximumRoundCashQuotaCents);

@@ -10,7 +10,7 @@ public sealed class PenHudController : MonoBehaviour
 {
     public static PenHudController Instance { get; private set; }
 
-    [SerializeField] private RectTransform buttonContent;
+    [SerializeField] private RectTransform buttonContent = null;
     [SerializeField] private List<PenButtonView> authoredButtons =
         new List<PenButtonView>();
 
@@ -40,7 +40,12 @@ public sealed class PenHudController : MonoBehaviour
             GetComponent<PenEquipmentHudController>();
         if (equipmentHud == null)
         {
-            equipmentHud = gameObject.AddComponent<PenEquipmentHudController>();
+            Debug.LogError(
+                $"{nameof(PenHudController)} on {name} is missing its "
+                + "authored PenEquipmentHudController prefab component.",
+                this);
+            enabled = false;
+            return;
         }
 
         PenButtonView firstButton = authoredButtons.Count > 0
@@ -280,8 +285,10 @@ public sealed class PenHudController : MonoBehaviour
                 || RoundSystem.Instance.IsRoundInProgress;
             buyButton.RefreshPurchase(
                 nextIndex,
+                manager.AreAdditionalPensUnlocked,
                 purchaseAvailable
                     && !manager.IsPenPurchaseInProgress
+                    && manager.AreAdditionalPensUnlocked
                     && balance >= cost,
                 cost,
                 balance);

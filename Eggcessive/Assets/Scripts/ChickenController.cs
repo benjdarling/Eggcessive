@@ -332,6 +332,7 @@ public sealed class ChickenController : MonoBehaviour
     public float FoodScore => foodScore;
     public float MaximumFoodScore => maximumFoodScore;
     public float FoodScoreNormalized => maximumFoodScore > 0f ? foodScore / maximumFoodScore : 0f;
+    public float FoodSearchRadius => foodSearchRadius;
     public static IReadOnlyList<ChickenController> ActiveInstances => ActiveChickens;
     public ChickenBreed Breed => breed;
     public bool IsMachineControlled => isMachineControlled;

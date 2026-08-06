@@ -82,6 +82,7 @@ public static class RoundUiPrefabSetup
 
             buildMethod.Invoke(roundSystem, null);
             GameplayHudPrefabSetup.ConfigureRoundHud(root);
+            ConfigureAdditionalPenMilestone(roundSystem);
             ConfigureEventSystem(root, uiInputActions);
 
             SerializedObject serializedSystem = new SerializedObject(roundSystem);
@@ -142,6 +143,121 @@ public static class RoundUiPrefabSetup
         AssetDatabase.Refresh();
         ValidateInputReferences();
         Debug.Log("Round UI, input actions, flying coin, and floating reward prefabs rebuilt.");
+    }
+
+    private static void ConfigureAdditionalPenMilestone(
+        RoundSystem roundSystem)
+    {
+        SerializedObject serializedSystem = new SerializedObject(roundSystem);
+        GameObject resultsScreen = serializedSystem
+            .FindProperty("resultsScreen")
+            .objectReferenceValue as GameObject;
+        if (resultsScreen == null)
+        {
+            throw new MissingReferenceException(
+                "Cannot author the additional-pen milestone without the results screen.");
+        }
+
+        GameObject milestone = Object.Instantiate(
+            resultsScreen,
+            resultsScreen.transform.parent);
+        milestone.name = "Additional Pens Milestone Screen";
+        Transform card = milestone.transform.Find("Results Card");
+        if (card == null)
+        {
+            Object.DestroyImmediate(milestone);
+            throw new MissingReferenceException(
+                "The results screen is missing its Results Card.");
+        }
+
+        string[] statRows =
+        {
+            "Cash Made Row",
+            "Eggs Collected Row",
+            "Eggs Laid Row",
+            "Eggs Per Minute Row",
+            "Chickens Hatched Row",
+            "Chicken Count Row",
+            "Cash Quota Row"
+        };
+        for (int index = 0; index < statRows.Length; index++)
+        {
+            Transform row = card.Find(statRows[index]);
+            if (row != null)
+            {
+                row.gameObject.SetActive(false);
+            }
+        }
+
+        TMP_Text title = card.Find("Results Title")?.GetComponent<TMP_Text>();
+        if (title != null)
+        {
+            title.text = "YOU'RE AN EGG FARMING PRO!";
+            title.alignment = TextAlignmentOptions.Center;
+            title.color = new Color(1f, 0.84f, 0.3f);
+            title.rectTransform.anchoredPosition = new Vector2(0f, 110f);
+            title.rectTransform.sizeDelta = new Vector2(590f, 100f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 28f;
+            title.fontSizeMax = 46f;
+        }
+
+        TMP_Text subtitle = card.Find("Results Subtitle")
+            ?.GetComponent<TMP_Text>();
+        if (subtitle != null)
+        {
+            subtitle.text =
+                "YOU CAN NOW BUY ADDITIONAL PENS!\n\n"
+                + "Grow into a multi-pen operation and build the ultimate egg farm.";
+            subtitle.alignment = TextAlignmentOptions.Center;
+            subtitle.color = new Color(0.84f, 0.94f, 0.72f);
+            subtitle.rectTransform.anchoredPosition = new Vector2(0f, -18f);
+            subtitle.rectTransform.sizeDelta = new Vector2(550f, 150f);
+            subtitle.fontSize = 25f;
+        }
+
+        Button milestoneButton = null;
+        Button[] buttons = card.GetComponentsInChildren<Button>(true);
+        for (int index = 0; index < buttons.Length; index++)
+        {
+            Button button = buttons[index];
+            button.onClick.RemoveAllListeners();
+            bool isContinue = button.name == "Continue Button";
+            button.gameObject.SetActive(isContinue);
+            if (!isContinue)
+            {
+                continue;
+            }
+
+            button.name = "Additional Pens Unlocked";
+            RectTransform buttonRect = button.transform as RectTransform;
+            if (buttonRect != null)
+            {
+                buttonRect.anchoredPosition = new Vector2(
+                    0f,
+                    buttonRect.anchoredPosition.y);
+            }
+            TMP_Text buttonText = button.GetComponentInChildren<TMP_Text>(true);
+            if (buttonText != null)
+            {
+                buttonText.text = "BUILD MORE PENS!";
+            }
+            milestoneButton = button;
+        }
+
+        if (milestoneButton == null)
+        {
+            Object.DestroyImmediate(milestone);
+            throw new MissingReferenceException(
+                "The milestone screen has no authored continue button.");
+        }
+
+        milestone.SetActive(false);
+        serializedSystem.FindProperty("additionalPenMilestoneScreen")
+            .objectReferenceValue = milestone;
+        serializedSystem.FindProperty("additionalPenMilestoneButton")
+            .objectReferenceValue = milestoneButton;
+        serializedSystem.ApplyModifiedPropertiesWithoutUndo();
     }
 
     [MenuItem("Tools/Eggcessive/Validate Round UI Input")]
@@ -228,6 +344,7 @@ public static class RoundUiPrefabSetup
         {
             RectTransform first = nodes[firstIndex].GetComponent<RectTransform>();
             Rect firstBounds = GetAnchoredRect(first);
+            Transform firstGroup = GetLayoutGroup(first, treeContent);
 
             for (int secondIndex = firstIndex + 1;
                 secondIndex < nodes.Length;
@@ -235,6 +352,11 @@ public static class RoundUiPrefabSetup
             {
                 RectTransform second =
                     nodes[secondIndex].GetComponent<RectTransform>();
+                if (firstGroup != GetLayoutGroup(second, treeContent))
+                {
+                    continue;
+                }
+
                 Rect secondBounds = GetAnchoredRect(second);
 
                 if (firstBounds.Overlaps(secondBounds))
@@ -245,22 +367,21 @@ public static class RoundUiPrefabSetup
             }
         }
 
-        ProgressionNodeButton crosshatcher = Array.Find(
-            nodes,
-            node => node.UpgradeId
-                == ProgressionSystem.UpgradeId.CrosshatcherInstall);
-        TMP_Text crosshatcherLabel = crosshatcher != null
-            ? crosshatcher.GetComponentInChildren<TMP_Text>(true)
-            : null;
+    }
 
-        if (crosshatcher == null
-            || crosshatcher.GetComponent<RectTransform>().rect.width < 180f
-            || crosshatcherLabel == null
-            || crosshatcherLabel.textWrappingMode != TextWrappingModes.NoWrap)
+    private static Transform GetLayoutGroup(
+        Transform node,
+        Transform treeContent)
+    {
+        Transform current = node;
+        while (current.parent != null && current.parent != treeContent)
         {
-            throw new InvalidOperationException(
-                "The Crosshatcher root node must be at least 180px wide and use no-wrap text.");
+            current = current.parent;
         }
+
+        return current.parent == treeContent && current != node
+            ? current
+            : treeContent;
     }
 
     private static Rect GetAnchoredRect(RectTransform rectTransform)

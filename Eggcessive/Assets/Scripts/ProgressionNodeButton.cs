@@ -90,6 +90,12 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         Refresh();
     }
 
+    public void SetVisualColor(Color color)
+    {
+        unlockedColor = color;
+        Refresh();
+    }
+
     public void Refresh()
     {
         if (button == null)
@@ -251,6 +257,8 @@ public sealed class ProgressionNodeButton : MonoBehaviour
                 $"PRIME FEED\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.RareEggChance =>
                 $"PREMIUM EGGS\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.ChickenPerks =>
+                $"CHICKEN PERKS\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.EggWeight =>
                 $"EGG WEIGHT/SIZE\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.EggValue =>
@@ -275,12 +283,20 @@ public sealed class ProgressionNodeButton : MonoBehaviour
             ProgressionSystem.UpgradeId.RobotSpeed => "ROBOT\nSPEED",
             ProgressionSystem.UpgradeId.RobotCapacity => "ROBOT\nCAPACITY",
             ProgressionSystem.UpgradeId.RobotSmartness => "ROBOT\nLOGIC",
+            ProgressionSystem.UpgradeId.IncubatorTurboPower
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboPower
+                or ProgressionSystem.UpgradeId.RobotTurboPower =>
+                $"BOOST +%\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.IncubatorTurboDuration
+                or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration
+                or ProgressionSystem.UpgradeId.RobotTurboDuration =>
+                $"DURATION\nTIER {targetLevel}",
             _ => GetNodeState().Title.ToUpperInvariant()
         };
     }
 
-    private static string FormatMoney(int cents)
+    private static string FormatMoney(long cents)
     {
-        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
+        return $"${cents / 100:N0}.{System.Math.Abs(cents % 100):D2}";
     }
 }

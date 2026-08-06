@@ -22,14 +22,15 @@ public sealed class PenButtonView : MonoBehaviour
     private static readonly Color UnavailableCostTextColour =
         new Color(0.48f, 0.42f, 0.27f, 1f);
 
-    [SerializeField] private Button button;
-    [SerializeField] private Image background;
-    [SerializeField] private TMP_Text penLabel;
-    [SerializeField] private TMP_Text purchaseLabel;
-    [SerializeField] private GameObject progressRoot;
-    [SerializeField] private Image progressFill;
-    [SerializeField] private TMP_Text earningsText;
-    [SerializeField] private CanvasGroup earningsCanvasGroup;
+    [SerializeField] private Button button = null;
+    [SerializeField] private Image background = null;
+    [SerializeField] private TMP_Text penLabel = null;
+    [SerializeField] private TMP_Text purchaseLabel = null;
+    [SerializeField] private GameObject progressRoot = null;
+    [SerializeField] private Image progressFill = null;
+    [SerializeField] private TMP_Text earningsText = null;
+    [SerializeField] private CanvasGroup earningsCanvasGroup = null;
+    [SerializeField] private GameObject purchaseLockRoot = null;
 
     private int penIndex;
     private bool purchaseButton;
@@ -148,6 +149,7 @@ public sealed class PenButtonView : MonoBehaviour
 
     public void RefreshPurchase(
         int nextPenIndex,
+        bool progressionUnlocked,
         bool affordable,
         int costCents,
         long currentCents)
@@ -162,10 +164,17 @@ public sealed class PenButtonView : MonoBehaviour
         purchaseLabel.color = affordable
             ? RateTextColour
             : UnavailableCostTextColour;
-        progressRoot.SetActive(true);
+        progressRoot.SetActive(progressionUnlocked);
         button.interactable = affordable;
         purchaseAffordable = affordable;
-        purchaseLabel.text = FormatCompactMoney(costCents);
+        purchaseLabel.text = progressionUnlocked
+            ? FormatCompactMoney(costCents)
+            : $"ROUND {PenExpansionManager.AdditionalPenUnlockRound}\nMILESTONE";
+        if (purchaseLockRoot != null)
+        {
+            purchaseLockRoot.SetActive(!progressionUnlocked);
+            purchaseLockRoot.transform.SetAsLastSibling();
+        }
         Color penColour = PenUiPalette.GetColour(nextPenIndex);
         float brightness = affordable ? 0.95f : 0.16f;
         purchaseBaseColour = new Color(
@@ -177,7 +186,9 @@ public sealed class PenButtonView : MonoBehaviour
         SetOutlineColour(
             affordable ? AvailableOutlineColour : DefaultOutlineColour * 0.55f);
         SetProgressFill(
-            costCents > 0 ? currentCents / (float)costCents : 1f);
+            progressionUnlocked && costCents > 0
+                ? currentCents / (float)costCents
+                : 0f);
     }
 
     public void ShowEarnings(int cents)

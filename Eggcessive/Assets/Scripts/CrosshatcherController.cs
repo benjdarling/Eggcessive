@@ -58,7 +58,13 @@ public sealed class CrosshatcherController : MonoBehaviour
     private int reservedChickenSlots;
 
     public const int MaximumLevel = 10;
-    public const int MinimumFlockSizeForNewCycle = 8;
+    private const float AutomaticCrosshatchProtectedPopulationRatio = 0.8f;
+    public static int MinimumFlockSizeForNewCycle => Mathf.Clamp(
+        Mathf.CeilToInt(
+            ChickenController.MaximumChickenCount
+                * AutomaticCrosshatchProtectedPopulationRatio) + 2,
+        4,
+        ChickenController.MaximumChickenCount);
     public int SpeedLevel => speedLevel;
     public int QualityLevel => qualityLevel;
     public float ProcessingTime => GetProcessingTime(speedLevel);
@@ -136,7 +142,9 @@ public sealed class CrosshatcherController : MonoBehaviour
 
         if (state == MachineState.Processing)
         {
-            processingTimeRemaining -= Time.deltaTime;
+            processingTimeRemaining -= Time.deltaTime
+                * TurboConsumableSystem.GetProductivityMultiplier(
+                    TurboConsumableSystem.TurboType.Crosshatcher);
         }
 
         if (processingTimeRemaining <= 0f)

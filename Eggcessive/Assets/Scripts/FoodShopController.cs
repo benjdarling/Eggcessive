@@ -82,6 +82,11 @@ public sealed class FoodShopController : MonoBehaviour
     [SerializeField] private RawImage handToolIcon;
     [SerializeField] private RawImage collectionToolIcon;
     [SerializeField] private RawImage foodToolIcon;
+    [SerializeField] private Button[] turboButtons = new Button[3];
+    [SerializeField] private Image[] turboButtonImages = new Image[3];
+    [SerializeField] private TMP_Text[] turboCountTexts = new TMP_Text[3];
+    [SerializeField] private TMP_Text[] turboTimerTexts = new TMP_Text[3];
+    private float nextTurboHudRefreshTime;
     [SerializeField] private GameObject foodPrefab = null;
     [SerializeField, Min(1)] private int foodCostCents = 200;
 
@@ -191,13 +196,17 @@ public sealed class FoodShopController : MonoBehaviour
             buyButton.onClick.AddListener(BuyFood);
         }
 
+        AddTurboButtonListeners();
+
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
         EggCarryController.ToolSelectionChanged += RefreshToolButtons;
+        TurboConsumableSystem.Changed += RefreshTurboButtons;
     }
 
     private void Start()
     {
         RefreshUi();
+        RefreshTurboButtons();
     }
 
     private void OnDisable()
@@ -222,8 +231,11 @@ public sealed class FoodShopController : MonoBehaviour
             buyButton.onClick.RemoveListener(BuyFood);
         }
 
+        RemoveTurboButtonListeners();
+
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
         EggCarryController.ToolSelectionChanged -= RefreshToolButtons;
+        TurboConsumableSystem.Changed -= RefreshTurboButtons;
         CancelPlacement();
     }
 
@@ -255,6 +267,12 @@ public sealed class FoodShopController : MonoBehaviour
             {
                 BeginPlacement();
             }
+        }
+
+        if (Time.unscaledTime >= nextTurboHudRefreshTime)
+        {
+            nextTurboHudRefreshTime = Time.unscaledTime + 0.2f;
+            RefreshTurboButtons();
         }
 
         if (!roundActive)
@@ -959,6 +977,89 @@ public sealed class FoodShopController : MonoBehaviour
     }
 
 #endif
+
+    private void AddTurboButtonListeners()
+    {
+        GetTurboButton(0)?.onClick.AddListener(UseIncubatorTurbo);
+        GetTurboButton(1)?.onClick.AddListener(UseCrosshatcherTurbo);
+        GetTurboButton(2)?.onClick.AddListener(UseRobotTurbo);
+    }
+
+    private void RemoveTurboButtonListeners()
+    {
+        GetTurboButton(0)?.onClick.RemoveListener(UseIncubatorTurbo);
+        GetTurboButton(1)?.onClick.RemoveListener(UseCrosshatcherTurbo);
+        GetTurboButton(2)?.onClick.RemoveListener(UseRobotTurbo);
+    }
+
+    private Button GetTurboButton(int index)
+    {
+        return turboButtons != null
+            && index >= 0
+            && index < turboButtons.Length
+                ? turboButtons[index]
+                : null;
+    }
+
+    private void UseIncubatorTurbo() =>
+        UseTurbo(TurboConsumableSystem.TurboType.Incubator);
+
+    private void UseCrosshatcherTurbo() =>
+        UseTurbo(TurboConsumableSystem.TurboType.Crosshatcher);
+
+    private void UseRobotTurbo() =>
+        UseTurbo(TurboConsumableSystem.TurboType.Robot);
+
+    private void UseTurbo(TurboConsumableSystem.TurboType type)
+    {
+        TurboConsumableSystem.TryActivate(type, out string message);
+        SetStatus(message);
+        RefreshTurboButtons();
+    }
+
+    private void RefreshTurboButtons()
+    {
+        bool roundActive = RoundSystem.Instance == null
+            || RoundSystem.Instance.IsRoundInProgress;
+        for (int index = 0; index < turboButtons.Length; index++)
+        {
+            Button button = turboButtons[index];
+            if (button == null)
+            {
+                continue;
+            }
+
+            TurboConsumableSystem.TurboType type =
+                (TurboConsumableSystem.TurboType)index;
+            int count = TurboConsumableSystem.GetInventory(type);
+            float remaining = TurboConsumableSystem.GetRemainingSeconds(type);
+            bool active = remaining > 0f;
+            button.interactable = roundActive
+                && count > 0
+                && TurboConsumableSystem.HasApplicableMachine(type);
+            if (turboCountTexts[index] != null)
+            {
+                turboCountTexts[index].text = $"x{count}";
+            }
+            if (turboTimerTexts[index] != null)
+            {
+                turboTimerTexts[index].text = active
+                    ? $"{Mathf.CeilToInt(remaining)}s"
+                    : string.Empty;
+            }
+
+            Outline outline = button.GetComponent<Outline>();
+            if (outline != null)
+            {
+                outline.effectColor = active
+                    ? new Color(1f, 0.9f, 0.2f, 1f)
+                    : new Color(0.08f, 0.06f, 0.025f, 0.95f);
+                outline.effectDistance = active
+                    ? new Vector2(4f, -4f)
+                    : new Vector2(2f, -2f);
+            }
+        }
+    }
 
     private void RefreshToolButtons()
     {

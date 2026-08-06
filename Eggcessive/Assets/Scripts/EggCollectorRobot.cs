@@ -51,6 +51,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private int storedEggs;
     private int smartnessLevel;
     private float vacuumRadius;
+    private float configuredMovementSpeed = 1f;
     private int targetPenIndex = -1;
     private readonly List<int> storedEggValues = new List<int>();
     private readonly List<float> storedEggWeights = new List<float>();
@@ -99,6 +100,20 @@ public sealed class EggCollectorRobot : MonoBehaviour
     public EggContainer TargetContainer => eggContainer;
     public static IReadOnlyList<EggCollectorRobot> ActiveInstances =>
         ActiveRobots;
+
+    private void RefreshTurboMovementSpeed()
+    {
+        if (agent == null)
+        {
+            return;
+        }
+
+        float multiplier =
+            TurboConsumableSystem.GetProductivityMultiplier(
+                TurboConsumableSystem.TurboType.Robot);
+        agent.speed = configuredMovementSpeed * multiplier;
+        agent.acceleration = agent.speed * 5f;
+    }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
@@ -160,8 +175,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
             0,
             ChickenArmsSmartnessLevel);
         vacuumRadius = GetVacuumRadius(vacuumLevel);
-        agent.speed = Mathf.Max(0.1f, movementSpeed);
-        agent.acceleration = agent.speed * 5f;
+        configuredMovementSpeed = Mathf.Max(0.1f, movementSpeed);
+        RefreshTurboMovementSpeed();
         agent.angularSpeed = 540f;
         agent.autoBraking = true;
         agent.autoRepath = true;
@@ -187,6 +202,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
             StopMoving();
             return;
         }
+
+        RefreshTurboMovementSpeed();
 
         if (!agent.isOnNavMesh && !TryPlaceOnNavMesh())
         {
@@ -366,7 +383,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
             egg.transform.position = Vector3.MoveTowards(
                 egg.transform.position,
                 target,
-                VacuumSuctionSpeed * Time.deltaTime);
+                VacuumSuctionSpeed
+                    * TurboConsumableSystem.GetProductivityMultiplier(
+                        TurboConsumableSystem.TurboType.Robot)
+                    * Time.deltaTime);
             egg.transform.Rotate(Vector3.up, 720f * Time.deltaTime, Space.World);
             if ((egg.transform.position - target).sqrMagnitude <= 0.0025f)
             {
@@ -616,6 +636,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool NeedsPopulationRecovery()
     {
         PenExpansionManager manager = PenExpansionManager.Instance;
+        // Crosshatching consumes two chickens and produces one. Keep routing
+        // common eggs into the incubator until the pen has both a protected
+        // 80% flock and the two surplus parents needed for a new cycle.
         return manager != null
             && manager.IsInitialized
             && targetPenIndex >= 0
@@ -649,6 +672,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private bool TryBeginChickenMission()
     {
+        // Re-evaluate this immediately before reserving parents. A max-speed
+        // crosshatcher can otherwise consume population faster than a maxed
+        // incubator replaces it and permanently stall a fresh pen.
         if (smartnessLevel < ChickenArmsSmartnessLevel
             || Time.time < nextChickenMissionCheckTime
             || crosshatcher == null
@@ -727,7 +753,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
         transform.rotation = Quaternion.RotateTowards(
             transform.rotation,
             desiredRotation,
-            chickenTurnSpeed * Time.deltaTime);
+            chickenTurnSpeed
+                * TurboConsumableSystem.GetProductivityMultiplier(
+                    TurboConsumableSystem.TurboType.Robot)
+                * Time.deltaTime);
         float facingAngle = Vector3.Angle(transform.forward, facing);
         if (facingAngle <= chickenFacingTolerance)
         {

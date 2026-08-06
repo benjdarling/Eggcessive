@@ -28,7 +28,17 @@ public sealed class ProgressionSystem : MonoBehaviour
         EggValue,
         PrimeFeed,
         BasketReach,
-        TruckBonus
+        TruckBonus,
+        ChickenPerks,
+        IncubatorTurbo,
+        IncubatorTurboPower,
+        IncubatorTurboDuration,
+        CrosshatcherTurbo,
+        CrosshatcherTurboPower,
+        CrosshatcherTurboDuration,
+        RobotTurbo,
+        RobotTurboPower,
+        RobotTurboDuration
     }
 
     public readonly struct NodeState
@@ -39,7 +49,7 @@ public sealed class ProgressionSystem : MonoBehaviour
             string details,
             int level,
             int maximumLevel,
-            int cost,
+            long cost,
             bool visible,
             bool prerequisiteMet)
         {
@@ -58,40 +68,45 @@ public sealed class ProgressionSystem : MonoBehaviour
         public string Details { get; }
         public int Level { get; }
         public int MaximumLevel { get; }
-        public int Cost { get; }
+        public long Cost { get; }
         public bool Visible { get; }
         public bool PrerequisiteMet { get; }
         public bool IsMaxed => MaximumLevel > 0 && Level >= MaximumLevel;
         public bool IsRepeatable => MaximumLevel <= 0;
     }
 
-    private static readonly int[] RareChanceCosts =
+    private static readonly long[] RareChanceCosts =
     {
-        1200, 3500, 9000, 22000, 55000, 140000, 350000, 900000
+        1200, 3500, 9000, 22000, 55000, 140000, 350000, 900000,
+        2700000, 8000000, 24000000, 75000000
     };
 
     private static readonly float[] RareChanceByLevel =
     {
         0f, 0.00025f, 0.00075f, 0.002f, 0.005f,
-        0.0125f, 0.03f, 0.065f, 0.12f
+        0.0125f, 0.03f, 0.065f, 0.12f,
+        0.15f, 0.18f, 0.215f, 0.25f
     };
 
     private static readonly float[] EpicChanceByLevel =
     {
         0f, 0f, 0.0001f, 0.0005f, 0.0015f,
-        0.004f, 0.01f, 0.025f, 0.055f
+        0.004f, 0.01f, 0.025f, 0.055f,
+        0.075f, 0.1f, 0.13f, 0.165f
     };
 
     private static readonly float[] LegendaryChanceByLevel =
     {
         0f, 0f, 0.00005f, 0.0002f, 0.0005f,
-        0.0015f, 0.004f, 0.012f, 0.03f
+        0.0015f, 0.004f, 0.012f, 0.03f,
+        0.042f, 0.057f, 0.075f, 0.095f
     };
 
     private static readonly float[] CosmicChanceByLevel =
     {
         0f, 0f, 0f, 0f, 0.00002f,
-        0.0001f, 0.0005f, 0.002f, 0.0075f
+        0.0001f, 0.0005f, 0.002f, 0.0075f,
+        0.012f, 0.019f, 0.029f, 0.042f
     };
 
     // Individual breed odds are added to the supplies-shop premium egg
@@ -116,28 +131,48 @@ public sealed class ProgressionSystem : MonoBehaviour
         0f, 0f, 0.00002f, 0.0002f, 0.001f, 0.005f, 0.02f
     };
 
-    private static readonly int[] EggWeightCosts =
+    private static readonly long[] ChickenPerkCosts =
     {
-        2500, 7500, 20000, 60000, 180000, 550000, 1600000, 5000000,
-        12000000, 30000000
+        2500000, 12500000, 60000000, 300000000, 1500000000,
+        6000000000L, 24000000000L, 90000000000L,
+        350000000000L, 1400000000000L
     };
 
-    private static readonly int[] EggValueCosts =
+    // Each purchased tier adds this amount to the premium-egg multiplier for
+    // the corresponding breed. Higher breeds therefore turn the same global
+    // genetics investment into a stronger late-game rarity boost.
+    private static readonly float[] ChickenPerkBoostPerLevel =
+    {
+        0.05f, 0.08f, 0.1f, 0.12f, 0.15f, 0.18f, 0.2f
+    };
+
+    private static readonly long[] EggWeightCosts =
+    {
+        2500, 7500, 20000, 60000, 180000, 550000, 1600000, 5000000,
+        12000000, 30000000, 90000000, 270000000, 800000000,
+        2400000000L, 7200000000L
+    };
+
+    private static readonly long[] EggValueCosts =
     {
         5000, 15000, 45000, 135000, 400000, 1200000, 3600000, 10000000,
-        30000000, 90000000, 270000000, 800000000
+        30000000, 90000000, 270000000, 800000000,
+        2400000000L, 7200000000L, 22000000000L,
+        66000000000L, 200000000000L, 600000000000L
     };
 
     private static readonly float[] EggValueMultipliers =
     {
         1f, 1.5f, 2.25f, 3.5f, 5.5f, 8.5f, 13f, 20f, 30f,
-        45f, 70f, 110f, 170f
+        45f, 70f, 110f, 170f, 260f, 400f, 600f, 900f, 1350f, 2000f
     };
 
-    private static readonly int[] TruckBonusCosts =
+    private static readonly long[] TruckBonusCosts =
     {
         20000, 60000, 180000, 540000, 1600000,
-        4800000, 14000000, 42000000, 125000000, 375000000
+        4800000, 14000000, 42000000, 125000000, 375000000,
+        1100000000L, 3300000000L, 10000000000L,
+        30000000000L, 90000000000L
     };
     private const float TruckBonusPerLevel = 0.1f;
 
@@ -146,33 +181,34 @@ public sealed class ProgressionSystem : MonoBehaviour
     private const float RarityScaleStep = 0.075f;
     public const float BaseEggWeightKilograms = 0.1f;
 
-    private static readonly int[] BasketCosts = { 800, 1800, 4200, 8000 };
-    private static readonly int[] BasketReachCosts =
+    private static readonly long[] BasketCosts = { 800, 1800, 4200, 8000 };
+    private static readonly long[] BasketReachCosts =
     {
         1500, 4000, 10000, 25000
     };
     // Vacuum entry sits beyond both completed basket branches. Its $600 unlock
     // costs more than Basket Reach 4 ($250), while later power and range tiers
     // continue scaling sharply because they multiply collection income.
-    private static readonly int[] VacuumPowerCosts =
+    private static readonly long[] VacuumPowerCosts =
     {
         60000, 150000, 1500000
     };
-    private static readonly int[] VacuumRangeCosts =
+    private static readonly long[] VacuumRangeCosts =
     {
         14000, 250000, 2500000
     };
-    private static readonly int[] RobotSpeedCosts = { 180000, 520000, 1600000 };
-    private static readonly int[] RobotCapacityCosts = { 240000, 750000, 2400000 };
-    private static readonly int[] RobotSmartCosts =
+    private static readonly long[] RobotSpeedCosts = { 180000, 520000, 1600000 };
+    private static readonly long[] RobotCapacityCosts = { 240000, 750000, 2400000 };
+    private static readonly long[] RobotSmartCosts =
         { 600000, 3500000, 12000000, 60000000 };
     private const int RobotUnlockCost = 120000;
 
-    [SerializeField, Range(0, 8)] private int rareEggChanceLevel;
+    [SerializeField, Range(0, 12)] private int rareEggChanceLevel;
     [FormerlySerializedAs("eggValueLevel")]
-    [SerializeField, Range(0, 10)] private int eggWeightLevel;
-    [SerializeField, Range(0, 12)] private int eggSaleValueLevel;
-    [SerializeField, Range(0, 10)] private int truckBonusLevel;
+    [SerializeField, Range(0, 15)] private int eggWeightLevel;
+    [SerializeField, Range(0, 18)] private int eggSaleValueLevel;
+    [SerializeField, Range(0, 15)] private int truckBonusLevel;
+    [SerializeField, Range(0, 10)] private int chickenPerksLevel;
 
     public static ProgressionSystem Instance { get; private set; }
     public static event Action Changed;
@@ -181,8 +217,12 @@ public sealed class ProgressionSystem : MonoBehaviour
     public int EggWeightLevel => eggWeightLevel;
     public int EggValueLevel => eggSaleValueLevel;
     public int TruckBonusLevel => truckBonusLevel;
+    public int ChickenPerksLevel => chickenPerksLevel;
+    public static int MaximumRareEggChanceLevel => RareChanceCosts.Length;
+    public static int MaximumEggWeightLevel => EggWeightCosts.Length;
     public static int MaximumEggValueLevel => EggValueCosts.Length;
     public static int MaximumTruckBonusLevel => TruckBonusCosts.Length;
+    public static int MaximumChickenPerksLevel => ChickenPerkCosts.Length;
     public float TruckBonusMultiplier =>
         1f + truckBonusLevel * TruckBonusPerLevel;
     public float EggValueMultiplier =>
@@ -235,6 +275,19 @@ public sealed class ProgressionSystem : MonoBehaviour
 
         switch (id)
         {
+            case UpgradeId.IncubatorTurbo:
+            case UpgradeId.CrosshatcherTurbo:
+            case UpgradeId.RobotTurbo:
+                return GetTurboPurchaseNodeState(id);
+
+            case UpgradeId.IncubatorTurboPower:
+            case UpgradeId.IncubatorTurboDuration:
+            case UpgradeId.CrosshatcherTurboPower:
+            case UpgradeId.CrosshatcherTurboDuration:
+            case UpgradeId.RobotTurboPower:
+            case UpgradeId.RobotTurboDuration:
+                return GetTurboUpgradeNodeState(id, 0);
+
             case UpgradeId.FoodBag:
                 return new NodeState(
                     "Feed Bag",
@@ -292,6 +345,19 @@ public sealed class ProgressionSystem : MonoBehaviour
                     GetArrayCost(RareChanceCosts, rareEggChanceLevel),
                     food != null,
                     food != null);
+
+            case UpgradeId.ChickenPerks:
+                return new NodeState(
+                    "Chicken Perks",
+                    "CP",
+                    GetChickenPerksDescription(chickenPerksLevel + 1),
+                    chickenPerksLevel,
+                    ChickenPerkCosts.Length,
+                    GetArrayCost(
+                        ChickenPerkCosts,
+                        chickenPerksLevel),
+                    rareEggChanceLevel >= 7,
+                    rareEggChanceLevel >= 8);
 
             case UpgradeId.EggWeight:
                 return new NodeState(
@@ -538,6 +604,14 @@ public sealed class ProgressionSystem : MonoBehaviour
             return GetNodeState(id);
         }
 
+        if (TryGetTurboUpgrade(
+                id,
+                out _,
+                out _))
+        {
+            return GetTurboUpgradeNodeState(id, targetLevel);
+        }
+
         FoodShopController food = FoodShopController.Instance;
         IncubatorShopController incubator = IncubatorShopController.Instance;
         CrosshatcherShopController crosshatcher = CrosshatcherShopController.Instance;
@@ -595,6 +669,23 @@ public sealed class ProgressionSystem : MonoBehaviour
                     GetArrayCost(RareChanceCosts, target - 1),
                     true,
                     food != null && rareEggChanceLevel >= target - 1);
+            }
+            case UpgradeId.ChickenPerks:
+            {
+                int target = Mathf.Clamp(
+                    targetLevel,
+                    1,
+                    ChickenPerkCosts.Length);
+                return new NodeState(
+                    $"Chicken Perks Tier {target}",
+                    "CP",
+                    GetChickenPerksDescription(target),
+                    chickenPerksLevel,
+                    target,
+                    GetArrayCost(ChickenPerkCosts, target - 1),
+                    true,
+                    rareEggChanceLevel >= 8
+                        && chickenPerksLevel >= target - 1);
             }
             case UpgradeId.EggWeight:
             {
@@ -956,6 +1047,7 @@ public sealed class ProgressionSystem : MonoBehaviour
             out float legendary,
             out float cosmic);
         float multiplier = Mathf.Max(1f, premiumChanceMultiplier);
+        multiplier *= GetChickenPerksMultiplier(breed);
         rare *= multiplier;
         epic *= multiplier;
         legendary *= multiplier;
@@ -1030,6 +1122,17 @@ public sealed class ProgressionSystem : MonoBehaviour
         return Mathf.RoundToInt(baseValue * EggValueMultiplier);
     }
 
+    public float GetChickenPerksMultiplier(
+        ChickenController.ChickenBreed breed)
+    {
+        int breedIndex = Mathf.Clamp(
+            (int)breed,
+            0,
+            ChickenPerkBoostPerLevel.Length - 1);
+        return 1f + chickenPerksLevel
+            * ChickenPerkBoostPerLevel[breedIndex];
+    }
+
     public float RollEggWeightScale(ChickenEgg.EggType type)
     {
         float upperMultiplier = EggWeightUpperMultiplier;
@@ -1052,6 +1155,33 @@ public sealed class ProgressionSystem : MonoBehaviour
     {
         switch (id)
         {
+            case UpgradeId.IncubatorTurbo:
+                return AddTurboConsumable(
+                    TurboConsumableSystem.TurboType.Incubator,
+                    out message);
+            case UpgradeId.CrosshatcherTurbo:
+                return AddTurboConsumable(
+                    TurboConsumableSystem.TurboType.Crosshatcher,
+                    out message);
+            case UpgradeId.RobotTurbo:
+                return AddTurboConsumable(
+                    TurboConsumableSystem.TurboType.Robot,
+                    out message);
+            case UpgradeId.IncubatorTurboPower:
+            case UpgradeId.IncubatorTurboDuration:
+            case UpgradeId.CrosshatcherTurboPower:
+            case UpgradeId.CrosshatcherTurboDuration:
+            case UpgradeId.RobotTurboPower:
+            case UpgradeId.RobotTurboDuration:
+                if (TryGetTurboUpgrade(id, out var turboType, out var kind))
+                {
+                    return TurboConsumableSystem.TryUpgrade(
+                        turboType,
+                        kind,
+                        out message);
+                }
+                message = "Turbo upgrade unavailable";
+                return false;
             case UpgradeId.FeedSpeed:
                 return FoodShopController.Instance.TryUnlockNextFeedTier(out message, false);
             case UpgradeId.PrimeFeed:
@@ -1061,6 +1191,12 @@ public sealed class ProgressionSystem : MonoBehaviour
             case UpgradeId.RareEggChance:
                 rareEggChanceLevel++;
                 message = $"Premium egg chance level {rareEggChanceLevel}";
+                return true;
+            case UpgradeId.ChickenPerks:
+                chickenPerksLevel++;
+                message =
+                    $"Chicken perks level {chickenPerksLevel}: "
+                    + $"up to {GetChickenPerksMultiplier(ChickenController.ChickenBreed.Cosmic):0.##}x premium egg chance";
                 return true;
             case UpgradeId.EggWeight:
                 eggWeightLevel++;
@@ -1131,7 +1267,117 @@ public sealed class ProgressionSystem : MonoBehaviour
         }
     }
 
-    private static int GetArrayCost(int[] costs, int level)
+    private static NodeState GetTurboPurchaseNodeState(UpgradeId id)
+    {
+        TurboConsumableSystem.TurboType type = id switch
+        {
+            UpgradeId.IncubatorTurbo =>
+                TurboConsumableSystem.TurboType.Incubator,
+            UpgradeId.CrosshatcherTurbo =>
+                TurboConsumableSystem.TurboType.Crosshatcher,
+            _ => TurboConsumableSystem.TurboType.Robot
+        };
+        string name = TurboConsumableSystem.GetDisplayName(type);
+        return new NodeState(
+            $"{name} Turbo",
+            "⚡",
+            $"Owned {TurboConsumableSystem.GetInventory(type)} . "
+                + $"+{TurboConsumableSystem.GetBoostPercent(type):0}% for "
+                + $"{TurboConsumableSystem.GetDurationSeconds(type):0}s",
+            TurboConsumableSystem.GetInventory(type),
+            0,
+            TurboConsumableSystem.GetPurchaseCost(type),
+            true,
+            true);
+    }
+
+    private static NodeState GetTurboUpgradeNodeState(
+        UpgradeId id,
+        int targetLevel)
+    {
+        if (!TryGetTurboUpgrade(id, out var type, out var kind))
+        {
+            return default;
+        }
+
+        int current = kind == TurboConsumableSystem.UpgradeKind.Power
+            ? TurboConsumableSystem.GetPowerLevel(type)
+            : TurboConsumableSystem.GetDurationLevel(type);
+        int maximum = kind == TurboConsumableSystem.UpgradeKind.Power
+            ? TurboConsumableSystem.MaximumPowerLevel
+            : TurboConsumableSystem.MaximumDurationLevel;
+        int target = targetLevel > 0
+            ? Mathf.Clamp(targetLevel, 1, maximum)
+            : maximum;
+        long cost = TurboConsumableSystem.GetUpgradeCost(
+            type,
+            kind,
+            targetLevel > 0 ? target - 1 : current);
+        string name = TurboConsumableSystem.GetDisplayName(type);
+        string detail = kind == TurboConsumableSystem.UpgradeKind.Power
+            ? $"Current +{TurboConsumableSystem.GetBoostPercent(type):0}% productivity"
+            : $"Current duration {TurboConsumableSystem.GetDurationSeconds(type):0} seconds";
+        return new NodeState(
+            $"{name} Turbo {kind}",
+            kind == TurboConsumableSystem.UpgradeKind.Power ? "X%" : "SEC",
+            detail,
+            current,
+            target,
+            cost,
+            true,
+            TurboConsumableSystem.GetTotalPurchased(type) > 0
+                && (targetLevel <= 0 || current >= target - 1));
+    }
+
+    private static bool AddTurboConsumable(
+        TurboConsumableSystem.TurboType type,
+        out string message)
+    {
+        TurboConsumableSystem.AddConsumable(type);
+        message = $"Bought {TurboConsumableSystem.GetDisplayName(type)} Turbo "
+            + $"(owned {TurboConsumableSystem.GetInventory(type)})";
+        return true;
+    }
+
+    private static bool TryGetTurboUpgrade(
+        UpgradeId id,
+        out TurboConsumableSystem.TurboType type,
+        out TurboConsumableSystem.UpgradeKind kind)
+    {
+        switch (id)
+        {
+            case UpgradeId.IncubatorTurboPower:
+                type = TurboConsumableSystem.TurboType.Incubator;
+                kind = TurboConsumableSystem.UpgradeKind.Power;
+                return true;
+            case UpgradeId.IncubatorTurboDuration:
+                type = TurboConsumableSystem.TurboType.Incubator;
+                kind = TurboConsumableSystem.UpgradeKind.Duration;
+                return true;
+            case UpgradeId.CrosshatcherTurboPower:
+                type = TurboConsumableSystem.TurboType.Crosshatcher;
+                kind = TurboConsumableSystem.UpgradeKind.Power;
+                return true;
+            case UpgradeId.CrosshatcherTurboDuration:
+                type = TurboConsumableSystem.TurboType.Crosshatcher;
+                kind = TurboConsumableSystem.UpgradeKind.Duration;
+                return true;
+            case UpgradeId.RobotTurboPower:
+                type = TurboConsumableSystem.TurboType.Robot;
+                kind = TurboConsumableSystem.UpgradeKind.Power;
+                return true;
+            case UpgradeId.RobotTurboDuration:
+                type = TurboConsumableSystem.TurboType.Robot;
+                kind = TurboConsumableSystem.UpgradeKind.Duration;
+                return true;
+            default:
+                type = default;
+                kind = default;
+                return false;
+        }
+    }
+
+    private static long GetArrayCost(long[] costs, int level)
     {
         return level >= 0 && level < costs.Length ? costs[level] : 0;
     }
@@ -1183,6 +1429,30 @@ public sealed class ProgressionSystem : MonoBehaviour
             $"Cosmic {cosmic * 100f:0.####}%";
     }
 
+    private static string GetChickenPerksDescription(int level)
+    {
+        int clampedLevel = Mathf.Clamp(
+            level,
+            0,
+            ChickenPerkCosts.Length);
+        float white = 1f + clampedLevel
+            * ChickenPerkBoostPerLevel[
+                (int)ChickenController.ChickenBreed.White];
+        float blue = 1f + clampedLevel
+            * ChickenPerkBoostPerLevel[
+                (int)ChickenController.ChickenBreed.Blue];
+        float rainbow = 1f + clampedLevel
+            * ChickenPerkBoostPerLevel[
+                (int)ChickenController.ChickenBreed.Rainbow];
+        float cosmic = 1f + clampedLevel
+            * ChickenPerkBoostPerLevel[
+                (int)ChickenController.ChickenBreed.Cosmic];
+        return
+            "Multiplies each breed's final premium egg chance . "
+            + $"White {white:0.##}x . Blue {blue:0.##}x . "
+            + $"Rainbow {rainbow:0.##}x . Cosmic {cosmic:0.##}x";
+    }
+
     private static void GetRareChances(
         int level,
         out float rare,
@@ -1197,9 +1467,9 @@ public sealed class ProgressionSystem : MonoBehaviour
         cosmic = CosmicChanceByLevel[index];
     }
 
-    private static string FormatMoney(int cents)
+    private static string FormatMoney(long cents)
     {
-        return $"${cents / 100:N0}.{Mathf.Abs(cents % 100):D2}";
+        return $"${cents / 100:N0}.{Math.Abs(cents % 100):D2}";
     }
 
     private static void NotifyChanged()

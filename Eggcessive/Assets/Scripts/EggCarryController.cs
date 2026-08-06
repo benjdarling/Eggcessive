@@ -1057,7 +1057,9 @@ public sealed class EggCarryController : MonoBehaviour
         int capacityLevel,
         int smartnessLevel,
         int vacuumLevel,
-        Transform parent)
+        Transform parent,
+        Vector3? existingWorldPosition = null,
+        Quaternion? existingWorldRotation = null)
     {
         int resolvedSpeed = Mathf.Clamp(speedLevel, 1, MaximumRobotLevel);
         int resolvedCapacity = Mathf.Clamp(capacityLevel, 1, MaximumRobotLevel);
@@ -1085,13 +1087,16 @@ public sealed class EggCarryController : MonoBehaviour
             return null;
         }
 
-        Vector3 spawnPosition = targetContainer != null
-            ? targetContainer.DepositPosition + Vector3.right * 0.45f
-            : Vector3.zero;
+        Vector3 spawnPosition = existingWorldPosition
+            ?? (targetContainer != null
+                ? targetContainer.DepositPosition + Vector3.right * 0.45f
+                : Vector3.zero);
+        Quaternion spawnRotation = existingWorldRotation
+            ?? Quaternion.identity;
         GameObject robotObject = Instantiate(
             robotPrefabs[prefabIndex],
             spawnPosition,
-            Quaternion.identity,
+            spawnRotation,
             parent);
         robotObject.name = $"{robotPrefabs[prefabIndex].name} (Pen Robot)";
         EggCollectorRobot robot = robotObject.GetComponent<EggCollectorRobot>();

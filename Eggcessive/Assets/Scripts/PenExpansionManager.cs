@@ -8,6 +8,8 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class PenExpansionManager : MonoBehaviour
 {
+    public const int AdditionalPenUnlockRound = 20;
+
     public enum EquipmentType
     {
         Incubator,
@@ -81,7 +83,7 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private static readonly int[] AutoFeederSpeedCosts =
     {
-        7500000, 25000000, 90000000, 350000000
+        7500000, 25000000
     };
 
     private static readonly int[] AutoFeederRangeCosts =
@@ -178,6 +180,7 @@ public sealed class PenExpansionManager : MonoBehaviour
     private int focusedPenIndex;
     private float nextVisualRefreshTime;
     private Coroutine penPurchaseFinalization;
+    private bool additionalPensUnlocked;
 
     public static PenExpansionManager Instance { get; private set; }
     public event Action StateChanged;
@@ -185,6 +188,7 @@ public sealed class PenExpansionManager : MonoBehaviour
     public int PenCount => slots.Count;
     public int FocusedPenIndex => focusedPenIndex;
     public bool IsPenPurchaseInProgress => penPurchaseFinalization != null;
+    public bool AreAdditionalPensUnlocked => additionalPensUnlocked;
     public int OwnedPenCount
     {
         get
@@ -299,6 +303,17 @@ public sealed class PenExpansionManager : MonoBehaviour
         return IsValidIndex(index) ? slots[index].costCents : 0;
     }
 
+    public void UnlockAdditionalPens()
+    {
+        if (additionalPensUnlocked)
+        {
+            return;
+        }
+
+        additionalPensUnlocked = true;
+        StateChanged?.Invoke();
+    }
+
     public int GetPenIndex(EggContainer container)
     {
         if (container == null)
@@ -340,6 +355,20 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
 
         return center;
+    }
+
+    public Vector3 GetTruckStopPosition(int penIndex)
+    {
+        GameObject marker = GameObject.Find("truck_stop");
+        Vector3 basePosition = marker != null
+            ? marker.transform.position
+            : new Vector3(0f, 0f, -3.5f);
+        if (IsValidIndex(penIndex))
+        {
+            basePosition.x += slots[penIndex].horizontalOffset;
+        }
+
+        return basePosition;
     }
 
     public int GetChickenCount(int penIndex)
@@ -793,6 +822,12 @@ public sealed class PenExpansionManager : MonoBehaviour
         PenSlot slot = slots[index];
         if (!slot.owned)
         {
+            if (spendCurrency && !additionalPensUnlocked)
+            {
+                StateChanged?.Invoke();
+                return false;
+            }
+
             if (requireRoundInProgress
                 && RoundSystem.Instance != null
                 && !RoundSystem.Instance.IsRoundInProgress)
@@ -1309,8 +1344,12 @@ public sealed class PenExpansionManager : MonoBehaviour
             return;
         }
 
+        Vector3? existingPosition = null;
+        Quaternion? existingRotation = null;
         if (slot.robot != null)
         {
+            existingPosition = slot.robot.transform.position;
+            existingRotation = slot.robot.transform.rotation;
             slot.robot.FinalizeRound();
             Destroy(slot.robot.gameObject);
             slot.robot = null;
@@ -1330,7 +1369,9 @@ public sealed class PenExpansionManager : MonoBehaviour
             slot.robotCapacityLevel,
             slot.robotSmartnessLevel,
             slot.robotVacuumLevel,
-            slot.runtimeRoot != null ? slot.runtimeRoot.transform : null);
+            slot.runtimeRoot != null ? slot.runtimeRoot.transform : null,
+            existingPosition,
+            existingRotation);
     }
 
     private void RefreshDistantVisuals()
@@ -1811,11 +1852,13 @@ internal sealed class PenTruckController : MonoBehaviour
 
     private Vector3 GetStopPosition()
     {
-        GameObject marker = GameObject.Find("truck_stop");
-        Vector3 basePosition = marker != null
-            ? marker.transform.position
-            : new Vector3(0f, 0f, -3.5f);
-        return basePosition + penOffset;
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        int penIndex = manager != null
+            ? manager.GetPenIndex(container)
+            : -1;
+        return manager != null && penIndex >= 0
+            ? manager.GetTruckStopPosition(penIndex)
+            : new Vector3(0f, 0f, -3.5f) + penOffset;
     }
 
     private void DestroyTruck()

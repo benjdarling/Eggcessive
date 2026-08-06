@@ -94,10 +94,16 @@ public sealed class IncubatorController : MonoBehaviour
 
         if (storedEggs <= 0)
         {
+            // Population can fall below the cap when chickens are moved into
+            // the crosshatcher. Keep an idle incubator's cap state current
+            // even though it has no processing timer to redraw.
+            RefreshDisplays();
             return;
         }
 
-        processingTimeRemaining -= Time.deltaTime;
+        processingTimeRemaining -= Time.deltaTime
+            * TurboConsumableSystem.GetProductivityMultiplier(
+                TurboConsumableSystem.TurboType.Incubator);
 
         if (processingTimeRemaining <= 0f)
         {

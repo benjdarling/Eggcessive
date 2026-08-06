@@ -19,6 +19,9 @@ public sealed class FoodPile : MonoBehaviour
 
     public static IReadOnlyList<FoodPile> ActivePiles => Piles;
     public float RemainingFood => remainingFood;
+    public float RemainingFraction => startingFood > 0f
+        ? Mathf.Clamp01(remainingFood / startingFood)
+        : 0f;
     public bool IsAvailable => isActiveAndEnabled && remainingFood > 0f;
     public float EggProductionSpeedMultiplier => eggProductionSpeedMultiplier;
     public float PremiumChanceMultiplier => premiumChanceMultiplier;

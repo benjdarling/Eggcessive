@@ -112,7 +112,7 @@ public sealed class InteractiveGrassSystem : MonoBehaviour
 
     [Header("Natural Meadow Coverage")]
     [Tooltip("Approximate proportion of the area occupied by the broad grass bed.")]
-    [SerializeField, Range(0.75f, 0.98f)] private float targetGrassCoverage = 0.88f;
+    [SerializeField, Range(0.75f, 0.98f)] private float targetGrassCoverage = 0.84f;
     [Tooltip("World-space frequency of the large dirt pockets. Lower values make fewer, larger regions.")]
     [SerializeField, Min(0.01f)] private float dirtPatchScale = 0.38f;
     [Tooltip("Width of the partially covered rim between solid grass and solid dirt.")]

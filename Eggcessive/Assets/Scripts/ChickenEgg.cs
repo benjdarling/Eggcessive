@@ -30,7 +30,7 @@ public sealed class ChickenEgg : MonoBehaviour
     private const float GroundContactMinimumUpDot = 0.45f;
 
     [SerializeField] private Material[] typeMaterials = null;
-    [SerializeField] private bool cosmicVisualPrefab;
+    [SerializeField] private bool cosmicVisualPrefab = false;
 
     [Header("Far Impostor")]
     [Tooltip(
