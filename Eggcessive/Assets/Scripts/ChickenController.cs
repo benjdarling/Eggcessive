@@ -40,6 +40,7 @@ public sealed class ChickenController : MonoBehaviour
     private static readonly int BlinkParameter = Animator.StringToHash("Blink");
     private static readonly int BlinkSpeedParameter = Animator.StringToHash("BlinkSpeed");
     private static readonly int TurnLeanParameter = Animator.StringToHash("TurnLean");
+    private static readonly int MoodParameter = Animator.StringToHash("Mood");
     private static readonly int LayEggParameter = Animator.StringToHash("LayEgg");
     private static readonly int IdleState = Animator.StringToHash("Base Layer.Idle");
     private static readonly int LayEggState = Animator.StringToHash("Base Layer.Lay Egg");
@@ -57,6 +58,7 @@ public sealed class ChickenController : MonoBehaviour
     private const float DefaultLayEggFrameCount = 22f;
     private const float MissingNavMeshWarningDelay = 2f;
     private const string WingFlutterLayerName = "Wing Flutter Layer";
+    private const string TalkLayerName = "Talk Layer";
     private static bool hasWarnedAboutMissingNavMesh;
     private static int aiSchedulerFrame = -1;
     private static int aiSchedulerCursor;
@@ -97,6 +99,11 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float eatingDistance = 0.2f;
     [SerializeField, Min(0.01f)] private float foodPerBite = 10f;
     [SerializeField, Min(0.01f)] private float secondsPerBite = 0.65f;
+    [Tooltip("Blendshape driven by the chicken's current food score.")]
+    [SerializeField] private string fatBlendShapeName = "fat";
+    [SerializeField, Range(-1f, 0f)] private float minimumFat = -0.2f;
+    [SerializeField, Range(0f, 1f)] private float maximumFat = 1f;
+    [SerializeField, Min(0.01f)] private float fatBlendSmoothTime = 0.35f;
 
     [Header("Animation")]
     [SerializeField] private Animator animator = null;
@@ -106,6 +113,19 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(1f)] private float fullLeanTurnRate = 180f;
     [SerializeField, Min(0.01f)] private float leanSmoothTime = 0.08f;
     [SerializeField, Range(0f, 1f)] private float leanStrength = 1f;
+
+    [Header("Mood Expressions")]
+    [SerializeField, Min(0.1f)] private float minMoodInterval = 4f;
+    [SerializeField, Min(0.1f)] private float maxMoodInterval = 9f;
+    [SerializeField, Min(0.1f)] private float minMoodDuration = 2f;
+    [SerializeField, Min(0.1f)] private float maxMoodDuration = 4.5f;
+    [SerializeField, Min(0.01f)] private float moodNeighbourRadius = 0.8f;
+    [Tooltip("Up to this many nearby chickens can contribute to a happy social mood.")]
+    [SerializeField, Min(1)] private int comfortableMoodNeighbourCount = 3;
+    [Tooltip("At this many nearby chickens, crowding contributes fully to anger.")]
+    [SerializeField, Min(2)] private int crowdedMoodNeighbourCount = 6;
+    [SerializeField, Min(0.01f)] private float angryMoodBlendTime = 0.05f;
+    [SerializeField, Min(0.01f)] private float moodBlendTime = 0.12f;
 
     [Header("Secondary Motion LOD")]
     [Tooltip(
@@ -233,6 +253,32 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0f)] private float eggSpawnHeight = 0.08f;
     [SerializeField, Min(0f)] private float eggSpawnBehindDistance = 0.06f;
 
+    [Header("Chicken Audio")]
+    [Tooltip("Independent random talk interval for a chicken in a small flock.")]
+    [SerializeField, Min(0.1f)] private float minTalkInterval = 7f;
+    [SerializeField, Min(0.1f)] private float maxTalkInterval = 16f;
+    [Tooltip(
+        "Each additional active chicken lengthens every chicken's next interval. " +
+        "The timers remain independent, but large flocks do not become a wall of noise.")]
+    [SerializeField, Min(0f)] private float talkIntervalScalePerAdditionalChicken = 0.12f;
+    [Tooltip(
+        "Gives every chicken a persistent chatty or quiet personality by varying " +
+        "its individual talk cadence.")]
+    [SerializeField, Range(0f, 0.75f)] private float talkCadenceVariation = 0.25f;
+    [SerializeField, Range(0.01f, 0.5f)] private float talkPoseBlendInFraction = 0.1f;
+    [SerializeField, Range(0f, 0.5f)] private float talkPoseHoldFraction = 0.15f;
+    [SerializeField] private AudioClip[] talkSounds = System.Array.Empty<AudioClip>();
+    [SerializeField] private AudioClip[] layEggSounds = System.Array.Empty<AudioClip>();
+    [SerializeField, Range(0f, 1f)] private float talkVolume = 0.7f;
+    [SerializeField, Range(0f, 1f)] private float layEggVolume = 0.8f;
+    [SerializeField, Range(0f, 1f)] private float minLayEggVolumeMultiplier = 0.7f;
+    [SerializeField, Range(0f, 1f)] private float maxLayEggVolumeMultiplier = 1f;
+    [SerializeField, Range(0f, 0.5f)] private float voicePitchVariation = 0.1f;
+    [SerializeField, Range(0f, 0.5f)] private float voiceVolumeVariation = 0.1f;
+    [SerializeField, Min(0f)] private float voiceMinDistance = 0f;
+    [SerializeField, Min(0.01f)] private float voiceNearSilentDistance = 12f;
+    [SerializeField, Min(0.01f)] private float voiceMaxDistance = 16f;
+
     private readonly Collider[] eggColliderBuffer = new Collider[16];
     private NavMeshPath path;
 
@@ -257,7 +303,13 @@ public sealed class ChickenController : MonoBehaviour
     private float nextBlinkTime;
     private float turnLean;
     private float turnLeanVelocity;
+    private float nextMoodDecisionTime;
+    private float moodEndTime;
+    private float moodTarget;
+    private float moodValue;
+    private float moodVelocity;
     private int wingFlutterLayerIndex = -1;
+    private int talkLayerIndex = -1;
     private float nextWingFlutterTime;
     private float wingFlutterStartTime;
     private float wingFlutterDuration;
@@ -292,6 +344,12 @@ public sealed class ChickenController : MonoBehaviour
     private readonly List<SkinnedMeshRenderer> heldBlendShapeRenderers =
         new List<SkinnedMeshRenderer>();
     private readonly List<int> heldBlendShapeIndices = new List<int>();
+    private readonly List<SkinnedMeshRenderer> fatBlendShapeRenderers =
+        new List<SkinnedMeshRenderer>();
+    private readonly List<int> fatBlendShapeIndices = new List<int>();
+    private float fatBlendValue;
+    private float fatBlendVelocity;
+    private float lastAppliedFatBlendValue = float.PositiveInfinity;
     private MaterialPropertyBlock breedPropertyBlock;
     private Vector3 cachedSeparation;
     private Vector3 targetSeparationVelocity;
@@ -325,6 +383,17 @@ public sealed class ChickenController : MonoBehaviour
     private float initialAnimatorPhase;
     private bool usingFarImpostor;
     private bool penVisualsEnabled = true;
+    private AudioSource talkAudioSource;
+    private AudioSource layEggAudioSource;
+    private float nextTalkTime;
+    private float talkCadenceMultiplier = 1f;
+    private int lastTalkClipIndex = -1;
+    private int lastLayEggClipIndex = -1;
+    private bool talkPoseActive;
+    private float talkPoseStartTime;
+    private float talkPoseBlendInEndTime;
+    private float talkPoseSustainEndTime;
+    private float talkPoseEndTime;
     private float lastAiUpdateTime;
     private int separationSamplePhase;
     private static Camera secondaryMotionCamera;
@@ -568,12 +637,21 @@ public sealed class ChickenController : MonoBehaviour
         CacheLayEggAnimationTiming();
         eggSpawnBone = FindEggSpawnBone();
         heldAttachBone = FindHeldAttachBone();
-        CacheHeldBlendShapes();
+        CacheChickenBlendShapes();
 
         CacheWingFlutterLayer();
+        CacheTalkLayer();
         ApplyBreedVisual();
+        talkAudioSource = CreateVoiceAudioSource();
+        layEggAudioSource = CreateVoiceAudioSource();
+        talkCadenceMultiplier = Random.Range(
+            1f - talkCadenceVariation,
+            1f + talkCadenceVariation);
 
         foodScore = Mathf.Clamp(startingFoodScore, 0f, maximumFoodScore);
+        fatBlendValue = CalculateTargetFatBlendValue();
+        fatBlendVelocity = 0f;
+        ApplyFatBlendShape(true);
         previousPlanarForward = GetPlanarForward();
     }
 
@@ -586,13 +664,26 @@ public sealed class ChickenController : MonoBehaviour
         ScheduleNextBlink();
         ScheduleNextWingFlutter();
         ScheduleNextWingMicroTwitch();
+        ScheduleNextMoodDecision(true);
+        ScheduleNextTalk(true);
         SetWingFlutterWeight(0f);
+        SetTalkPoseWeight(0f);
+        talkPoseActive = false;
         ApplyHeldBlendShape(false);
         wingFlutterActive = false;
         wingMicroTwitchActive = false;
+        talkPoseActive = false;
+        SetTalkPoseWeight(0f);
         previousPlanarForward = GetPlanarForward();
         turnLean = 0f;
         turnLeanVelocity = 0f;
+        moodTarget = 0f;
+        moodValue = 0f;
+        moodVelocity = 0f;
+        if (animator != null)
+        {
+            animator.SetFloat(MoodParameter, 0f);
+        }
         nextSecondaryMotionLodCheckFrame = Time.frameCount;
         lastAiUpdateTime = Time.time;
         separationSamplePhase = 0;
@@ -643,6 +734,7 @@ public sealed class ChickenController : MonoBehaviour
             animator.ResetTrigger(BlinkParameter);
             animator.ResetTrigger(LayEggParameter);
             animator.SetFloat(TurnLeanParameter, 0f);
+            animator.SetFloat(MoodParameter, 0f);
             SetWingFlutterWeight(0f);
         }
         wingFlutterActive = false;
@@ -659,6 +751,11 @@ public sealed class ChickenController : MonoBehaviour
 
     private void RunContinuousFrameUpdate()
     {
+        UpdateTalk();
+        UpdateTalkPose();
+        UpdateMoodExpression();
+        UpdateFatBlendShape();
+
         if (penVisualsEnabled)
         {
             UpdateSecondaryMotionLod(false);
@@ -687,6 +784,139 @@ public sealed class ChickenController : MonoBehaviour
 
     }
 
+    private void UpdateMoodExpression()
+    {
+        if (animator == null)
+        {
+            return;
+        }
+
+        float now = Time.time;
+        bool canExpressMood = penVisualsEnabled
+            && !usingFarImpostor
+            && !isMachineControlled;
+
+        if (!canExpressMood)
+        {
+            moodTarget = 0f;
+        }
+        else if (Mathf.Abs(moodTarget) > 0.001f && now >= moodEndTime)
+        {
+            moodTarget = 0f;
+            ScheduleNextMoodDecision(false);
+        }
+        else if (Mathf.Abs(moodTarget) <= 0.001f
+            && Mathf.Abs(moodValue) <= 0.01f
+            && now >= nextMoodDecisionTime)
+        {
+            TryBeginMoodExpression(now);
+        }
+
+        float activeBlendTime = moodTarget < 0f
+            ? angryMoodBlendTime
+            : moodBlendTime;
+        moodValue = Mathf.SmoothDamp(
+            moodValue,
+            moodTarget,
+            ref moodVelocity,
+            activeBlendTime,
+            Mathf.Infinity,
+            Time.deltaTime);
+        if (Mathf.Abs(moodValue) < 0.001f && moodTarget == 0f)
+        {
+            moodValue = 0f;
+            moodVelocity = 0f;
+        }
+
+        animator.SetFloat(MoodParameter, Mathf.Clamp(moodValue, -1f, 1f));
+    }
+
+    private void TryBeginMoodExpression(float now)
+    {
+        int nearbyCount = CountMoodNeighbours();
+        float foodNormalized = maximumFoodScore > 0f
+            ? Mathf.Clamp01(foodScore / maximumFoodScore)
+            : 0f;
+        float hungerThreshold = Mathf.Max(0.0001f, seekFoodBelowScore);
+        float hunger = 1f - Mathf.Clamp01(foodScore / hungerThreshold);
+        float criticalHunger = hunger * hunger;
+        float crowding = Mathf.InverseLerp(
+            comfortableMoodNeighbourCount,
+            crowdedMoodNeighbourCount,
+            nearbyCount);
+        float hasCompany = nearbyCount > 0 ? 1f : 0f;
+        float comfortableCompany = hasCompany * (1f - crowding);
+
+        // Hunger and crowding can each cause anger, while their interaction is
+        // deliberately strongest so a hungry chicken in a crush is very likely
+        // to show it.
+        float angryWeight = criticalHunger * 0.3f
+            + crowding * 0.25f
+            + criticalHunger * crowding * 1.2f;
+        // Happiness needs both good food and a small amount of company. Squaring
+        // food makes genuinely well-fed chickens much more expressive than merely
+        // average ones.
+        float happyWeight = foodNormalized
+            * foodNormalized
+            * comfortableCompany
+            * 1.2f;
+        const float neutralWeight = 0.8f;
+        float totalWeight = angryWeight + happyWeight + neutralWeight;
+        float roll = Random.value * totalWeight;
+
+        if (roll < angryWeight)
+        {
+            moodTarget = -1f;
+        }
+        else if (roll < angryWeight + happyWeight)
+        {
+            moodTarget = 1f;
+        }
+        else
+        {
+            ScheduleNextMoodDecision(false);
+            return;
+        }
+
+        moodEndTime = now + Random.Range(minMoodDuration, maxMoodDuration);
+    }
+
+    private int CountMoodNeighbours()
+    {
+        float radiusSquared = moodNeighbourRadius * moodNeighbourRadius;
+        Vector3 position = transform.position;
+        int nearbyCount = 0;
+
+        for (int index = 0; index < ActiveChickens.Count; index++)
+        {
+            ChickenController other = ActiveChickens[index];
+            if (other == null || other == this || !other.isActiveAndEnabled)
+            {
+                continue;
+            }
+
+            Vector3 offset = other.transform.position - position;
+            offset.y = 0f;
+            if (offset.sqrMagnitude <= radiusSquared)
+            {
+                nearbyCount++;
+            }
+        }
+
+        return nearbyCount;
+    }
+
+    private void ScheduleNextMoodDecision(bool initialSchedule)
+    {
+        float delay = Random.Range(minMoodInterval, maxMoodInterval);
+        if (initialSchedule)
+        {
+            delay *= Random.Range(0.25f, 1f);
+        }
+
+        nextMoodDecisionTime = Time.time + delay;
+    }
+
     internal static void TickScheduledUpdates()
     {
         ChickenController schedulerSource = null;
@@ -707,6 +937,239 @@ public sealed class ChickenController : MonoBehaviour
         {
             RunAiScheduler(schedulerSource);
         }
+    }
+
+    private void UpdateTalk()
+    {
+        float now = Time.time;
+        if (now < nextTalkTime)
+        {
+            return;
+        }
+
+        ScheduleNextTalk(false);
+        if (!penVisualsEnabled
+            || isMachineControlled
+            || state == ChickenState.EggLaying
+            || talkAudioSource == null
+            || talkAudioSource.isPlaying)
+        {
+            return;
+        }
+
+        float playbackDuration = PlayRandomVoice(
+            talkAudioSource,
+            talkSounds,
+            ref lastTalkClipIndex,
+            talkVolume,
+            1f - voiceVolumeVariation,
+            1f + voiceVolumeVariation);
+        if (playbackDuration > 0f)
+        {
+            BeginTalkPose(playbackDuration);
+        }
+    }
+
+    private void ScheduleNextTalk(bool initialSchedule)
+    {
+        int talkingPopulation = 0;
+        for (int index = 0; index < ActiveChickens.Count; index++)
+        {
+            ChickenController chicken = ActiveChickens[index];
+            if (chicken != null
+                && chicken.isActiveAndEnabled
+                && chicken.penVisualsEnabled
+                && !chicken.isMachineControlled)
+            {
+                talkingPopulation++;
+            }
+        }
+
+        float populationScale = 1f
+            + Mathf.Max(0, talkingPopulation - 1)
+                * talkIntervalScalePerAdditionalChicken;
+        float minimum = Mathf.Max(0.1f, minTalkInterval);
+        float maximum = Mathf.Max(minimum, maxTalkInterval);
+        float delay = Random.Range(minimum, maximum)
+            * populationScale
+            * talkCadenceMultiplier;
+        if (initialSchedule)
+        {
+            delay *= Random.Range(0.2f, 1f);
+        }
+
+        nextTalkTime = Time.time + delay;
+    }
+
+    private AudioSource CreateVoiceAudioSource()
+    {
+        AudioSource source = gameObject.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.loop = false;
+        source.spatialBlend = 1f;
+        source.dopplerLevel = 0f;
+        source.minDistance = voiceMinDistance;
+        source.maxDistance = Mathf.Max(voiceMinDistance, voiceMaxDistance);
+        source.rolloffMode = AudioRolloffMode.Custom;
+        float normalizedNearSilentDistance = Mathf.Clamp(
+            voiceNearSilentDistance / source.maxDistance,
+            0f,
+            1f);
+        float normalizedFirstFalloffPoint = normalizedNearSilentDistance / 3f;
+        float normalizedSecondFalloffPoint = normalizedNearSilentDistance * 2f / 3f;
+        source.SetCustomCurve(
+            AudioSourceCurveType.CustomRolloff,
+            new AnimationCurve(
+                new Keyframe(0f, 1f),
+                new Keyframe(normalizedFirstFalloffPoint, 0.2f),
+                new Keyframe(normalizedSecondFalloffPoint, 0.03f),
+                new Keyframe(normalizedNearSilentDistance, 0.005f),
+                new Keyframe(1f, 0f)));
+        return source;
+    }
+
+    private static bool HasUsableClip(AudioClip[] clips)
+    {
+        if (clips == null)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < clips.Length; index++)
+        {
+            if (clips[index] != null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private float PlayRandomVoice(
+        AudioSource source,
+        AudioClip[] clips,
+        ref int lastClipIndex,
+        float baseVolume,
+        float minimumVolumeMultiplier,
+        float maximumVolumeMultiplier)
+    {
+        if (source == null || !HasUsableClip(clips))
+        {
+            return 0f;
+        }
+
+        int startIndex = Random.Range(0, clips.Length);
+        int selectedIndex = -1;
+        for (int offset = 0; offset < clips.Length; offset++)
+        {
+            int candidateIndex = (startIndex + offset) % clips.Length;
+            if (clips[candidateIndex] != null
+                && (candidateIndex != lastClipIndex || clips.Length == 1))
+            {
+                selectedIndex = candidateIndex;
+                break;
+            }
+        }
+
+        if (selectedIndex < 0)
+        {
+            for (int index = 0; index < clips.Length; index++)
+            {
+                if (clips[index] != null)
+                {
+                    selectedIndex = index;
+                    break;
+                }
+            }
+        }
+
+        if (selectedIndex < 0)
+        {
+            return 0f;
+        }
+
+        lastClipIndex = selectedIndex;
+        source.pitch = Random.Range(
+            1f - voicePitchVariation,
+            1f + voicePitchVariation);
+        float variedVolume = baseVolume * Random.Range(
+            minimumVolumeMultiplier,
+            maximumVolumeMultiplier);
+        AudioClip selectedClip = clips[selectedIndex];
+        source.PlayOneShot(selectedClip, Mathf.Clamp01(variedVolume));
+        return selectedClip.length / Mathf.Max(0.01f, Mathf.Abs(source.pitch));
+    }
+
+    private void BeginTalkPose(float playbackDuration)
+    {
+        float totalDuration = Mathf.Max(0.001f, playbackDuration);
+        float blendInFraction = Mathf.Clamp(
+            talkPoseBlendInFraction,
+            0.01f,
+            0.5f);
+        float holdFraction = Mathf.Clamp(
+            talkPoseHoldFraction,
+            0f,
+            0.95f - blendInFraction);
+        talkPoseStartTime = Time.time;
+        talkPoseBlendInEndTime = talkPoseStartTime
+            + totalDuration * blendInFraction;
+        talkPoseSustainEndTime = talkPoseBlendInEndTime
+            + totalDuration * holdFraction;
+        // The release receives the remaining duration, so the complete pose
+        // envelope always ends with the pitch-adjusted audio clip.
+        talkPoseEndTime = talkPoseStartTime + totalDuration;
+        talkPoseActive = true;
+    }
+
+    private void UpdateTalkPose()
+    {
+        if (!talkPoseActive)
+        {
+            return;
+        }
+
+        if (!penVisualsEnabled || usingFarImpostor || isMachineControlled)
+        {
+            talkPoseActive = false;
+            SetTalkPoseWeight(0f);
+            return;
+        }
+
+        float now = Time.time;
+        float weight;
+        if (now < talkPoseBlendInEndTime)
+        {
+            float blend = Mathf.InverseLerp(
+                talkPoseStartTime,
+                talkPoseBlendInEndTime,
+                now);
+            // Ease out of neutral quickly so even the shortest clucks read.
+            weight = 1f - Mathf.Pow(1f - blend, 2f);
+        }
+        else if (now < talkPoseSustainEndTime)
+        {
+            weight = 1f;
+        }
+        else
+        {
+            float blend = Mathf.InverseLerp(
+                talkPoseSustainEndTime,
+                talkPoseEndTime,
+                now);
+            // Drop most of the pose early, leaving a soft tail for the rest of
+            // the sound instead of holding the beak fully open.
+            weight = Mathf.Pow(1f - blend, 2f);
+        }
+
+        if (now >= talkPoseEndTime)
+        {
+            weight = 0f;
+            talkPoseActive = false;
+        }
+
+        SetTalkPoseWeight(weight);
     }
 
     private static void RunAiScheduler(ChickenController schedulerSource)
@@ -1167,12 +1630,27 @@ public sealed class ChickenController : MonoBehaviour
         }
     }
 
-    private void CacheHeldBlendShapes()
+    private void CacheChickenBlendShapes()
     {
-        heldBlendShapeRenderers.Clear();
-        heldBlendShapeIndices.Clear();
+        CacheBlendShape(
+            heldBlendShapeName,
+            heldBlendShapeRenderers,
+            heldBlendShapeIndices);
+        CacheBlendShape(
+            fatBlendShapeName,
+            fatBlendShapeRenderers,
+            fatBlendShapeIndices);
+    }
 
-        if (string.IsNullOrWhiteSpace(heldBlendShapeName))
+    private void CacheBlendShape(
+        string blendShapeName,
+        List<SkinnedMeshRenderer> renderersWithShape,
+        List<int> shapeIndices)
+    {
+        renderersWithShape.Clear();
+        shapeIndices.Clear();
+
+        if (string.IsNullOrWhiteSpace(blendShapeName))
         {
             return;
         }
@@ -1197,12 +1675,12 @@ public sealed class ChickenController : MonoBehaviour
                 string shapeName = mesh.GetBlendShapeName(shapeIndex);
                 bool matches = string.Equals(
                     shapeName,
-                    heldBlendShapeName,
+                    blendShapeName,
                     System.StringComparison.OrdinalIgnoreCase);
                 if (!matches)
                 {
                     matches = shapeName.EndsWith(
-                        "." + heldBlendShapeName,
+                        "." + blendShapeName,
                         System.StringComparison.OrdinalIgnoreCase);
                 }
 
@@ -1211,8 +1689,8 @@ public sealed class ChickenController : MonoBehaviour
                     continue;
                 }
 
-                heldBlendShapeRenderers.Add(skinnedRenderer);
-                heldBlendShapeIndices.Add(shapeIndex);
+                renderersWithShape.Add(skinnedRenderer);
+                shapeIndices.Add(shapeIndex);
                 break;
             }
         }
@@ -1243,6 +1721,88 @@ public sealed class ChickenController : MonoBehaviour
 
             skinnedRenderer.SetBlendShapeWeight(shapeIndex, weight);
         }
+    }
+
+    private void UpdateFatBlendShape()
+    {
+        float targetValue = CalculateTargetFatBlendValue();
+        fatBlendValue = Mathf.SmoothDamp(
+            fatBlendValue,
+            targetValue,
+            ref fatBlendVelocity,
+            fatBlendSmoothTime,
+            Mathf.Infinity,
+            Time.deltaTime);
+
+        if (Mathf.Abs(fatBlendValue - targetValue) < 0.0001f)
+        {
+            fatBlendValue = targetValue;
+            fatBlendVelocity = 0f;
+        }
+
+        ApplyFatBlendShape(false);
+    }
+
+    private float CalculateTargetFatBlendValue()
+    {
+        float baselineFood = Mathf.Clamp(
+            startingFoodScore,
+            0f,
+            maximumFoodScore);
+        if (foodScore <= baselineFood)
+        {
+            float depletedFood = baselineFood > 0.0001f
+                ? foodScore / baselineFood
+                : 0f;
+            return Mathf.Lerp(minimumFat, 0f, Mathf.Clamp01(depletedFood));
+        }
+
+        float fullyFedFood = Mathf.Clamp(
+            returnToWanderingScore,
+            baselineFood + 0.0001f,
+            maximumFoodScore);
+        float fedAmount = Mathf.InverseLerp(
+            baselineFood,
+            fullyFedFood,
+            foodScore);
+        return Mathf.Lerp(0f, maximumFat, fedAmount);
+    }
+
+    private void ApplyFatBlendShape(bool force)
+    {
+        if (!force
+            && Mathf.Abs(fatBlendValue - lastAppliedFatBlendValue) < 0.001f)
+        {
+            return;
+        }
+
+        // Unity blendshape weights use percentage units. Inspector-facing fat
+        // values remain the more useful authored range of -0.2 to 1.0.
+        float weight = fatBlendValue * 100f;
+        int entryCount = Mathf.Min(
+            fatBlendShapeRenderers.Count,
+            fatBlendShapeIndices.Count);
+        for (int index = 0; index < entryCount; index++)
+        {
+            SkinnedMeshRenderer skinnedRenderer =
+                fatBlendShapeRenderers[index];
+            if (skinnedRenderer == null
+                || skinnedRenderer.sharedMesh == null)
+            {
+                continue;
+            }
+
+            int shapeIndex = fatBlendShapeIndices[index];
+            if (shapeIndex < 0
+                || shapeIndex >= skinnedRenderer.sharedMesh.blendShapeCount)
+            {
+                continue;
+            }
+
+            skinnedRenderer.SetBlendShapeWeight(shapeIndex, weight);
+        }
+
+        lastAppliedFatBlendValue = fatBlendValue;
     }
 
     private void StepHeldDragSpring(
@@ -2017,6 +2577,13 @@ public sealed class ChickenController : MonoBehaviour
             eggPosition,
             eggRotation);
         GameObject egg = chickenEgg.gameObject;
+        PlayRandomVoice(
+            layEggAudioSource,
+            layEggSounds,
+            ref lastLayEggClipIndex,
+            layEggVolume,
+            minLayEggVolumeMultiplier,
+            maxLayEggVolumeMultiplier);
         EggLaid?.Invoke();
 
         int eggValue = progression != null
@@ -2301,6 +2868,21 @@ public sealed class ChickenController : MonoBehaviour
         wingFlutterLayerIndex = animator != null && animator.runtimeAnimatorController != null
             ? animator.GetLayerIndex(WingFlutterLayerName)
             : -1;
+    }
+
+    private void CacheTalkLayer()
+    {
+        talkLayerIndex = animator != null && animator.runtimeAnimatorController != null
+            ? animator.GetLayerIndex(TalkLayerName)
+            : -1;
+    }
+
+    private void SetTalkPoseWeight(float weight)
+    {
+        if (animator != null && talkLayerIndex >= 0)
+        {
+            animator.SetLayerWeight(talkLayerIndex, Mathf.Clamp01(weight));
+        }
     }
 
     private void SetWingFlutterWeight(float weight)
@@ -3007,6 +3589,50 @@ public sealed class ChickenController : MonoBehaviour
         minBlinkInterval = Mathf.Max(0.01f, minBlinkInterval);
         maxBlinkInterval = Mathf.Max(minBlinkInterval, maxBlinkInterval);
         blinkSpeedVariation = Mathf.Clamp(blinkSpeedVariation, 0f, 0.5f);
+        minMoodInterval = Mathf.Max(0.1f, minMoodInterval);
+        maxMoodInterval = Mathf.Max(minMoodInterval, maxMoodInterval);
+        minMoodDuration = Mathf.Max(0.1f, minMoodDuration);
+        maxMoodDuration = Mathf.Max(minMoodDuration, maxMoodDuration);
+        moodNeighbourRadius = Mathf.Max(0.01f, moodNeighbourRadius);
+        comfortableMoodNeighbourCount = Mathf.Max(
+            1,
+            comfortableMoodNeighbourCount);
+        crowdedMoodNeighbourCount = Mathf.Max(
+            comfortableMoodNeighbourCount + 1,
+            crowdedMoodNeighbourCount);
+        angryMoodBlendTime = Mathf.Max(0.01f, angryMoodBlendTime);
+        moodBlendTime = Mathf.Max(0.01f, moodBlendTime);
+        minTalkInterval = Mathf.Max(0.1f, minTalkInterval);
+        maxTalkInterval = Mathf.Max(minTalkInterval, maxTalkInterval);
+        talkIntervalScalePerAdditionalChicken = Mathf.Max(
+            0f,
+            talkIntervalScalePerAdditionalChicken);
+        talkCadenceVariation = Mathf.Clamp(talkCadenceVariation, 0f, 0.75f);
+        talkPoseBlendInFraction = Mathf.Clamp(
+            talkPoseBlendInFraction,
+            0.01f,
+            0.5f);
+        talkPoseHoldFraction = Mathf.Clamp(
+            talkPoseHoldFraction,
+            0f,
+            0.95f - talkPoseBlendInFraction);
+        talkVolume = Mathf.Clamp01(talkVolume);
+        layEggVolume = Mathf.Clamp01(layEggVolume);
+        minLayEggVolumeMultiplier = Mathf.Clamp01(minLayEggVolumeMultiplier);
+        maxLayEggVolumeMultiplier = Mathf.Clamp(
+            maxLayEggVolumeMultiplier,
+            minLayEggVolumeMultiplier,
+            1f);
+        voicePitchVariation = Mathf.Clamp(voicePitchVariation, 0f, 0.5f);
+        voiceVolumeVariation = Mathf.Clamp(voiceVolumeVariation, 0f, 0.5f);
+        voiceMinDistance = Mathf.Max(0f, voiceMinDistance);
+        voiceMaxDistance = Mathf.Max(
+            Mathf.Max(0.01f, voiceMinDistance),
+            voiceMaxDistance);
+        voiceNearSilentDistance = Mathf.Clamp(
+            voiceNearSilentDistance,
+            voiceMinDistance,
+            voiceMaxDistance);
         minWingFlutterInterval = Mathf.Max(0.01f, minWingFlutterInterval);
         maxWingFlutterInterval = Mathf.Max(minWingFlutterInterval, maxWingFlutterInterval);
         minWingFlutterStrength = Mathf.Clamp01(minWingFlutterStrength);
@@ -3094,6 +3720,9 @@ public sealed class ChickenController : MonoBehaviour
         eatingDistance = Mathf.Max(0.01f, eatingDistance);
         foodPerBite = Mathf.Max(0.01f, foodPerBite);
         secondsPerBite = Mathf.Max(0.01f, secondsPerBite);
+        minimumFat = Mathf.Clamp(minimumFat, -1f, 0f);
+        maximumFat = Mathf.Clamp01(maximumFat);
+        fatBlendSmoothTime = Mathf.Max(0.01f, fatBlendSmoothTime);
         separationRadius = Mathf.Max(0f, separationRadius);
         separationStrength = Mathf.Max(0f, separationStrength);
         separationSettleMargin = Mathf.Clamp(

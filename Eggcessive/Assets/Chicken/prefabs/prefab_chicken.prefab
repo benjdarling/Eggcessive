@@ -288,6 +288,10 @@ MonoBehaviour:
   eatingDistance: 0.2
   foodPerBite: 10
   secondsPerBite: 0.65
+  fatBlendShapeName: fat
+  minimumFat: -0.2
+  maximumFat: 1
+  fatBlendSmoothTime: 0.35
   animator: {fileID: 8480854881829514949}
   minBlinkInterval: 2
   maxBlinkInterval: 6
@@ -295,6 +299,15 @@ MonoBehaviour:
   fullLeanTurnRate: 180
   leanSmoothTime: 0.08
   leanStrength: 1
+  minMoodInterval: 4
+  maxMoodInterval: 9
+  minMoodDuration: 2
+  maxMoodDuration: 4.5
+  moodNeighbourRadius: 0.8
+  comfortableMoodNeighbourCount: 3
+  crowdedMoodNeighbourCount: 6
+  angryMoodBlendTime: 0.05
+  moodBlendTime: 0.12
   maximumAiUpdatesPerTick: 32
   aiSchedulerUpdateRateHz: 10
   enableFarImpostor: 0
@@ -342,6 +355,52 @@ MonoBehaviour:
   eggLaunchSpin: 12
   eggSpawnHeight: 0.08
   eggSpawnBehindDistance: 0.06
+  minTalkInterval: 7
+  maxTalkInterval: 16
+  talkIntervalScalePerAdditionalChicken: 0.12
+  talkCadenceVariation: 0.25
+  talkPoseBlendInFraction: 0.1
+  talkPoseHoldFraction: 0.15
+  talkSounds:
+  - {fileID: 8300000, guid: de0a99570ea5cc643bfa30ed1619e162, type: 3}
+  - {fileID: 8300000, guid: f0bfe249dc63a324dbc82f10c31ddfb8, type: 3}
+  - {fileID: 8300000, guid: 5f496cee275d9f0468ac762b71b5e0a9, type: 3}
+  - {fileID: 8300000, guid: 5998713c0be29dd4a9f206217aa818ae, type: 3}
+  - {fileID: 8300000, guid: 5ba1346e0c0bb104a9d501058d413692, type: 3}
+  - {fileID: 8300000, guid: 9a0925de90c2a85449edfa6bf6e8c7b7, type: 3}
+  - {fileID: 8300000, guid: 3cd980c78becb0946b94ffbe3cafa32f, type: 3}
+  - {fileID: 8300000, guid: 88c8bd7c523ce4d44a1cd66bc3ee68c9, type: 3}
+  - {fileID: 8300000, guid: dbda4b36ad0f0ff459c20c6ae6d151f3, type: 3}
+  - {fileID: 8300000, guid: 9db82538a236064498512a19e9c4d350, type: 3}
+  - {fileID: 8300000, guid: 4bd26e070378afb45a6921b24fefed63, type: 3}
+  - {fileID: 8300000, guid: 4eb2e22348cee5a4691f06e96306a9d8, type: 3}
+  - {fileID: 8300000, guid: 803d791f64b85164f9ee810348f0518a, type: 3}
+  - {fileID: 8300000, guid: 88ee9db7e0eb92d4fbfcd52291b51a7b, type: 3}
+  - {fileID: 8300000, guid: 80f9b6892769b1c48b035b55a175f709, type: 3}
+  - {fileID: 8300000, guid: 6dc55cbdbd19b144a99f0fb17412d5d3, type: 3}
+  - {fileID: 8300000, guid: 4db95089c939609439f6e17e7a225942, type: 3}
+  - {fileID: 8300000, guid: 75adf7c7958e02645ae47acaa43d8980, type: 3}
+  - {fileID: 8300000, guid: 0eb2b942c2f56594ab3157406b57cc1c, type: 3}
+  - {fileID: 8300000, guid: 0075d20c1295a9d40a467027becc0c8f, type: 3}
+  - {fileID: 8300000, guid: dde8dcc0bfa26904d8544b04f3c7ff93, type: 3}
+  - {fileID: 8300000, guid: 49fd32d32454d8a48bc25eac5568bfca, type: 3}
+  layEggSounds:
+  - {fileID: 8300000, guid: dcd65e0969a01814b916f2efc00da7d9, type: 3}
+  - {fileID: 8300000, guid: 3a241f7d21ad64e458a074a2af50391b, type: 3}
+  - {fileID: 8300000, guid: f7c368631b8b42747a429aa7c19b5411, type: 3}
+  - {fileID: 8300000, guid: e1552fc4e97f3414e97e80411b67bc4f, type: 3}
+  - {fileID: 8300000, guid: 8184683a222f23d49b1dfba69d9e702d, type: 3}
+  - {fileID: 8300000, guid: d402cd32bff6ae2458ce8389ff0e1dcb, type: 3}
+  - {fileID: 8300000, guid: ee672bad024f63443b390951b5eb7d04, type: 3}
+  talkVolume: 0.7
+  layEggVolume: 0.8
+  minLayEggVolumeMultiplier: 0.7
+  maxLayEggVolumeMultiplier: 1
+  voicePitchVariation: 0.1
+  voiceVolumeVariation: 0.1
+  voiceMinDistance: 0
+  voiceNearSilentDistance: 12
+  voiceMaxDistance: 16
 --- !u!114 &6481139536847051703
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -102,6 +102,7 @@ public sealed class RoundSystem : MonoBehaviour
     private Transform truckStop;
     private Transform truckEnd;
     private Transform truck;
+    private TruckSpringAnimator truckSpringAnimator;
     private Canvas gameplayHudCanvas;
     private RectTransform gameplayCashHudTarget;
 
@@ -2018,6 +2019,7 @@ public sealed class RoundSystem : MonoBehaviour
         bool isPrimaryPen = penIndex <= 0;
         if (isPrimaryPen && IsRoundAcceptingEggs && roundEggTarget > 0)
         {
+            truckSpringAnimator?.AddDepositImpulse(cents);
             eggsTowardTruck++;
 
             while (eggsTowardTruck >= roundEggTarget)
@@ -4185,10 +4187,17 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        GameObject root = Instantiate(truckVisualPrefab);
+        GameObject root = new GameObject("Delivery Truck");
+        GameObject visual = Instantiate(truckVisualPrefab, root.transform);
+        visual.name = "Visual";
+        visual.transform.localPosition = Vector3.zero;
+        visual.transform.localRotation = Quaternion.identity;
         root.name = "Delivery Truck";
         truck = root.transform;
+        truckSpringAnimator = root.AddComponent<TruckSpringAnimator>();
+        truckSpringAnimator.SetVisual(visual.transform);
         PlaceTruckAt(truckStart);
+        truckSpringAnimator.ResetMotion();
     }
 
     private void PlaceTruckAt(Transform marker)
@@ -4213,6 +4222,7 @@ public sealed class RoundSystem : MonoBehaviour
             truck = null;
         }
 
+        truckSpringAnimator = null;
     }
 
 #if UNITY_EDITOR
