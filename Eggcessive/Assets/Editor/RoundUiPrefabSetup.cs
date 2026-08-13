@@ -35,6 +35,8 @@ public static class RoundUiPrefabSetup
         "Assets/Sounds/UI/sfx_truck_enter.wav";
     private const string TruckExitSfxPath =
         "Assets/Sounds/UI/sfx_truck_exit.wav";
+    private const string TruckBonusHornSfxPath =
+        "Assets/Sounds/truck_bonus_horn.wav";
     private const string FarmAmbienceSfxPath =
         "Assets/Sounds/UI/sfx_farm_ambience.wav";
     private const string GrabSfxPath =
@@ -106,6 +108,8 @@ public static class RoundUiPrefabSetup
                 AssetDatabase.LoadAssetAtPath<AudioClip>(TruckEnterSfxPath);
             serializedSystem.FindProperty("truckExitSfx").objectReferenceValue =
                 AssetDatabase.LoadAssetAtPath<AudioClip>(TruckExitSfxPath);
+            serializedSystem.FindProperty("truckBonusHornSfx").objectReferenceValue =
+                AssetDatabase.LoadAssetAtPath<AudioClip>(TruckBonusHornSfxPath);
             serializedSystem.FindProperty("farmAmbienceSfx").objectReferenceValue =
                 AssetDatabase.LoadAssetAtPath<AudioClip>(FarmAmbienceSfxPath);
             serializedSystem.FindProperty("grabSfx").objectReferenceValue =

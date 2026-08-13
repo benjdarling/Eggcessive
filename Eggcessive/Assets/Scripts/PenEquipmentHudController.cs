@@ -43,12 +43,13 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     [SerializeField] private GameObject dialogOverlay = null;
     [SerializeField] private TMP_Text dialogTitle = null;
     [SerializeField] private Button dialogCloseButton = null;
+    private GameObject inlineUpgradePanel;
     private PenExpansionManager.EquipmentType dialogType;
     private bool initialized;
 
     public static PenEquipmentHudController Instance { get; private set; }
     public bool IsUpgradeDialogOpen =>
-        dialogOverlay != null && dialogOverlay.activeSelf;
+        inlineUpgradePanel != null && inlineUpgradePanel.activeSelf;
 
     public void Initialize(
         Transform canvasRoot,
@@ -100,6 +101,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
                 () => HandleUpgradeSlotClicked(capturedIndex));
         }
         dialogCloseButton.onClick.AddListener(CloseDialog);
+        ConfigureInlineUpgradePanel();
         dialogOverlay.SetActive(false);
         TryBindManager();
     }
@@ -152,7 +154,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
                 && manager.GetChickenCount(focusedPenIndex)
                     >= ChickenController.MaximumChickenCount)
             {
-                return dialogCloseButton;
+                return GetEquipmentButton(dialogType);
             }
 
             for (int index = 0; index < upgradeViews.Count; index++)
@@ -165,7 +167,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
                 }
             }
 
-            return dialogCloseButton;
+            return GetEquipmentButton(dialogType);
         }
 
         if (manager == null)
@@ -284,7 +286,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
 
     private void HandleRoundPhaseChanged(RoundSystem.RoundPhase _)
     {
-        CloseDialog();
+        Refresh();
     }
 
     private void HandleEquipmentClicked(PenExpansionManager.EquipmentType type)
@@ -302,22 +304,52 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             return;
         }
 
-        OpenDialog(type);
+        if (IsUpgradeDialogOpen && dialogType == type)
+        {
+            CloseDialog();
+        }
+        else
+        {
+            OpenDialog(type);
+        }
     }
 
     private void OpenDialog(PenExpansionManager.EquipmentType type)
     {
         dialogType = type;
-        dialogOverlay.SetActive(true);
-        dialogOverlay.transform.SetAsLastSibling();
+        inlineUpgradePanel.SetActive(true);
+        inlineUpgradePanel.transform.SetAsLastSibling();
         ConfigureUpgradeRows();
+        Refresh();
     }
 
     private void CloseDialog()
     {
-        if (dialogOverlay != null)
+        if (inlineUpgradePanel != null)
         {
-            dialogOverlay.SetActive(false);
+            inlineUpgradePanel.SetActive(false);
+        }
+
+        Refresh();
+    }
+
+    private void ConfigureInlineUpgradePanel()
+    {
+        inlineUpgradePanel = dialogTitle.transform.parent.gameObject;
+        RectTransform rect = inlineUpgradePanel.transform as RectTransform;
+        rect.SetParent(panel.transform, false);
+        rect.anchorMin = new Vector2(1f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
+        rect.anchoredPosition = new Vector2(10f, 0f);
+        rect.sizeDelta = new Vector2(520f, 330f);
+        dialogCloseButton.gameObject.SetActive(false);
+        inlineUpgradePanel.SetActive(false);
+
+        Image overlayImage = dialogOverlay.GetComponent<Image>();
+        if (overlayImage != null)
+        {
+            overlayImage.raycastTarget = false;
         }
     }
 
@@ -406,15 +438,36 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             }
 
             bool hasUpgrade = HasAnyUpgrade(penIndex, view.type);
+            bool expanded = IsUpgradeDialogOpen && dialogType == view.type;
+            int nextCost = GetCheapestUpgradeCost(penIndex, view.type);
+            bool ready = hasUpgrade && nextCost > 0 && balance >= nextCost;
             view.details.text = GetEquipmentDetails(penIndex, view.type);
-            view.action.text = hasUpgrade ? "UPGRADE" : "MAXED";
-            view.progressRoot.SetActive(false);
-            view.progressText.gameObject.SetActive(false);
+            view.action.text = !hasUpgrade
+                ? "MAXED"
+                : expanded
+                    ? "COLLAPSE\n▲"
+                    : ready
+                        ? "READY\n▼"
+                        : "UPGRADES\n▼";
+            view.progressRoot.SetActive(hasUpgrade && !ready);
+            view.progressText.gameObject.SetActive(hasUpgrade && !ready);
+            if (hasUpgrade && !ready)
+            {
+                view.progressText.text =
+                    $"{FormatMoney(balance)} / {FormatMoney(nextCost)}";
+                SetProgressFill(
+                    view.progressFill,
+                    nextCost > 0 ? balance / (float)nextCost : 1f);
+            }
             view.button.interactable = hasUpgrade;
-            view.background.color = new Color(0.12f, 0.28f, 0.16f, 1f);
+            view.background.color = expanded
+                ? new Color(0.08f, 0.36f, 0.38f, 1f)
+                : ready
+                    ? new Color(0.48f, 0.38f, 0.06f, 1f)
+                    : new Color(0.12f, 0.28f, 0.16f, 1f);
         }
 
-        if (dialogOverlay.activeSelf)
+        if (IsUpgradeDialogOpen)
         {
             if (!manager.IsEquipmentOwned(penIndex, dialogType))
             {
@@ -501,6 +554,39 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         }
 
         return false;
+    }
+
+    private int GetCheapestUpgradeCost(
+        int penIndex,
+        PenExpansionManager.EquipmentType type)
+    {
+        int cheapest = int.MaxValue;
+        PenExpansionManager.EquipmentUpgrade[] upgrades =
+            PenExpansionManager.GetUpgrades(type);
+        for (int index = 0; index < upgrades.Length; index++)
+        {
+            int cost = manager.GetUpgradeCost(penIndex, upgrades[index]);
+            if (cost > 0)
+            {
+                cheapest = Mathf.Min(cheapest, cost);
+            }
+        }
+
+        return cheapest == int.MaxValue ? 0 : cheapest;
+    }
+
+    private Button GetEquipmentButton(
+        PenExpansionManager.EquipmentType type)
+    {
+        for (int index = 0; index < equipmentViews.Count; index++)
+        {
+            if (equipmentViews[index].type == type)
+            {
+                return equipmentViews[index].button;
+            }
+        }
+
+        return null;
     }
 
     private string GetEquipmentDetails(

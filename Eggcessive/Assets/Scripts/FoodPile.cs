@@ -27,6 +27,20 @@ public sealed class FoodPile : MonoBehaviour
     public float PremiumChanceMultiplier => premiumChanceMultiplier;
     public float AttractionRadiusBonus => attractionRadiusBonus;
 
+    public static void ClearAllActive()
+    {
+        for (int index = Piles.Count - 1; index >= 0; index--)
+        {
+            FoodPile pile = Piles[index];
+            if (pile != null)
+            {
+                Destroy(pile.gameObject);
+            }
+        }
+
+        Piles.Clear();
+    }
+
     private void Awake()
     {
         if (visualRoot == null)

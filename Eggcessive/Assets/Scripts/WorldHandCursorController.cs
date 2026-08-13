@@ -149,6 +149,8 @@ public sealed class WorldHandCursorController : MonoBehaviour
     private bool cursorDebugMarkerHasPosition;
     private int currentPoseState;
     private bool worldDepthSortingActive;
+    private bool menuCursorDepthLocked;
+    private float menuCursorCameraDepth;
 
 #if UNITY_EDITOR
     private bool editorSceneInspectionActive;
@@ -182,6 +184,11 @@ public sealed class WorldHandCursorController : MonoBehaviour
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void CreateCursor()
+    {
+        EnsureCursorExists();
+    }
+
+    public static void EnsureCursorExists()
     {
         if (instance != null)
         {
@@ -325,9 +332,18 @@ public sealed class WorldHandCursorController : MonoBehaviour
         float frameDeltaTime = Mathf.Max(0f, Time.unscaledDeltaTime);
         float springDeltaTime = Mathf.Min(frameDeltaTime, 1f / 30f);
         Ray pointerRay = viewCamera.ScreenPointToRay(pointerPosition);
-        Plane cursorPlane = new Plane(
+        Plane worldCursorPlane = new Plane(
             Vector3.up,
             new Vector3(0f, cursorPlaneHeight, 0f));
+        bool menuOpen = GameMenuController.Instance != null
+            && GameMenuController.Instance.IsMenuOpen;
+        Plane cursorPlane = menuOpen
+            ? GetLockedMenuCursorPlane(pointerRay, worldCursorPlane)
+            : worldCursorPlane;
+        if (!menuOpen)
+        {
+            menuCursorDepthLocked = false;
+        }
 
         if (cursorPlane.Raycast(pointerRay, out float distance))
         {
@@ -383,6 +399,52 @@ public sealed class WorldHandCursorController : MonoBehaviour
             * Quaternion.Euler(springAngles);
         PinHandToCursorHotspot();
         UpdateShadowPresentation();
+    }
+
+    private Plane GetLockedMenuCursorPlane(
+        Ray pointerRay,
+        Plane worldCursorPlane)
+    {
+        if (!menuCursorDepthLocked)
+        {
+            menuCursorCameraDepth = CalculateMenuCursorCameraDepth(
+                pointerRay,
+                worldCursorPlane);
+            menuCursorDepthLocked = true;
+        }
+
+        Vector3 cameraForward = viewCamera.transform.forward;
+        Vector3 planePoint = viewCamera.transform.position
+            + cameraForward * menuCursorCameraDepth;
+        return new Plane(cameraForward, planePoint);
+    }
+
+    private float CalculateMenuCursorCameraDepth(
+        Ray pointerRay,
+        Plane worldCursorPlane)
+    {
+        if (worldCursorPlane.Raycast(pointerRay, out float pointerDistance))
+        {
+            return GetPositiveCameraDepth(pointerRay.GetPoint(pointerDistance));
+        }
+
+        Ray centreRay = viewCamera.ViewportPointToRay(
+            new Vector3(0.5f, 0.5f, 0f));
+        if (worldCursorPlane.Raycast(centreRay, out float centreDistance))
+        {
+            return GetPositiveCameraDepth(centreRay.GetPoint(centreDistance));
+        }
+
+        return GetPositiveCameraDepth(transform.position);
+    }
+
+    private float GetPositiveCameraDepth(Vector3 worldPosition)
+    {
+        float depth = Vector3.Dot(
+            worldPosition - viewCamera.transform.position,
+            viewCamera.transform.forward);
+        float minimumDepth = viewCamera.nearClipPlane + 0.1f;
+        return Mathf.Max(minimumDepth, depth);
     }
 
     private void LateUpdate()
@@ -1285,18 +1347,32 @@ public sealed class WorldHandCursorController : MonoBehaviour
         foreach (Canvas canvas in canvases)
         {
             if (canvas == null
-                || !canvas.isRootCanvas
-                || canvas.renderMode != RenderMode.ScreenSpaceOverlay)
+                || !canvas.isRootCanvas)
             {
                 continue;
             }
 
-            canvas.renderMode = RenderMode.ScreenSpaceCamera;
-            canvas.worldCamera = viewCamera;
-            canvas.planeDistance = Mathf.Max(
-                viewCamera.nearClipPlane + 0.01f,
-                uiCanvasPlaneDistance);
+            if (canvas.renderMode == RenderMode.ScreenSpaceOverlay)
+            {
+                canvas.renderMode = RenderMode.ScreenSpaceCamera;
+                BindCanvasToViewCamera(canvas);
+            }
+            else if (canvas.renderMode == RenderMode.ScreenSpaceCamera
+                && canvas.worldCamera == null)
+            {
+                // Persistent UI can retain a destroyed scene camera after a
+                // return to the main menu. Rebind it to the new scene camera.
+                BindCanvasToViewCamera(canvas);
+            }
         }
+    }
+
+    private void BindCanvasToViewCamera(Canvas canvas)
+    {
+        canvas.worldCamera = viewCamera;
+        canvas.planeDistance = Mathf.Max(
+            viewCamera.nearClipPlane + 0.01f,
+            uiCanvasPlaneDistance);
     }
 
     private static void SetLayerRecursively(GameObject root, int layer)

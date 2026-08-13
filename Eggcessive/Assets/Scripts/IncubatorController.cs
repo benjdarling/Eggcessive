@@ -39,6 +39,11 @@ public sealed class IncubatorController : MonoBehaviour
         "Chance that an incubated egg hatches as the chicken breed one tier " +
         "above its egg rarity.")]
     [SerializeField, Range(0f, 1f)] private float nextTierHatchChance = 0.05f;
+    [Tooltip(
+        "Additional next-tier hatch chance granted by each incubator level " +
+        "above level one.")]
+    [SerializeField, Range(0f, 0.5f)]
+    private float nextTierHatchChancePerLevel = 0.1f;
 
     [Header("Audio")]
     [SerializeField] private AudioClip processingLoopSfx = null;
@@ -65,6 +70,9 @@ public sealed class IncubatorController : MonoBehaviour
     public int AvailableCapacity =>
         IsOffline ? 0 : Mathf.Max(0, Capacity - storedEggs);
     public float SecondsPerEgg => GetProductionTime(speedLevel);
+    public float NextTierHatchChance => Mathf.Clamp01(
+        nextTierHatchChance
+        + (CurrentLevel - 1) * nextTierHatchChancePerLevel);
     public Vector3 DepositPosition =>
         eggStart != null ? eggStart.position : transform.position;
 
@@ -326,7 +334,7 @@ public sealed class IncubatorController : MonoBehaviour
         int breedIndex = Mathf.Clamp((int)eggType, 0, maximumBreed);
 
         if (breedIndex < maximumBreed
-            && UnityEngine.Random.value < nextTierHatchChance)
+            && UnityEngine.Random.value < NextTierHatchChance)
         {
             breedIndex++;
         }
@@ -443,6 +451,10 @@ public sealed class IncubatorController : MonoBehaviour
         speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
         eggTravelDuration = Mathf.Max(0.01f, eggTravelDuration);
         nextTierHatchChance = Mathf.Clamp01(nextTierHatchChance);
+        nextTierHatchChancePerLevel = Mathf.Clamp(
+            nextTierHatchChancePerLevel,
+            0f,
+            0.5f);
 
         if (!Application.isPlaying)
         {

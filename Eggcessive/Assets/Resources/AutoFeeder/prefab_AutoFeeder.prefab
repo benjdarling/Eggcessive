@@ -518,6 +518,7 @@ MonoBehaviour:
   - {fileID: 3914797373791843713}
   dialHand: {fileID: 2633239879365713429}
   speedLevel: 1
+  attractionRangeLevel: 0
   occupiedSocketRadius: 0.38
 --- !u!136 &3879303586781166917
 CapsuleCollider:

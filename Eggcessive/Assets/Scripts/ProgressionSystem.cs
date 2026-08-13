@@ -155,26 +155,27 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     private static readonly long[] EggValueCosts =
     {
-        5000, 15000, 45000, 135000, 400000, 1200000, 3600000, 10000000,
-        30000000, 90000000, 270000000, 800000000,
-        2400000000L, 7200000000L, 22000000000L,
-        66000000000L, 200000000000L, 600000000000L
+        5000, 17000, 60000, 210000, 730000, 2500000, 9100000, 30000000,
+        110000000, 400000000, 1400000000L, 4900000000L,
+        18000000000L, 64000000000L, 230000000000L,
+        850000000000L, 3100000000000L, 12000000000000L
     };
 
     private static readonly float[] EggValueMultipliers =
     {
-        1f, 1.5f, 2.25f, 3.5f, 5.5f, 8.5f, 13f, 20f, 30f,
-        45f, 70f, 110f, 170f, 260f, 400f, 600f, 900f, 1350f, 2000f
+        1f, 1.7f, 3f, 5.5f, 10f, 18f, 33f, 60f, 110f,
+        200f, 370f, 680f, 1250f, 2300f, 4200f, 7700f, 14000f,
+        26000f, 48000f
     };
 
     private static readonly long[] TruckBonusCosts =
     {
-        20000, 60000, 180000, 540000, 1600000,
-        4800000, 14000000, 42000000, 125000000, 375000000,
-        1100000000L, 3300000000L, 10000000000L,
-        30000000000L, 90000000000L
+        20000, 63000, 200000, 630000, 2000000,
+        6400000, 20000000, 66000000, 210000000, 690000000,
+        2200000000L, 7300000000L, 24000000000L,
+        80000000000L, 270000000000L
     };
-    private const float TruckBonusPerLevel = 0.1f;
+    private const float TruckBonusGrowthPerLevel = 1.15f;
 
     private const float EggWeightUpperRangePerLevel = 0.075f;
     private const float EggWeightChancePerLevel = 0.1f;
@@ -224,7 +225,7 @@ public sealed class ProgressionSystem : MonoBehaviour
     public static int MaximumTruckBonusLevel => TruckBonusCosts.Length;
     public static int MaximumChickenPerksLevel => ChickenPerkCosts.Length;
     public float TruckBonusMultiplier =>
-        1f + truckBonusLevel * TruckBonusPerLevel;
+        Mathf.Pow(TruckBonusGrowthPerLevel, truckBonusLevel);
     public float EggValueMultiplier =>
         EggValueMultipliers[Mathf.Clamp(
             eggSaleValueLevel,
@@ -567,7 +568,7 @@ public sealed class ProgressionSystem : MonoBehaviour
                 return new NodeState(
                     "Robot Capacity",
                     "R+",
-                    robotCapacity >= 3 ? "24 egg capacity" : "Carry more eggs per trip",
+                    robotCapacity >= 3 ? "27 egg capacity" : "Carry more eggs per trip",
                     robotCapacity,
                     3,
                     GetArrayCost(RobotCapacityCosts, robotCapacity),
@@ -893,7 +894,7 @@ public sealed class ProgressionSystem : MonoBehaviour
             {
                 int current = collection != null ? collection.RobotCapacityLevel : 0;
                 int target = Mathf.Clamp(targetLevel, 2, 3);
-                int capacity = target == 2 ? 12 : 24;
+                int capacity = target * 9;
                 return new NodeState(
                     $"Robot Capacity Upgrade {target - 1}",
                     "R+",
@@ -1278,17 +1279,81 @@ public sealed class ProgressionSystem : MonoBehaviour
             _ => TurboConsumableSystem.TurboType.Robot
         };
         string name = TurboConsumableSystem.GetDisplayName(type);
+        bool unlocked = AreTurboPrerequisitesMet(type);
+        string details = unlocked
+            ? $"Owned {TurboConsumableSystem.GetInventory(type)} . "
+                + $"+{TurboConsumableSystem.GetBoostPercent(type):0}% for "
+                + $"{TurboConsumableSystem.GetDurationSeconds(type):0}s"
+            : GetTurboUnlockDescription(type);
         return new NodeState(
             $"{name} Turbo",
             "⚡",
-            $"Owned {TurboConsumableSystem.GetInventory(type)} . "
-                + $"+{TurboConsumableSystem.GetBoostPercent(type):0}% for "
-                + $"{TurboConsumableSystem.GetDurationSeconds(type):0}s",
+            details,
             TurboConsumableSystem.GetInventory(type),
             0,
             TurboConsumableSystem.GetPurchaseCost(type),
             true,
-            true);
+            unlocked);
+    }
+
+    private static bool AreTurboPrerequisitesMet(
+        TurboConsumableSystem.TurboType type)
+    {
+        PenExpansionManager pens = PenExpansionManager.Instance;
+        if (pens != null && pens.IsInitialized)
+        {
+            PenExpansionManager.EquipmentType equipment = type switch
+            {
+                TurboConsumableSystem.TurboType.Incubator =>
+                    PenExpansionManager.EquipmentType.Incubator,
+                TurboConsumableSystem.TurboType.Crosshatcher =>
+                    PenExpansionManager.EquipmentType.Crosshatcher,
+                _ => PenExpansionManager.EquipmentType.Robot
+            };
+            return pens.HasCompletedCoreUpgrades(equipment);
+        }
+
+        EggCarryController collection = EggCarryController.Instance;
+        return type switch
+        {
+            TurboConsumableSystem.TurboType.Incubator =>
+                IncubatorShopController.Instance != null
+                && IncubatorShopController.Instance.IsInstalled
+                && IncubatorShopController.Instance.CapacityLevel
+                    >= IncubatorController.MaximumLevel
+                && IncubatorShopController.Instance.SpeedLevel
+                    >= IncubatorController.MaximumLevel,
+            TurboConsumableSystem.TurboType.Crosshatcher =>
+                CrosshatcherShopController.Instance != null
+                && CrosshatcherShopController.Instance.IsInstalled
+                && CrosshatcherShopController.Instance.SpeedLevel
+                    >= CrosshatcherController.MaximumLevel
+                && CrosshatcherShopController.Instance.QualityLevel
+                    >= CrosshatcherController.MaximumLevel,
+            TurboConsumableSystem.TurboType.Robot =>
+                collection != null
+                && collection.HasRobot
+                && collection.RobotSpeedLevel
+                    >= EggCarryController.MaximumRobotLevel
+                && collection.RobotCapacityLevel
+                    >= EggCarryController.MaximumRobotLevel,
+            _ => false
+        };
+    }
+
+    private static string GetTurboUnlockDescription(
+        TurboConsumableSystem.TurboType type)
+    {
+        return type switch
+        {
+            TurboConsumableSystem.TurboType.Incubator =>
+                "Max Incubator Capacity + Hatch Speed in one pen to unlock",
+            TurboConsumableSystem.TurboType.Crosshatcher =>
+                "Max Crosshatch Speed + Breed Quality in one pen to unlock",
+            TurboConsumableSystem.TurboType.Robot =>
+                "Max Robot Speed + Capacity in one pen to unlock",
+            _ => "Complete both core upgrade branches to unlock"
+        };
     }
 
     private static NodeState GetTurboUpgradeNodeState(
@@ -1390,8 +1455,9 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     private static float GetTruckBonusMultiplier(int level)
     {
-        return 1f + Mathf.Clamp(level, 0, TruckBonusCosts.Length)
-            * TruckBonusPerLevel;
+        return Mathf.Pow(
+            TruckBonusGrowthPerLevel,
+            Mathf.Clamp(level, 0, TruckBonusCosts.Length));
     }
 
     private static float GetEggWeightChance(int level)

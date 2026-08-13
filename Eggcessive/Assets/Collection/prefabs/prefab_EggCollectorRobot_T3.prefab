@@ -1748,7 +1748,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.68, y: 0.68, z: 0.68}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 3681081004399827681}
@@ -1824,6 +1824,12 @@ MonoBehaviour:
   targetRefreshInterval: 0.12
   navMeshSampleDistance: 1.5
   targetNavMeshTolerance: 0.28
+  pushChickens: 1
+  chickenPushRadius: 0.15
+  chickenPushForwardOffset: 0.05
+  chickenPushSpeed: 4
+  maximumChickenPushSpeed: 6
+  maximumLegRollDegrees: 2.5
   chickenArmRoot: {fileID: 3592404127872313632}
   chickenArmSolvers:
   - {fileID: 7547117577232155628}

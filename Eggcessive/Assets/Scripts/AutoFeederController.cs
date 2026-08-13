@@ -8,6 +8,7 @@ public sealed class AutoFeederController : MonoBehaviour
     public const int MaximumLevel = 3;
     public const int MaximumAttractionRangeLevel = 5;
     private const float AttractionRadiusBonusPerLevel = 0.2f;
+    private const float FoodSpawnOffsetPerSpeedLevel = 0.2f;
     private static readonly float[] DispenseIntervals =
         { 12f, 10f, 8f };
 
@@ -186,7 +187,8 @@ public sealed class AutoFeederController : MonoBehaviour
              socketIndex++)
         {
             Transform socket = foodSockets[socketIndex];
-            if (socket != null && !IsSocketOccupied(socket.position))
+            if (socket != null
+                && !IsSocketOccupied(GetFoodSpawnPosition(socket)))
             {
                 freeSocketIndices.Add(socketIndex);
             }
@@ -222,7 +224,10 @@ public sealed class AutoFeederController : MonoBehaviour
 
         int randomListIndex = Random.Range(0, freeSocketIndices.Count);
         Transform socket = foodSockets[freeSocketIndices[randomListIndex]];
-        if (socket == null || IsSocketOccupied(socket.position))
+        Vector3 spawnPosition = socket != null
+            ? GetFoodSpawnPosition(socket)
+            : transform.position;
+        if (socket == null || IsSocketOccupied(spawnPosition))
         {
             timeUntilDispense = 0f;
             return;
@@ -230,7 +235,7 @@ public sealed class AutoFeederController : MonoBehaviour
 
         GameObject food = Instantiate(
             foodPrefab,
-            socket.position,
+            spawnPosition,
             Quaternion.Euler(0f, Random.Range(0f, 360f), 0f));
         food.name = $"Auto-Feeder Food ({socket.name})";
         FoodPile pile = food.GetComponent<FoodPile>();
@@ -248,6 +253,21 @@ public sealed class AutoFeederController : MonoBehaviour
 
         timeUntilDispense = DispenseInterval;
         RoundSystem.Instance?.PlayFoodPlaceSfx();
+    }
+
+    private Vector3 GetFoodSpawnPosition(Transform socket)
+    {
+        Vector3 outward = Vector3.ProjectOnPlane(
+            socket.position - transform.position,
+            Vector3.up);
+        if (outward.sqrMagnitude <= 0.0001f)
+        {
+            outward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+        }
+
+        float extraDistance = Mathf.Max(0, speedLevel - 1)
+            * FoodSpawnOffsetPerSpeedLevel;
+        return socket.position + outward.normalized * extraDistance;
     }
 
     private void RefreshDial()

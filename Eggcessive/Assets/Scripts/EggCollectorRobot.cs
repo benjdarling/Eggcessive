@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using DitzelGames.FastIK;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Serialization;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
@@ -20,17 +21,77 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const float CrowdProgressSampleInterval = 0.2f;
     private const float CrowdStallDuration = 0.65f;
     private const float CrowdDetourDuration = 0.85f;
+    private const string EggSocketPrefix = "SOCKET_EGG_";
+    private const string EggStackPrefix = "robot_stack";
+    private const int EggsPerStack = 9;
     public const int IncubatorRoutingSmartnessLevel = 1;
     public const int PopulationGrowthSmartnessLevel = 2;
     public const int ChickenArmsSmartnessLevel = 4;
     public const int MaximumVacuumLevel = 5;
 
-    [SerializeField] private Transform[] visibleEggSlots = null;
+    [Header("Carried Egg Visuals")]
+    [SerializeField] private GameObject carriedEggVisualPrefab = null;
+    [SerializeField] private Vector3 carriedEggVisualScale = Vector3.one;
+    [SerializeField, HideInInspector] private Transform[] visibleEggSlots = null;
     [SerializeField, Min(0.01f)] private float pickupDistance = 0.24f;
     [SerializeField, Min(0.01f)] private float deliveryDistance = 0.3f;
     [SerializeField, Min(0.05f)] private float targetRefreshInterval = 0.25f;
     [SerializeField, Min(0.1f)] private float navMeshSampleDistance = 1.5f;
     [SerializeField, Min(0.05f)] private float targetNavMeshTolerance = 0.28f;
+
+    [Header("Tank Locomotion")]
+    [SerializeField, Range(1f, 90f)]
+    private float turnInPlaceStartAngle = 10f;
+    [SerializeField, Range(0f, 45f)]
+    private float turnInPlaceFinishAngle = 2.5f;
+    [SerializeField, Min(1f)] private float turnInPlaceSpeed = 360f;
+    [SerializeField, Min(0f)] private float turnSpeedBonusPerTier = 0.25f;
+    [SerializeField, Min(0f)] private float movingHeadingCorrectionSpeed = 35f;
+
+    [Header("Chicken Bumper")]
+    [SerializeField] private bool pushChickens = true;
+    [SerializeField, Min(0.05f)] private float chickenPushRadius = 0.15f;
+    [SerializeField, Min(0f)] private float chickenPushForwardOffset = 0.05f;
+    [SerializeField, Min(0f)] private float chickenPushSpeed = 4f;
+    [SerializeField, Min(0f)] private float maximumChickenPushSpeed = 6f;
+
+    [Header("Procedural Robot Motion")]
+    [SerializeField] private bool animateVisuals = true;
+    [SerializeField, Min(0.1f)] private float speedForFullLean = 4f;
+    [SerializeField, Range(0f, 15f)] private float velocityLeanDegrees = 4.5f;
+    [SerializeField, Range(0f, 3f)]
+    private float accelerationLeanDegreesPerUnit = 0.4f;
+    [SerializeField, Min(0f)] private float maximumVisualAcceleration = 18f;
+    [SerializeField, Min(0f)] private float accelerationVisualResponse = 10f;
+    [SerializeField, Min(1f)] private float turnRateForFullLean = 180f;
+    [SerializeField, Range(0f, 10f)] private float turnLeanDegrees = 4f;
+
+    [Header("Procedural Body")]
+    [SerializeField, Min(0.01f)] private float bodyLeanFrequencyHz = 3.2f;
+    [SerializeField, Range(0f, 2f)] private float bodyLeanDamping = 0.55f;
+    [SerializeField, Range(0f, 20f)] private float maximumBodyLeanDegrees = 9f;
+    [SerializeField, Range(0f, 2f)] private float bodyLeanMultiplier = 0.75f;
+
+    [Header("Procedural Legs")]
+    [SerializeField, Min(0.01f)] private float legYawFrequencyHz = 2.6f;
+    [SerializeField, Range(0f, 2f)] private float legYawDamping = 0.7f;
+    [SerializeField, Range(0f, 180f)] private float maximumLegYawOffset = 55f;
+    [SerializeField, Min(0.01f)] private float legLeanFrequencyHz = 4f;
+    [SerializeField, Range(0f, 2f)] private float legLeanDamping = 0.5f;
+    [FormerlySerializedAs("maximumLegLeanDegrees")]
+    [SerializeField, Range(0f, 20f)] private float maximumLegPitchDegrees = 12f;
+    [SerializeField, Range(0f, 20f)] private float maximumLegRollDegrees = 2.5f;
+
+    [Header("Procedural Wheels")]
+    [SerializeField, Min(0.001f)] private float wheelRadius = 0.08f;
+    [SerializeField] private float wheelSpinDirection = 1f;
+
+    [Header("Procedural Egg Stacks")]
+    [SerializeField, Min(0.01f)] private float stackLeanFrequencyHz = 2.3f;
+    [SerializeField, Range(0f, 2f)] private float stackLeanDamping = 0.38f;
+    [SerializeField, Range(0f, 15f)] private float maximumStackLeanDegrees = 7.5f;
+    [SerializeField, Range(0f, 2f)] private float stackLeanMultiplier = 0.65f;
+    [SerializeField, Range(0f, 0.75f)] private float stackFrequencyFalloff = 0.18f;
 
     [Header("Smart 4 Chicken Arms")]
     [SerializeField] private GameObject chickenArmRoot = null;
@@ -93,6 +154,65 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private float nextChickenMissionCheckTime;
     private readonly HashSet<ChickenEgg> vacuumEggsInFlight =
         new HashSet<ChickenEgg>();
+    private readonly List<GameObject> carriedEggVisuals =
+        new List<GameObject>();
+    private readonly List<Transform> eggStackRoots =
+        new List<Transform>();
+    private readonly List<EggStackAnimationState> eggStackAnimationStates =
+        new List<EggStackAnimationState>();
+    private readonly List<WheelAnimationState> wheelAnimationStates =
+        new List<WheelAnimationState>();
+    private bool usesEggStackSockets;
+    private Transform robotBodyVisual;
+    private Transform robotLegVisual;
+    private Quaternion robotBodyRestRotation = Quaternion.identity;
+    private Quaternion robotLegRestRotation = Quaternion.identity;
+    private SpringUtils.Vector2Spring bodyLeanSpring;
+    private SpringUtils.Vector2Spring legLeanSpring;
+    private SpringUtils.AngleSpring legYawSpring;
+    private Vector3 previousVisualVelocity;
+    private Vector3 smoothedVisualAcceleration;
+    private float previousRobotYaw;
+    private bool hasVisualMotionSample;
+    private bool tankTurningInPlace;
+    private int robotVisualTier = 1;
+
+    private sealed class EggStackAnimationState
+    {
+        public readonly Transform Transform;
+        public readonly Quaternion RestRotation;
+        public SpringUtils.Vector2Spring LeanSpring;
+
+        public EggStackAnimationState(Transform stack)
+        {
+            Transform = stack;
+            RestRotation = stack != null
+                ? stack.localRotation
+                : Quaternion.identity;
+            LeanSpring = new SpringUtils.Vector2Spring(Vector2.zero);
+        }
+    }
+
+    private sealed class WheelAnimationState
+    {
+        public readonly Transform Transform;
+        public readonly Quaternion RestRotation;
+        public readonly float LocalSideOffset;
+        public float SpinDegrees;
+
+        public WheelAnimationState(
+            Transform wheel,
+            Transform robotRoot)
+        {
+            Transform = wheel;
+            RestRotation = wheel != null
+                ? wheel.localRotation
+                : Quaternion.identity;
+            LocalSideOffset = wheel != null && robotRoot != null
+                ? robotRoot.InverseTransformPoint(wheel.position).x
+                : 0f;
+        }
+    }
 
     public int StoredEggs => storedEggs;
     public int Capacity => capacity;
@@ -124,6 +244,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
+        agent.updateRotation = false;
+        robotVisualTier = ResolveRobotVisualTier();
         reachabilityPath = new NavMeshPath();
         obstructionMask = Physics.DefaultRaycastLayers;
         int chickenLayer = LayerMask.NameToLayer("Chicken");
@@ -136,6 +258,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             obstructionMask &= ~(1 << eggLayer);
         }
+        InitializeCarriedEggVisuals();
+        InitializeProceduralAnimation();
         RefreshVisibleEggs();
     }
 
@@ -178,6 +302,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         configuredMovementSpeed = Mathf.Max(0.1f, movementSpeed);
         RefreshTurboMovementSpeed();
         agent.angularSpeed = 540f;
+        agent.updateRotation = false;
         agent.autoBraking = true;
         agent.autoRepath = true;
         agent.avoidancePriority = 10;
@@ -209,6 +334,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             return;
         }
+
+        UpdateTankLocomotion(Time.deltaTime);
+        UpdateChickenBumper();
 
         if (storedEggs > 0 && IsFinalDeliveryWindow())
         {
@@ -301,6 +429,11 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 CollectTargetEgg();
             }
         }
+    }
+
+    private void LateUpdate()
+    {
+        UpdateProceduralAnimation();
     }
 
     public void FinalizeRound()
@@ -512,14 +645,17 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 : transform.position;
         SetDestination(target);
 
-        bool reachedRawTarget =
-            PlanarDistance(transform.position, target) <= deliveryDistance;
-        bool reachedNavMeshTarget = !agent.pathPending
-            && agent.hasPath
-            && agent.remainingDistance
-                <= Mathf.Max(deliveryDistance, agent.stoppingDistance + 0.05f);
-
-        if (!reachedRawTarget && !reachedNavMeshTarget)
+        // A completed NavMesh path is not proof of delivery: the active path
+        // may end at a temporary crowd detour. Container delivery instead uses
+        // its physical trigger volume because its transform origin can sit
+        // beyond the edge of the walkable NavMesh.
+        bool reachedTarget = deliveringToIncubator
+            ? PlanarDistance(transform.position, target) <= deliveryDistance
+            : eggContainer != null
+                && eggContainer.IsWithinDepositRange(
+                    transform.position,
+                    deliveryDistance);
+        if (!reachedTarget)
         {
             return;
         }
@@ -1309,11 +1445,191 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 navMeshSampleDistance,
                 agent.areaMask))
         {
-            agent.isStopped = false;
             agent.SetDestination(hit.position);
             lastDestination = navigationTarget;
             hasDestination = true;
+            UpdateTankLocomotion(0f);
         }
+    }
+
+    private void UpdateTankLocomotion(float deltaTime)
+    {
+        if (agent == null
+            || !agent.isOnNavMesh
+            || !hasDestination
+            || (!agent.hasPath && !agent.pathPending))
+        {
+            tankTurningInPlace = false;
+            return;
+        }
+
+        Vector3 headingTarget = !agent.pathPending && agent.hasPath
+            ? agent.steeringTarget
+            : lastDestination;
+        Vector3 heading = Vector3.ProjectOnPlane(
+            headingTarget - transform.position,
+            Vector3.up);
+        if (heading.sqrMagnitude <= 0.0001f)
+        {
+            tankTurningInPlace = false;
+            agent.isStopped = false;
+            return;
+        }
+
+        float signedAngle = Vector3.SignedAngle(
+            transform.forward,
+            heading,
+            Vector3.up);
+        float absoluteAngle = Mathf.Abs(signedAngle);
+        if (tankTurningInPlace)
+        {
+            if (absoluteAngle <= turnInPlaceFinishAngle)
+            {
+                tankTurningInPlace = false;
+                agent.isStopped = false;
+                return;
+            }
+        }
+        else if (absoluteAngle >= turnInPlaceStartAngle)
+        {
+            tankTurningInPlace = true;
+        }
+
+        float turboMultiplier =
+            TurboConsumableSystem.GetProductivityMultiplier(
+                TurboConsumableSystem.TurboType.Robot);
+        if (tankTurningInPlace)
+        {
+            agent.isStopped = true;
+            float tierTurnMultiplier = 1f
+                + Mathf.Max(0, robotVisualTier - 1)
+                * turnSpeedBonusPerTier;
+            RotateTowardsHeading(
+                heading,
+                turnInPlaceSpeed
+                    * tierTurnMultiplier
+                    * turboMultiplier
+                    * deltaTime);
+            return;
+        }
+
+        agent.isStopped = false;
+        if (movingHeadingCorrectionSpeed > 0f)
+        {
+            RotateTowardsHeading(
+                heading,
+                movingHeadingCorrectionSpeed
+                    * turboMultiplier
+                    * deltaTime);
+        }
+    }
+
+    private void RotateTowardsHeading(Vector3 heading, float maximumDegrees)
+    {
+        if (heading.sqrMagnitude <= 0.0001f || maximumDegrees <= 0f)
+        {
+            return;
+        }
+
+        Quaternion targetRotation = Quaternion.LookRotation(
+            heading.normalized,
+            Vector3.up);
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation,
+            targetRotation,
+            maximumDegrees);
+    }
+
+    private void UpdateChickenBumper()
+    {
+        if (!pushChickens
+            || chickenPushSpeed <= 0f
+            || agent == null
+            || !agent.isOnNavMesh
+            || tankTurningInPlace)
+        {
+            return;
+        }
+
+        Vector3 travelVelocity = Vector3.ProjectOnPlane(
+            agent.velocity,
+            Vector3.up);
+        if (travelVelocity.sqrMagnitude <= 0.0025f)
+        {
+            return;
+        }
+
+        Vector3 travelDirection = travelVelocity.normalized;
+        Vector3 right = Vector3.Cross(Vector3.up, travelDirection);
+        Vector3 bumperCenter = transform.position
+            + travelDirection * chickenPushForwardOffset;
+        float activePushRadius = chickenPushRadius;
+        float radiusSquared = activePushRadius * activePushRadius;
+        IReadOnlyList<ChickenController> chickens =
+            ChickenController.ActiveInstances;
+        for (int index = 0; index < chickens.Count; index++)
+        {
+            ChickenController chicken = chickens[index];
+            if (chicken == null
+                || chicken == targetChicken
+                || chicken.IsMachineControlled)
+            {
+                continue;
+            }
+
+            Vector3 offset = chicken.transform.position - bumperCenter;
+            offset.y = 0f;
+            float distanceSquared = offset.sqrMagnitude;
+            if (distanceSquared >= radiusSquared)
+            {
+                continue;
+            }
+
+            float side = Vector3.Dot(offset, right);
+            if (Mathf.Abs(side) < 0.01f)
+            {
+                side = (chicken.GetInstanceID() & 1) == 0 ? -1f : 1f;
+            }
+
+            Vector3 outward = distanceSquared > 0.000001f
+                ? offset / Mathf.Sqrt(distanceSquared)
+                : right * Mathf.Sign(side);
+            Vector3 pushDirection = (
+                right * Mathf.Sign(side) * 0.8f
+                + outward * 0.45f
+                + travelDirection * 0.35f).normalized;
+            float proximity = 1f - Mathf.Sqrt(distanceSquared)
+                / activePushRadius;
+            float impactSpeed = chickenPushSpeed
+                * Mathf.Lerp(0.55f, 1f, proximity)
+                + travelVelocity.magnitude * 0.35f;
+            chicken.ApplyRobotPush(
+                pushDirection * impactSpeed,
+                maximumChickenPushSpeed);
+        }
+    }
+
+    private int ResolveRobotVisualTier()
+    {
+        const string tierMarker = "_T";
+        int markerIndex = gameObject.name.LastIndexOf(
+            tierMarker,
+            System.StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0 || markerIndex + tierMarker.Length >= gameObject.name.Length)
+        {
+            return 1;
+        }
+
+        int tier = 0;
+        for (int index = markerIndex + tierMarker.Length;
+             index < gameObject.name.Length
+                 && char.IsDigit(gameObject.name[index]);
+             index++)
+        {
+            tier = tier * 10 + gameObject.name[index] - '0';
+        }
+
+        return Mathf.Max(1, tier);
     }
 
     private void UpdateCrowdDetour(Vector3 finalTarget)
@@ -1325,6 +1641,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
         float moved = PlanarDistance(transform.position, crowdProgressPosition);
         bool tryingToTravel = agent.hasPath
+            && !tankTurningInPlace
             && PlanarDistance(transform.position, finalTarget) > 0.55f;
         if (tryingToTravel && moved < 0.035f)
         {
@@ -1430,12 +1747,413 @@ public sealed class EggCollectorRobot : MonoBehaviour
             agent.isStopped = true;
             agent.ResetPath();
             hasDestination = false;
+            tankTurningInPlace = false;
+        }
+    }
+
+    private void InitializeProceduralAnimation()
+    {
+        robotBodyVisual = FindVisualTransform("robot_body");
+        robotLegVisual = FindVisualTransform("robot_legs");
+        robotBodyRestRotation = robotBodyVisual != null
+            ? robotBodyVisual.localRotation
+            : Quaternion.identity;
+        robotLegRestRotation = robotLegVisual != null
+            ? robotLegVisual.localRotation
+            : Quaternion.identity;
+
+        eggStackAnimationStates.Clear();
+        for (int index = 0; index < eggStackRoots.Count; index++)
+        {
+            if (eggStackRoots[index] != null)
+            {
+                eggStackAnimationStates.Add(
+                    new EggStackAnimationState(eggStackRoots[index]));
+            }
+        }
+
+        wheelAnimationStates.Clear();
+        Transform[] descendants = GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < descendants.Length; index++)
+        {
+            Transform candidate = descendants[index];
+            if (candidate != null
+                && candidate.name.StartsWith(
+                    "robot_wheel",
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                wheelAnimationStates.Add(
+                    new WheelAnimationState(candidate, transform));
+            }
+        }
+
+        ResetProceduralAnimation();
+    }
+
+    private Transform FindVisualTransform(string namePrefix)
+    {
+        Transform[] descendants = GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < descendants.Length; index++)
+        {
+            Transform candidate = descendants[index];
+            if (candidate != null
+                && candidate.name.StartsWith(
+                    namePrefix,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private void ResetProceduralAnimation()
+    {
+        bodyLeanSpring.Reset(Vector2.zero);
+        legLeanSpring.Reset(Vector2.zero);
+        previousVisualVelocity = Vector3.zero;
+        smoothedVisualAcceleration = Vector3.zero;
+        previousRobotYaw = transform.eulerAngles.y;
+        legYawSpring.Reset(previousRobotYaw);
+        hasVisualMotionSample = false;
+
+        for (int index = 0;
+             index < eggStackAnimationStates.Count;
+             index++)
+        {
+            eggStackAnimationStates[index].LeanSpring.Reset(Vector2.zero);
+        }
+
+        for (int index = 0;
+             index < wheelAnimationStates.Count;
+             index++)
+        {
+            wheelAnimationStates[index].SpinDegrees = 0f;
+        }
+
+        ApplyProceduralVisualRotations();
+    }
+
+    private void UpdateProceduralAnimation()
+    {
+        if (!animateVisuals)
+        {
+            if (hasVisualMotionSample)
+            {
+                ResetProceduralAnimation();
+            }
+
+            return;
+        }
+
+        float deltaTime = Mathf.Min(Time.deltaTime, 1f / 20f);
+        if (deltaTime <= 0f
+            || (robotBodyVisual == null
+                && robotLegVisual == null
+                && eggStackAnimationStates.Count == 0))
+        {
+            return;
+        }
+
+        Vector3 worldVelocity = agent != null && agent.isOnNavMesh
+            ? agent.velocity
+            : Vector3.zero;
+        float robotYaw = transform.eulerAngles.y;
+        if (!hasVisualMotionSample)
+        {
+            previousVisualVelocity = worldVelocity;
+            previousRobotYaw = robotYaw;
+            legYawSpring.Reset(robotYaw);
+            hasVisualMotionSample = true;
+        }
+
+        Vector3 worldAcceleration =
+            (worldVelocity - previousVisualVelocity) / deltaTime;
+        worldAcceleration = Vector3.ClampMagnitude(
+            worldAcceleration,
+            maximumVisualAcceleration);
+        float accelerationResponse =
+            1f - Mathf.Exp(-accelerationVisualResponse * deltaTime);
+        smoothedVisualAcceleration = Vector3.Lerp(
+            smoothedVisualAcceleration,
+            worldAcceleration,
+            accelerationResponse);
+
+        Vector3 localVelocity = transform.InverseTransformDirection(
+            worldVelocity);
+        Vector3 localAcceleration = transform.InverseTransformDirection(
+            smoothedVisualAcceleration);
+        float targetPitch = -Mathf.Clamp(
+                localVelocity.z / speedForFullLean,
+                -1f,
+                1f) * velocityLeanDegrees
+            - localAcceleration.z * accelerationLeanDegreesPerUnit;
+        float yawRate = Mathf.DeltaAngle(previousRobotYaw, robotYaw)
+            / deltaTime;
+        float targetRoll = -Mathf.Clamp(
+                localVelocity.x / speedForFullLean,
+                -1f,
+                1f) * velocityLeanDegrees
+            - localAcceleration.x * accelerationLeanDegreesPerUnit
+            + Mathf.Clamp(
+                yawRate / turnRateForFullLean,
+                -1f,
+                1f) * turnLeanDegrees;
+        Vector2 targetLean = new Vector2(targetPitch, targetRoll);
+
+        bodyLeanSpring.Update(
+            targetLean * bodyLeanMultiplier,
+            deltaTime,
+            bodyLeanFrequencyHz,
+            bodyLeanDamping);
+        bodyLeanSpring.ClampValue(
+            Vector2.one * -maximumBodyLeanDegrees,
+            Vector2.one * maximumBodyLeanDegrees);
+
+        legLeanSpring.Update(
+            targetLean,
+            deltaTime,
+            legLeanFrequencyHz,
+            legLeanDamping);
+        legLeanSpring.ClampValue(
+            new Vector2(
+                -maximumLegPitchDegrees,
+                -maximumLegRollDegrees),
+            new Vector2(
+                maximumLegPitchDegrees,
+                maximumLegRollDegrees));
+        legYawSpring.Update(
+            robotYaw,
+            deltaTime,
+            legYawFrequencyHz,
+            legYawDamping);
+
+        for (int index = 0;
+             index < eggStackAnimationStates.Count;
+             index++)
+        {
+            EggStackAnimationState stack = eggStackAnimationStates[index];
+            float frequency = stackLeanFrequencyHz
+                / (1f + index * stackFrequencyFalloff);
+            stack.LeanSpring.Update(
+                targetLean * stackLeanMultiplier,
+                deltaTime,
+                frequency,
+                stackLeanDamping);
+            stack.LeanSpring.ClampValue(
+                Vector2.one * -maximumStackLeanDegrees,
+                Vector2.one * maximumStackLeanDegrees);
+        }
+
+        UpdateWheelAnimation(localVelocity.z, yawRate, deltaTime);
+
+        previousVisualVelocity = worldVelocity;
+        previousRobotYaw = robotYaw;
+        ApplyProceduralVisualRotations();
+    }
+
+    private void ApplyProceduralVisualRotations()
+    {
+        if (robotBodyVisual != null)
+        {
+            robotBodyVisual.localRotation = robotBodyRestRotation
+                * Quaternion.Euler(
+                    bodyLeanSpring.Value.x,
+                    0f,
+                    bodyLeanSpring.Value.y);
+        }
+
+        if (robotLegVisual != null)
+        {
+            float yawOffset = Mathf.Clamp(
+                Mathf.DeltaAngle(
+                    transform.eulerAngles.y,
+                    legYawSpring.Value),
+                -maximumLegYawOffset,
+                maximumLegYawOffset);
+            robotLegVisual.localRotation = robotLegRestRotation
+                * Quaternion.Euler(
+                    legLeanSpring.Value.x,
+                    yawOffset,
+                    legLeanSpring.Value.y);
+        }
+
+        for (int index = 0;
+             index < eggStackAnimationStates.Count;
+             index++)
+        {
+            EggStackAnimationState stack = eggStackAnimationStates[index];
+            if (stack.Transform != null)
+            {
+                stack.Transform.localRotation = stack.RestRotation
+                    * Quaternion.Euler(
+                        stack.LeanSpring.Value.x,
+                        0f,
+                        stack.LeanSpring.Value.y);
+            }
+        }
+
+        for (int index = 0;
+             index < wheelAnimationStates.Count;
+             index++)
+        {
+            WheelAnimationState wheel = wheelAnimationStates[index];
+            if (wheel.Transform != null)
+            {
+                wheel.Transform.localRotation = wheel.RestRotation
+                    * Quaternion.Euler(wheel.SpinDegrees, 0f, 0f);
+            }
+        }
+    }
+
+    private void UpdateWheelAnimation(
+        float forwardSpeed,
+        float yawRateDegrees,
+        float deltaTime)
+    {
+        float yawRateRadians = yawRateDegrees * Mathf.Deg2Rad;
+        float safeRadius = Mathf.Max(0.001f, wheelRadius);
+        for (int index = 0;
+             index < wheelAnimationStates.Count;
+             index++)
+        {
+            WheelAnimationState wheel = wheelAnimationStates[index];
+            float wheelTravelSpeed = forwardSpeed
+                - yawRateRadians * wheel.LocalSideOffset;
+            float spinDelta = wheelTravelSpeed
+                / safeRadius
+                * Mathf.Rad2Deg
+                * wheelSpinDirection
+                * deltaTime;
+            wheel.SpinDegrees = Mathf.Repeat(
+                wheel.SpinDegrees + spinDelta,
+                360f);
         }
     }
 
     private void RefreshVisibleEggs()
     {
-        if (visibleEggSlots == null)
+        if (usesEggStackSockets)
+        {
+            for (int stackIndex = 0;
+                 stackIndex < eggStackRoots.Count;
+                 stackIndex++)
+            {
+                Transform stack = eggStackRoots[stackIndex];
+                if (stack != null)
+                {
+                    stack.gameObject.SetActive(
+                        stackIndex == 0
+                        || storedEggs > stackIndex * EggsPerStack);
+                }
+            }
+        }
+
+        for (int index = 0; index < carriedEggVisuals.Count; index++)
+        {
+            GameObject visual = carriedEggVisuals[index];
+            if (visual != null)
+            {
+                ChickenEgg.ApplyTypeVisual(
+                    visual,
+                    index < storedEggTypes.Count
+                        ? storedEggTypes[index]
+                        : ChickenEgg.EggType.Common);
+                visual.SetActive(index < storedEggs);
+            }
+        }
+    }
+
+    private void InitializeCarriedEggVisuals()
+    {
+        carriedEggVisuals.Clear();
+        eggStackRoots.Clear();
+        usesEggStackSockets = false;
+
+        var socketsByStack = new Dictionary<Transform, List<Transform>>();
+        Transform[] descendants = GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < descendants.Length; index++)
+        {
+            Transform socket = descendants[index];
+            if (socket == null
+                || !socket.name.StartsWith(
+                    EggSocketPrefix,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Transform stack = FindEggStackRoot(socket);
+            if (stack == null)
+            {
+                continue;
+            }
+
+            if (!socketsByStack.TryGetValue(
+                    stack,
+                    out List<Transform> stackSockets))
+            {
+                stackSockets = new List<Transform>(EggsPerStack);
+                socketsByStack.Add(stack, stackSockets);
+            }
+
+            stackSockets.Add(socket);
+        }
+
+        GameObject visualPrefab = carriedEggVisualPrefab;
+        Transform legacyVisual = GetFirstLegacyVisibleEgg();
+        if (visualPrefab == null && legacyVisual != null)
+        {
+            visualPrefab = legacyVisual.gameObject;
+        }
+
+        if (visualPrefab != null && socketsByStack.Count > 0)
+        {
+            eggStackRoots.AddRange(socketsByStack.Keys);
+            eggStackRoots.Sort(CompareEggStackRoots);
+
+            Vector3 visualScale = carriedEggVisualPrefab != null
+                ? carriedEggVisualScale
+                : legacyVisual.localScale;
+            for (int stackIndex = 0;
+                 stackIndex < eggStackRoots.Count;
+                 stackIndex++)
+            {
+                Transform stack = eggStackRoots[stackIndex];
+                List<Transform> stackSockets = socketsByStack[stack];
+                stackSockets.Sort((first, second) =>
+                    string.CompareOrdinal(first.name, second.name));
+
+                for (int socketIndex = 0;
+                     socketIndex < stackSockets.Count;
+                     socketIndex++)
+                {
+                    Transform socket = stackSockets[socketIndex];
+                    GameObject visual = Instantiate(
+                        visualPrefab,
+                        socket,
+                        false);
+                    visual.name =
+                        $"Carried Egg {carriedEggVisuals.Count + 1:00}";
+                    visual.transform.localPosition = Vector3.zero;
+                    visual.transform.localRotation = Quaternion.identity;
+                    visual.transform.localScale = visualScale;
+                    visual.SetActive(false);
+                    carriedEggVisuals.Add(visual);
+                }
+            }
+
+            usesEggStackSockets = carriedEggVisuals.Count > 0;
+            if (usesEggStackSockets && legacyVisual != null)
+            {
+                GameObject legacyRoot = legacyVisual.parent.gameObject;
+                legacyRoot.SetActive(false);
+                Destroy(legacyRoot);
+            }
+        }
+
+        if (usesEggStackSockets || visibleEggSlots == null)
         {
             return;
         }
@@ -1444,14 +2162,61 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             if (visibleEggSlots[index] != null)
             {
-                ChickenEgg.ApplyTypeVisual(
-                    visibleEggSlots[index].gameObject,
-                    index < storedEggTypes.Count
-                        ? storedEggTypes[index]
-                        : ChickenEgg.EggType.Common);
-                visibleEggSlots[index].gameObject.SetActive(index < storedEggs);
+                visibleEggSlots[index].localScale = carriedEggVisualScale;
+                carriedEggVisuals.Add(visibleEggSlots[index].gameObject);
             }
         }
+    }
+
+    private Transform FindEggStackRoot(Transform socket)
+    {
+        Transform candidate = socket.parent;
+        while (candidate != null && candidate != transform)
+        {
+            if (candidate.name.StartsWith(
+                    EggStackPrefix,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+
+            candidate = candidate.parent;
+        }
+
+        return null;
+    }
+
+    private Transform GetFirstLegacyVisibleEgg()
+    {
+        if (visibleEggSlots == null)
+        {
+            return null;
+        }
+
+        for (int index = 0; index < visibleEggSlots.Length; index++)
+        {
+            if (visibleEggSlots[index] != null)
+            {
+                return visibleEggSlots[index];
+            }
+        }
+
+        return null;
+    }
+
+    private int CompareEggStackRoots(Transform first, Transform second)
+    {
+        if (first.gameObject.activeSelf != second.gameObject.activeSelf)
+        {
+            return first.gameObject.activeSelf ? -1 : 1;
+        }
+
+        float firstHeight = transform.InverseTransformPoint(first.position).y;
+        float secondHeight = transform.InverseTransformPoint(second.position).y;
+        int heightComparison = firstHeight.CompareTo(secondHeight);
+        return heightComparison != 0
+            ? heightComparison
+            : string.CompareOrdinal(first.name, second.name);
     }
 
     private static float PlanarDistance(Vector3 first, Vector3 second)
@@ -1468,6 +2233,31 @@ public sealed class EggCollectorRobot : MonoBehaviour
         targetRefreshInterval = Mathf.Max(0.05f, targetRefreshInterval);
         navMeshSampleDistance = Mathf.Max(0.1f, navMeshSampleDistance);
         targetNavMeshTolerance = Mathf.Max(0.05f, targetNavMeshTolerance);
+        turnInPlaceStartAngle = Mathf.Max(1f, turnInPlaceStartAngle);
+        turnInPlaceFinishAngle = Mathf.Clamp(
+            turnInPlaceFinishAngle,
+            0f,
+            turnInPlaceStartAngle);
+        turnInPlaceSpeed = Mathf.Max(1f, turnInPlaceSpeed);
+        turnSpeedBonusPerTier = Mathf.Max(0f, turnSpeedBonusPerTier);
+        movingHeadingCorrectionSpeed = Mathf.Max(
+            0f,
+            movingHeadingCorrectionSpeed);
+        chickenPushRadius = Mathf.Max(0.05f, chickenPushRadius);
+        chickenPushForwardOffset = Mathf.Max(0f, chickenPushForwardOffset);
+        chickenPushSpeed = Mathf.Max(0f, chickenPushSpeed);
+        maximumChickenPushSpeed = Mathf.Max(
+            chickenPushSpeed,
+            maximumChickenPushSpeed);
+        speedForFullLean = Mathf.Max(0.1f, speedForFullLean);
+        maximumVisualAcceleration = Mathf.Max(0f, maximumVisualAcceleration);
+        accelerationVisualResponse = Mathf.Max(0f, accelerationVisualResponse);
+        turnRateForFullLean = Mathf.Max(1f, turnRateForFullLean);
+        bodyLeanFrequencyHz = Mathf.Max(0.01f, bodyLeanFrequencyHz);
+        legYawFrequencyHz = Mathf.Max(0.01f, legYawFrequencyHz);
+        legLeanFrequencyHz = Mathf.Max(0.01f, legLeanFrequencyHz);
+        wheelRadius = Mathf.Max(0.001f, wheelRadius);
+        stackLeanFrequencyHz = Mathf.Max(0.01f, stackLeanFrequencyHz);
         chickenPickupDistance = Mathf.Max(0.1f, chickenPickupDistance);
         chickenFacingTolerance = Mathf.Clamp(
             chickenFacingTolerance,

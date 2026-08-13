@@ -727,9 +727,13 @@ public static class GameplayHudPrefabSetup
             root.transform);
         Stretch(overlayRect, 0f);
         Image overlayImage = overlayRect.gameObject.AddComponent<Image>();
-        overlayImage.color = new Color(0f, 0f, 0f, 0.68f);
-        RectTransform dialogCard = CreateUiObject("Upgrade Card", overlayRect);
-        SetCenteredRect(dialogCard, Vector2.zero, new Vector2(520f, 330f));
+        overlayImage.color = Color.clear;
+        overlayImage.raycastTarget = false;
+        RectTransform dialogCard = CreateUiObject("Upgrade Card", panel);
+        SetTopLeftRect(
+            dialogCard,
+            new Vector2(270f, 0f),
+            new Vector2(520f, 330f));
         Image dialogCardImage = dialogCard.gameObject.AddComponent<Image>();
         dialogCardImage.sprite = GetUiSprite();
         dialogCardImage.type = Image.Type.Sliced;
@@ -762,7 +766,7 @@ public static class GameplayHudPrefabSetup
         Button closeButton = closeRect.gameObject.AddComponent<Button>();
         closeButton.targetGraphic = closeImage;
         TMP_Text closeLabel = CreateText(
-            "Label", closeRect, font, "X", 22f,
+            "Label", closeRect, font, "▲", 22f,
             TextAlignmentOptions.Center);
         closeLabel.fontStyle = FontStyles.Bold;
         Stretch(closeLabel.rectTransform, 0f);
@@ -814,6 +818,8 @@ public static class GameplayHudPrefabSetup
             upgradeLabels[index] = rowLabel;
             upgradeFills[index] = rowFill;
         }
+        closeRect.gameObject.SetActive(false);
+        dialogCard.gameObject.SetActive(false);
         overlayRect.gameObject.SetActive(false);
 
         SerializedObject serializedController = new SerializedObject(controller);

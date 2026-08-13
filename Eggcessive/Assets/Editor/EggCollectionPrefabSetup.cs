@@ -76,7 +76,7 @@ public static class EggCollectionPrefabSetup
                 darkMaterial);
             robotPrefabs[tier] = CreateRobotPrefab(
                 tier,
-                new[] { 6, 12, 24 }[tier],
+                new[] { 9, 18, 27 }[tier],
                 darkMaterial,
                 tier == 2 ? vacuumAccentMaterial : vacuumMaterial,
                 boxMaterial,
@@ -223,7 +223,7 @@ public static class EggCollectionPrefabSetup
         Material eggMaterial)
     {
         GameObject root = new GameObject($"prefab_EggCollectorRobot_T{tier + 1}");
-        root.transform.localScale = Vector3.one * 0.68f;
+        root.transform.localScale = Vector3.one;
         NavMeshAgent agent = root.AddComponent<NavMeshAgent>();
         agent.agentTypeID = -1180031551;
         agent.radius = 0.13f;
@@ -299,9 +299,7 @@ public static class EggCollectionPrefabSetup
                 0f,
                 index * 47f,
                 0f);
-            // Compensate for the smaller robot root so the displayed cargo
-            // remains the same physical size as eggs in the pen.
-            egg.transform.localScale = Vector3.one / root.transform.localScale.x;
+            egg.transform.localScale = Vector3.one;
 
             foreach (Renderer renderer in egg.GetComponentsInChildren<Renderer>(true))
             {

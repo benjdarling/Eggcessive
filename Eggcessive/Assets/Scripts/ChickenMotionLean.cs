@@ -20,17 +20,15 @@ public sealed class ChickenMotionLean : MonoBehaviour
     [Header("Response")]
     [SerializeField, Min(0f)] private float velocityTrackingSpeed = 18f;
     [SerializeField, Min(0f)] private float accelerationTrackingSpeed = 12f;
-    [SerializeField, Min(0.01f)] private float leanSmoothTime = 0.08f;
+    [SerializeField, Min(0.01f)] private float leanSpringFrequencyHz = 3.5f;
+    [SerializeField, Range(0f, 2f)] private float leanSpringDamping = 0.55f;
 
     private Quaternion animatedLocalRotation;
     private Vector3 previousPosition;
     private Vector3 trackedVelocity;
     private Vector3 previousTrackedVelocity;
     private Vector3 trackedAcceleration;
-    private float currentPitch;
-    private float currentRoll;
-    private float pitchVelocity;
-    private float rollVelocity;
+    private SpringUtils.Vector2Spring leanSpring;
     private bool initialized;
 
     private void Awake()
@@ -65,10 +63,7 @@ public sealed class ChickenMotionLean : MonoBehaviour
         trackedVelocity = Vector3.zero;
         previousTrackedVelocity = Vector3.zero;
         trackedAcceleration = Vector3.zero;
-        currentPitch = 0f;
-        currentRoll = 0f;
-        pitchVelocity = 0f;
-        rollVelocity = 0f;
+        leanSpring.Reset(Vector2.zero);
         initialized = true;
     }
 
@@ -134,22 +129,13 @@ public sealed class ChickenMotionLean : MonoBehaviour
             - Mathf.Clamp(localAcceleration.x / fullLeanAcceleration, -1f, 1f)
             * sidewaysAccelerationLean;
 
-        currentPitch = Mathf.SmoothDampAngle(
-            currentPitch,
-            targetPitch,
-            ref pitchVelocity,
-            leanSmoothTime,
-            Mathf.Infinity,
-            deltaTime);
-        currentRoll = Mathf.SmoothDampAngle(
-            currentRoll,
-            targetRoll,
-            ref rollVelocity,
-            leanSmoothTime,
-            Mathf.Infinity,
-            deltaTime);
+        Vector2 lean = leanSpring.Update(
+            new Vector2(targetPitch, targetRoll),
+            deltaTime,
+            leanSpringFrequencyHz,
+            leanSpringDamping);
         visualRoot.localRotation = animatedLocalRotation
-            * Quaternion.Euler(currentPitch, 0f, currentRoll);
+            * Quaternion.Euler(lean.x, 0f, lean.y);
     }
 
     private void OnValidate()
@@ -162,6 +148,7 @@ public sealed class ChickenMotionLean : MonoBehaviour
         sidewaysAccelerationLean = Mathf.Clamp(sidewaysAccelerationLean, 0f, 45f);
         velocityTrackingSpeed = Mathf.Max(0f, velocityTrackingSpeed);
         accelerationTrackingSpeed = Mathf.Max(0f, accelerationTrackingSpeed);
-        leanSmoothTime = Mathf.Max(0.01f, leanSmoothTime);
+        leanSpringFrequencyHz = Mathf.Max(0.01f, leanSpringFrequencyHz);
+        leanSpringDamping = Mathf.Clamp(leanSpringDamping, 0f, 2f);
     }
 }

@@ -229,6 +229,8 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Range(0f, 1f)]
     private float idleSeparationStrengthMultiplier = 0.35f;
     [SerializeField, Min(0f)] private float separationStopSpeed = 0.006f;
+    [Tooltip("How quickly a robot bumper shove loses speed after contact ends.")]
+    [SerializeField, Min(0.01f)] private float robotPushDeceleration = 20f;
     [Tooltip("How far beyond the chicken's body collider eggs begin to receive a gentle nudge.")]
     [SerializeField, Min(0f)] private float eggPushRadius = 0.025f;
     [SerializeField, Min(0f)] private float eggPushForce = 3.25f;
@@ -285,6 +287,7 @@ public sealed class ChickenController : MonoBehaviour
     private NavMeshAgent agent;
     private CapsuleCollider bodyCollider;
     private Rigidbody physicsBody;
+    private ChickenFootPlacement footPlacement;
     private NavMeshQueryFilter navMeshQueryFilter;
     private ChickenState state;
     private FoodPile targetFood;
@@ -353,6 +356,7 @@ public sealed class ChickenController : MonoBehaviour
     private MaterialPropertyBlock breedPropertyBlock;
     private Vector3 cachedSeparation;
     private Vector3 targetSeparationVelocity;
+    private Vector3 robotPushVelocity;
     private int separationUpdateOffset;
     private Behaviour[] lodControlledSecondaryMotion =
         System.Array.Empty<Behaviour>();
@@ -588,6 +592,7 @@ public sealed class ChickenController : MonoBehaviour
         agent = GetComponent<NavMeshAgent>();
         bodyCollider = GetComponent<CapsuleCollider>();
         physicsBody = GetComponent<Rigidbody>();
+        footPlacement = GetComponentInChildren<ChickenFootPlacement>(true);
         if (physicsBody == null)
         {
             physicsBody = gameObject.AddComponent<Rigidbody>();
@@ -746,6 +751,7 @@ public sealed class ChickenController : MonoBehaviour
         heldDragAngularVelocity = Vector3.zero;
         cachedSeparation = Vector3.zero;
         targetSeparationVelocity = Vector3.zero;
+        robotPushVelocity = Vector3.zero;
         targetFood = null;
     }
 
@@ -1497,6 +1503,7 @@ public sealed class ChickenController : MonoBehaviour
         targetFood = null;
         targetSeparationVelocity = Vector3.zero;
         cachedSeparation = Vector3.zero;
+        robotPushVelocity = Vector3.zero;
         SetEatingAnimation(false);
 
         if (controlled)
@@ -1576,6 +1583,7 @@ public sealed class ChickenController : MonoBehaviour
 
         if (held)
         {
+            robotPushVelocity = Vector3.zero;
             heldBaseRotation = transform.rotation;
             heldDragAngles = Vector3.zero;
             heldDragAngularVelocity = Vector3.zero;
@@ -2397,9 +2405,7 @@ public sealed class ChickenController : MonoBehaviour
 
     private void ApplyChickenSeparation(float deltaTime)
     {
-        if (separationRadius <= 0f
-            || separationStrength <= 0f
-            || isMachineControlled
+        if (isMachineControlled
             || isHeldByHand
             || isTraversingIncubatorExit
             || !penVisualsEnabled
@@ -2410,6 +2416,7 @@ public sealed class ChickenController : MonoBehaviour
         {
             targetSeparationVelocity = Vector3.zero;
             cachedSeparation = Vector3.zero;
+            robotPushVelocity = Vector3.zero;
             return;
         }
 
@@ -2417,13 +2424,21 @@ public sealed class ChickenController : MonoBehaviour
         // Normal frames still integrate at their actual duration, which keeps
         // the correction continuous and independent of the AI update rate.
         float safeDeltaTime = Mathf.Min(deltaTime, 0.05f);
-        float response = 1f - Mathf.Exp(
-            -Mathf.Max(0.01f, separationResponseSpeed)
-            * safeDeltaTime);
-        cachedSeparation = Vector3.Lerp(
-            cachedSeparation,
-            targetSeparationVelocity,
-            response);
+        if (separationRadius > 0f && separationStrength > 0f)
+        {
+            float response = 1f - Mathf.Exp(
+                -Mathf.Max(0.01f, separationResponseSpeed)
+                * safeDeltaTime);
+            cachedSeparation = Vector3.Lerp(
+                cachedSeparation,
+                targetSeparationVelocity,
+                response);
+        }
+        else
+        {
+            targetSeparationVelocity = Vector3.zero;
+            cachedSeparation = Vector3.zero;
+        }
 
         float stopSpeed = Mathf.Max(0f, separationStopSpeed);
         if (targetSeparationVelocity.sqrMagnitude
@@ -2432,10 +2447,50 @@ public sealed class ChickenController : MonoBehaviour
                 <= stopSpeed * stopSpeed)
         {
             cachedSeparation = Vector3.zero;
+        }
+
+        Vector3 movementVelocity = cachedSeparation + robotPushVelocity;
+        if (movementVelocity.sqrMagnitude > 0.000001f)
+        {
+            agent.Move(movementVelocity * safeDeltaTime);
+        }
+
+        robotPushVelocity = Vector3.MoveTowards(
+            robotPushVelocity,
+            Vector3.zero,
+            Mathf.Max(0.01f, robotPushDeceleration) * safeDeltaTime);
+    }
+
+    public void ApplyRobotPush(Vector3 velocity, float maximumSpeed)
+    {
+        if (isMachineControlled
+            || isHeldByHand
+            || isTraversingIncubatorExit
+            || !penVisualsEnabled
+            || agent == null
+            || !agent.enabled
+            || !agent.isOnNavMesh)
+        {
             return;
         }
 
-        agent.Move(cachedSeparation * safeDeltaTime);
+        velocity.y = 0f;
+        float speedLimit = Mathf.Max(0f, maximumSpeed);
+        if (velocity.sqrMagnitude <= 0.000001f || speedLimit <= 0f)
+        {
+            return;
+        }
+
+        // Contact is refreshed every frame while the robot overlaps this
+        // chicken. Assigning the bounded velocity prevents a sustained overlap
+        // from accumulating into a launch, while the short decay still leaves
+        // a readable shove after contact ends.
+        bool beginningPush = robotPushVelocity.sqrMagnitude <= 0.0025f;
+        robotPushVelocity = Vector3.ClampMagnitude(velocity, speedLimit);
+        if (beginningPush && footPlacement != null)
+        {
+            footPlacement.BeginExternalPushRecovery();
+        }
     }
 
     private void PushNearbyEggs()
@@ -3735,6 +3790,7 @@ public sealed class ChickenController : MonoBehaviour
         idleSeparationStrengthMultiplier = Mathf.Clamp01(
             idleSeparationStrengthMultiplier);
         separationStopSpeed = Mathf.Max(0f, separationStopSpeed);
+        robotPushDeceleration = Mathf.Max(0.01f, robotPushDeceleration);
         eggPushRadius = Mathf.Max(0f, eggPushRadius);
         eggPushForce = Mathf.Max(0f, eggPushForce);
         maximumEggPushSpeed = Mathf.Max(0.01f, maximumEggPushSpeed);

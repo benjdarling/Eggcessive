@@ -337,6 +337,7 @@ MonoBehaviour:
   maxWingMicroTwitchDuration: 0.14
   separationRadius: 0.3
   separationStrength: 0.45
+  robotPushDeceleration: 20
   eggPushRadius: 0.025
   eggPushForce: 3.25
   maximumEggPushSpeed: 0.25
@@ -1432,7 +1433,8 @@ MonoBehaviour:
   sidewaysAccelerationLean: 4
   velocityTrackingSpeed: 18
   accelerationTrackingSpeed: 12
-  leanSmoothTime: 0.08
+  leanSpringFrequencyHz: 3.5
+  leanSpringDamping: 0.55
 --- !u!114 &6481239536847051713
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1913,6 +1915,7 @@ MonoBehaviour:
   landingCommitProgress: 0.55
   landingRetargetSpeed: 20
   emergencyOverlapProgress: 0.5
+  externalPushRecoveryDuration: 0.45
   groundLayers:
     serializedVersion: 2
     m_Bits: 4294967295

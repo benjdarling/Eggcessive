@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 [DefaultExecutionOrder(-150)]
 [DisallowMultipleComponent]
@@ -140,6 +141,7 @@ public sealed class PenExpansionManager : MonoBehaviour
         public int robotVacuumLevel;
         public PenTruckController truck;
         public GameObject sign;
+        public TMP_Text chickenCountText;
     }
 
     [Header("Pen Layout")]
@@ -178,6 +180,7 @@ public sealed class PenExpansionManager : MonoBehaviour
     private Vector3 baseCameraPivotPosition;
     private float penSpacing;
     private int focusedPenIndex;
+    private int debugRobotSpawnCount;
     private float nextVisualRefreshTime;
     private Coroutine penPurchaseFinalization;
     private bool additionalPensUnlocked;
@@ -245,6 +248,18 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private void Update()
     {
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.f7Key.wasPressedThisFrame)
+        {
+            bool spawned = TryDebugSpawnRobot();
+            Debug.Log(
+                spawned
+                    ? $"F7 debug robot: added robot {debugRobotSpawnCount} "
+                        + $"to Pen {focusedPenIndex + 1}."
+                    : "F7 debug robot: could not add a robot to the focused pen.",
+                this);
+        }
+
         if (!IsInitialized || Time.unscaledTime < nextVisualRefreshTime)
         {
             return;
@@ -252,6 +267,7 @@ public sealed class PenExpansionManager : MonoBehaviour
 
         nextVisualRefreshTime = Time.unscaledTime + visualRefreshInterval;
         RefreshDistantVisuals();
+        RefreshPenChickenCounts();
     }
 
     private void OnDestroy()
@@ -501,6 +517,44 @@ public sealed class PenExpansionManager : MonoBehaviour
                 && slot.autoFeeder.gameObject.activeSelf,
             _ => false
         };
+    }
+
+    public bool HasCompletedCoreUpgrades(EquipmentType type)
+    {
+        for (int penIndex = 0; penIndex < slots.Count; penIndex++)
+        {
+            if (!slots[penIndex].owned || !IsEquipmentOwned(penIndex, type))
+            {
+                continue;
+            }
+
+            bool completed = type switch
+            {
+                EquipmentType.Incubator =>
+                    IsUpgradeMaxed(penIndex, EquipmentUpgrade.IncubatorCapacity)
+                    && IsUpgradeMaxed(penIndex, EquipmentUpgrade.IncubatorSpeed),
+                EquipmentType.Crosshatcher =>
+                    IsUpgradeMaxed(penIndex, EquipmentUpgrade.CrosshatcherSpeed)
+                    && IsUpgradeMaxed(penIndex, EquipmentUpgrade.CrosshatcherQuality),
+                EquipmentType.Robot =>
+                    IsUpgradeMaxed(penIndex, EquipmentUpgrade.RobotSpeed)
+                    && IsUpgradeMaxed(penIndex, EquipmentUpgrade.RobotCapacity),
+                _ => false
+            };
+
+            if (completed)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsUpgradeMaxed(int penIndex, EquipmentUpgrade upgrade)
+    {
+        return GetUpgradeLevel(penIndex, upgrade)
+            >= GetMaximumUpgradeLevel(upgrade);
     }
 
     public int GetEquipmentPurchaseCost(EquipmentType type)
@@ -801,6 +855,53 @@ public sealed class PenExpansionManager : MonoBehaviour
                 requireRoundInProgress: false);
     }
 
+    public bool TryDebugSpawnRobot()
+    {
+        if (!IsInitialized
+            || !IsValidIndex(focusedPenIndex)
+            || !slots[focusedPenIndex].owned
+            || EggCarryController.Instance == null)
+        {
+            return false;
+        }
+
+        PenSlot slot = slots[focusedPenIndex];
+        int visualTier = debugRobotSpawnCount % 2 + 1;
+        int positionIndex = debugRobotSpawnCount;
+        float angle = positionIndex * 137.5f * Mathf.Deg2Rad;
+        float radius = 0.55f + positionIndex / 6 * 0.25f;
+        Vector3 offset = new Vector3(
+            Mathf.Cos(angle) * radius,
+            0f,
+            Mathf.Sin(angle) * radius);
+        Vector3 spawnPosition = slot.eggContainer != null
+            ? slot.eggContainer.DepositPosition + offset
+            : slot.runtimeRoot != null
+                ? slot.runtimeRoot.transform.position + offset
+                : transform.position + offset;
+
+        EggCollectorRobot robot = EggCarryController.Instance.CreatePenRobot(
+            slot.eggContainer,
+            slot.incubator,
+            slot.crosshatcher,
+            visualTier,
+            visualTier,
+            0,
+            0,
+            slot.runtimeRoot != null ? slot.runtimeRoot.transform : null,
+            spawnPosition,
+            Quaternion.Euler(0f, positionIndex * 47f, 0f));
+        if (robot == null)
+        {
+            return false;
+        }
+
+        debugRobotSpawnCount++;
+        robot.gameObject.name =
+            $"Debug Robot {debugRobotSpawnCount:00} (T{visualTier})";
+        return true;
+    }
+
     public bool TryActivatePen(int index)
     {
         return TryActivatePen(
@@ -1013,7 +1114,11 @@ public sealed class PenExpansionManager : MonoBehaviour
         EggContainer.SetFocusedContainer(containerTemplate);
         slots[0].sign = signTemplate;
         ConfigurePenSign(slots[0].sign, 0);
+        slots[0].chickenCountText = FindSignText(
+            slots[0].sign,
+            "Chicken Count");
         RefreshPenSigns();
+        RefreshPenChickenCounts();
         IsInitialized = true;
         StartCoroutine(RefreshPenGroundCoverageTimeSliced(slots[0]));
         RefreshDistantVisuals();
@@ -1146,6 +1251,8 @@ public sealed class PenExpansionManager : MonoBehaviour
         slot.autoFeeder = autoFeeder;
         slot.truck = truck;
         slot.sign = CreatePenSign(index, penRoot.transform);
+        slot.chickenCountText = FindSignText(slot.sign, "Chicken Count");
+        RefreshPenChickenCount(index);
     }
 
     private GameObject CreatePenSign(int penIndex, Transform parent)
@@ -1174,11 +1281,53 @@ public sealed class PenExpansionManager : MonoBehaviour
             return;
         }
 
-        TMP_Text text = sign.GetComponentInChildren<TMP_Text>(true);
+        TMP_Text text = FindSignText(sign, "Pen Number");
         if (text != null)
         {
             text.text = (penIndex + 1).ToString();
             text.color = PenUiPalette.GetColour(penIndex);
+        }
+    }
+
+    private static TMP_Text FindSignText(GameObject sign, string objectName)
+    {
+        if (sign == null)
+        {
+            return null;
+        }
+
+        TMP_Text[] texts = sign.GetComponentsInChildren<TMP_Text>(true);
+        for (int index = 0; index < texts.Length; index++)
+        {
+            TMP_Text text = texts[index];
+            if (text != null && text.gameObject.name == objectName)
+            {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
+    private void RefreshPenChickenCounts()
+    {
+        for (int index = 0; index < slots.Count; index++)
+        {
+            RefreshPenChickenCount(index);
+        }
+    }
+
+    private void RefreshPenChickenCount(int penIndex)
+    {
+        if (penIndex < 0 || penIndex >= slots.Count)
+        {
+            return;
+        }
+
+        TMP_Text text = slots[penIndex].chickenCountText;
+        if (text != null)
+        {
+            text.text = $"CHICKS: {GetChickenCount(penIndex)}";
         }
     }
 

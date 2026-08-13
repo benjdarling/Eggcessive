@@ -48,6 +48,8 @@ public sealed class ChickenFootPlacement : MonoBehaviour
     [SerializeField, Min(0f)] private float landingRetargetSpeed = 20f;
     [Tooltip("An overstretched second foot may lift after the active foot passes this point.")]
     [SerializeField, Range(0f, 1f)] private float emergencyOverlapProgress = 0.5f;
+    [Tooltip("How long a shove temporarily keeps both feet in procedural recovery mode.")]
+    [SerializeField, Min(0f)] private float externalPushRecoveryDuration = 0.45f;
 
     [Header("Grounding")]
     [SerializeField] private LayerMask groundLayers = Physics.AllLayers;
@@ -64,6 +66,7 @@ public sealed class ChickenFootPlacement : MonoBehaviour
     private Vector3 planarVelocity;
     private bool nextFootIsLeft = true;
     private bool automaticStepping = true;
+    private float externalPushRecoveryUntilTime;
     private bool initialized;
 
     private void Start()
@@ -461,6 +464,11 @@ public sealed class ChickenFootPlacement : MonoBehaviour
             return;
         }
 
+        if (Time.time < externalPushRecoveryUntilTime)
+        {
+            return;
+        }
+
         automaticStepping = false;
         ReleaseFoot(leftFoot);
         ReleaseFoot(rightFoot);
@@ -504,8 +512,35 @@ public sealed class ChickenFootPlacement : MonoBehaviour
             return;
         }
 
+        if (Time.time < externalPushRecoveryUntilTime)
+        {
+            return;
+        }
+
         automaticStepping = false;
         ReleaseFoot(foot);
+    }
+
+    public void BeginExternalPushRecovery()
+    {
+        if (!isActiveAndEnabled || !EnsureInitialized())
+        {
+            return;
+        }
+
+        bool alreadyRecovering = Time.time < externalPushRecoveryUntilTime;
+        externalPushRecoveryUntilTime = Mathf.Max(
+            externalPushRecoveryUntilTime,
+            Time.time + externalPushRecoveryDuration);
+        automaticStepping = true;
+        if (alreadyRecovering)
+        {
+            return;
+        }
+
+        PlantAtCurrentPose(leftFoot);
+        PlantAtCurrentPose(rightFoot);
+        nextFootIsLeft = true;
     }
 
     private void OnValidate()
@@ -524,6 +559,9 @@ public sealed class ChickenFootPlacement : MonoBehaviour
         landingCommitProgress = Mathf.Clamp(landingCommitProgress, 0f, 0.9f);
         landingRetargetSpeed = Mathf.Max(0f, landingRetargetSpeed);
         emergencyOverlapProgress = Mathf.Clamp01(emergencyOverlapProgress);
+        externalPushRecoveryDuration = Mathf.Max(
+            0f,
+            externalPushRecoveryDuration);
         groundOffset = Mathf.Max(0f, groundOffset);
         raycastHeight = Mathf.Max(0.01f, raycastHeight);
         raycastDistance = Mathf.Max(0.01f, raycastDistance);

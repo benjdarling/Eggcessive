@@ -1,9 +1,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Camera))]
@@ -51,7 +53,7 @@ public sealed class EggCarryController : MonoBehaviour
     };
     private static readonly int[] RobotCapacities =
     {
-        6, 12, 18, 24, 32, 40
+        9, 18, 27, 36, 45, 54
     };
 
     [Header("Pickup")]
@@ -99,6 +101,7 @@ public sealed class EggCarryController : MonoBehaviour
     private Vector3 cursorGroundPosition;
     private Vector3 toolVelocity;
     private GameObject activeCursorTool;
+    private GameObject basketFullIndicator;
     private Transform[] activeToolEggSlots = Array.Empty<Transform>();
     private EggCollectorRobot activeRobot;
     private EggContainer eggContainer;
@@ -934,6 +937,7 @@ public sealed class EggCarryController : MonoBehaviour
             Destroy(activeCursorTool);
             activeCursorTool = null;
         }
+        basketFullIndicator = null;
 
         if (activeRobot != null)
         {
@@ -954,6 +958,7 @@ public sealed class EggCarryController : MonoBehaviour
                         basketPrefabs.Length - 1)
                     : basketUpgradeLevel - 1,
                 "basket");
+            CreateBasketFullIndicator();
             EnsureBasketEggSlotCapacity(BasketCapacity);
             CacheToolEggSlots();
             RefreshToolEggSlots();
@@ -1201,6 +1206,11 @@ public sealed class EggCarryController : MonoBehaviour
                 Quaternion.LookRotation(lookDirection, Vector3.up),
                 1f - Mathf.Exp(-14f * Time.deltaTime));
         }
+
+        if (basketFullIndicator != null && basketFullIndicator.activeSelf)
+        {
+            basketFullIndicator.transform.rotation = viewCamera.transform.rotation;
+        }
     }
 
     private void TryPickUpHandItem(Vector2 pointerPosition)
@@ -1243,6 +1253,7 @@ public sealed class EggCarryController : MonoBehaviour
     {
         targetEgg = null;
         targetChicken = null;
+        bool allowEggPickup = !IsCollectionToolUnlocked;
         Ray ray = viewCamera.ScreenPointToRay(pointerPosition);
         RaycastHit[] directHits = Physics.RaycastAll(
             ray,
@@ -1255,6 +1266,7 @@ public sealed class EggCarryController : MonoBehaviour
 
         if (ResolveHandPickupHits(
                 directHits,
+                allowEggPickup,
                 out targetEgg,
                 out targetChicken))
         {
@@ -1277,27 +1289,34 @@ public sealed class EggCarryController : MonoBehaviour
             (left, right) => left.distance.CompareTo(right.distance));
         return ResolveHandPickupHits(
             radiusHits,
+            allowEggPickup,
             out targetEgg,
             out targetChicken);
     }
 
     private static bool ResolveHandPickupHits(
         RaycastHit[] hits,
+        bool allowEggPickup,
         out ChickenEgg targetEgg,
         out ChickenController targetChicken)
     {
         targetEgg = null;
         targetChicken = null;
 
-        // Eggs always win the click, even when a chicken is standing over one.
-        foreach (RaycastHit hit in hits)
+        // Loose eggs are hand targets only before a collection tool is
+        // unlocked. Afterwards the hand can reach a chicken standing over an
+        // egg without accidentally grabbing the egg instead.
+        if (allowEggPickup)
         {
-            ChickenEgg egg = hit.collider.GetComponentInParent<ChickenEgg>();
-
-            if (egg != null && !egg.IsHeld && !egg.IsCollected)
+            foreach (RaycastHit hit in hits)
             {
-                targetEgg = egg;
-                return true;
+                ChickenEgg egg = hit.collider.GetComponentInParent<ChickenEgg>();
+
+                if (egg != null && !egg.IsHeld && !egg.IsCollected)
+                {
+                    targetEgg = egg;
+                    return true;
+                }
             }
         }
 
@@ -1605,6 +1624,103 @@ public sealed class EggCarryController : MonoBehaviour
                     : ChickenEgg.EggType.Common);
             activeToolEggSlots[index].gameObject.SetActive(index < basketEggCount);
         }
+
+        basketFullIndicator?.SetActive(
+            IsBasketMode
+            && BasketCapacity > 0
+            && basketEggCount >= BasketCapacity);
+    }
+
+    private void CreateBasketFullIndicator()
+    {
+        if (activeCursorTool == null)
+        {
+            return;
+        }
+
+        basketFullIndicator = new GameObject(
+            "Basket Full Indicator",
+            typeof(RectTransform),
+            typeof(Canvas),
+            typeof(CanvasScaler),
+            typeof(Image));
+        RectTransform indicatorRect =
+            basketFullIndicator.GetComponent<RectTransform>();
+        indicatorRect.SetParent(activeCursorTool.transform, false);
+        indicatorRect.localPosition = new Vector3(0f, 0.82f, 0f);
+        indicatorRect.localScale = Vector3.one * 0.004f;
+        indicatorRect.sizeDelta = new Vector2(180f, 64f);
+
+        Canvas canvas = basketFullIndicator.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        canvas.worldCamera = viewCamera;
+        canvas.overrideSorting = true;
+        canvas.sortingOrder = 250;
+
+        Image background = basketFullIndicator.GetComponent<Image>();
+        background.color = new Color(0.08f, 0.72f, 0.24f, 0.96f);
+        background.raycastTarget = false;
+        Outline outline = basketFullIndicator.AddComponent<Outline>();
+        outline.effectColor = new Color(0.015f, 0.08f, 0.025f, 0.95f);
+        outline.effectDistance = new Vector2(4f, -4f);
+
+        CreateFullIndicatorSegment(
+            indicatorRect,
+            "Check Short",
+            new Vector2(-57f, -3f),
+            new Vector2(30f, 10f),
+            -42f);
+        CreateFullIndicatorSegment(
+            indicatorRect,
+            "Check Long",
+            new Vector2(-35f, 6f),
+            new Vector2(48f, 10f),
+            42f);
+
+        GameObject labelObject = new GameObject(
+            "Full Label",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(TextMeshProUGUI));
+        RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+        labelRect.SetParent(indicatorRect, false);
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = new Vector2(55f, 0f);
+        labelRect.offsetMax = new Vector2(-8f, 0f);
+        TextMeshProUGUI label = labelObject.GetComponent<TextMeshProUGUI>();
+        label.text = "FULL";
+        label.fontSize = 34f;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = Color.white;
+        label.raycastTarget = false;
+
+        basketFullIndicator.SetActive(false);
+    }
+
+    private static void CreateFullIndicatorSegment(
+        Transform parent,
+        string objectName,
+        Vector2 position,
+        Vector2 size,
+        float angle)
+    {
+        GameObject segment = new GameObject(
+            objectName,
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image));
+        RectTransform rect = segment.GetComponent<RectTransform>();
+        rect.SetParent(parent, false);
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+        rect.localRotation = Quaternion.Euler(0f, 0f, angle);
+        Image image = segment.GetComponent<Image>();
+        image.color = Color.white;
+        image.raycastTarget = false;
     }
 
     public void UpgradeBasket()

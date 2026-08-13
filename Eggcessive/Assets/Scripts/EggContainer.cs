@@ -22,6 +22,7 @@ public sealed class EggContainer : MonoBehaviour
     public long TotalDepositedCents { get; private set; }
 
     private bool isFocused;
+    private Collider depositCollider;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
@@ -43,7 +44,8 @@ public sealed class EggContainer : MonoBehaviour
             isFocused = true;
         }
 
-        GetComponent<Collider>().isTrigger = true;
+        depositCollider = GetComponent<Collider>();
+        depositCollider.isTrigger = true;
     }
 
     private void OnDestroy()
@@ -57,6 +59,18 @@ public sealed class EggContainer : MonoBehaviour
                 Instance.SetFocused(true);
             }
         }
+    }
+
+    public bool IsWithinDepositRange(Vector3 worldPosition, float range)
+    {
+        depositCollider ??= GetComponent<Collider>();
+        Vector3 closestPoint = depositCollider != null
+            ? depositCollider.ClosestPoint(worldPosition)
+            : transform.position;
+        worldPosition.y = 0f;
+        closestPoint.y = 0f;
+        return Vector3.Distance(worldPosition, closestPoint)
+            <= Mathf.Max(0f, range);
     }
 
     public static void SetFocusedContainer(EggContainer container)

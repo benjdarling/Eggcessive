@@ -84,13 +84,15 @@ public sealed class RoundSystem : MonoBehaviour
         "Cash that must be earned during the active round from egg sales and " +
         "truck bonuses. Spending and carried balance do not affect progress.")]
     [SerializeField, Min(100)] private long baseRoundCashQuotaCents = 800L;
-    [SerializeField, Range(1f, 2f)] private float earlyCashQuotaGrowth = 1.3f;
+    [SerializeField, Range(1f, 2f)] private float earlyCashQuotaGrowth = 1.34f;
     [SerializeField, Min(1)] private int earlyCashQuotaEndRound = 10;
-    [SerializeField, Range(1f, 2f)] private float midCashQuotaGrowth = 1.24f;
+    [SerializeField, Range(1f, 2f)] private float midCashQuotaGrowth = 1.32f;
     [SerializeField, Min(2)] private int midCashQuotaEndRound = 25;
-    [SerializeField, Range(1f, 2f)] private float lateCashQuotaGrowth = 1.18f;
+    [SerializeField, Range(1f, 2f)] private float lateCashQuotaGrowth = 1.25f;
     [SerializeField, Min(3)] private int endgameCashQuotaStartRound = 30;
-    [SerializeField, Range(1f, 2f)] private float endgameCashQuotaGrowth = 1.27f;
+    [SerializeField, Range(1f, 2f)] private float endgameCashQuotaGrowth = 1.355f;
+    [SerializeField, Min(4)] private int sustainedCashQuotaStartRound = 35;
+    [SerializeField, Range(1f, 2f)] private float sustainedCashQuotaGrowth = 1.25f;
     [SerializeField, Min(100)]
     private long maximumRoundCashQuotaCents = 9_000_000_000_000_000_000L;
 
@@ -270,6 +272,8 @@ public sealed class RoundSystem : MonoBehaviour
     private float roundElapsed;
     private double roundStartedRealtime;
     private double roundEndsRealtime;
+    private double externalPauseStartedRealtime;
+    private bool isExternallyPaused;
     private float liveStatsRefreshTime;
     private int roundNumber;
     private int roundEggsCollected;
@@ -374,6 +378,34 @@ public sealed class RoundSystem : MonoBehaviour
         Phase == RoundPhase.InProgress || Phase == RoundPhase.Settling;
     public bool IsSuppliesShopOpen => Phase == RoundPhase.SuppliesShop;
     public bool DidPassRound => roundPassed;
+    public bool IsExternallyPaused => isExternallyPaused;
+
+    public void SetExternalPause(bool paused)
+    {
+        if (isExternallyPaused == paused)
+        {
+            return;
+        }
+
+        double realtimeNow = Time.realtimeSinceStartupAsDouble;
+        if (paused)
+        {
+            isExternallyPaused = true;
+            externalPauseStartedRealtime = realtimeNow;
+            return;
+        }
+
+        if (Phase == RoundPhase.InProgress)
+        {
+            double pausedDuration = Math.Max(
+                0d,
+                realtimeNow - externalPauseStartedRealtime);
+            roundStartedRealtime += pausedDuration;
+            roundEndsRealtime += pausedDuration;
+        }
+
+        isExternallyPaused = false;
+    }
 
     public long GetPenCashPerMinuteCents(int penIndex)
     {
@@ -882,6 +914,11 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void Update()
     {
+        if (isExternallyPaused)
+        {
+            return;
+        }
+
         UpdateRewardParticleStatus();
 
         Keyboard keyboard = Keyboard.current;
@@ -1049,6 +1086,7 @@ public sealed class RoundSystem : MonoBehaviour
     private IEnumerator BeginRoundSequence()
     {
         ChickenEgg.ClearAllActive();
+        FoodPile.ClearAllActive();
         SetPhase(RoundPhase.Countdown);
         intermissionScreen.SetActive(false);
         resultsScreen.SetActive(false);
@@ -1201,6 +1239,7 @@ public sealed class RoundSystem : MonoBehaviour
 
         SetPhase(RoundPhase.TruckDeparting);
         ChickenEgg.ClearAllActive();
+        FoodPile.ClearAllActive();
         timerDisplay.SetActive(false);
         liveStatsDisplay.SetActive(false);
         countdownDisplay.SetActive(false);
@@ -4060,14 +4099,19 @@ public sealed class RoundSystem : MonoBehaviour
             safeRound - midCashQuotaEndRound,
             0,
             endgameCashQuotaStartRound - midCashQuotaEndRound);
-        int endgameGrowthSteps = Mathf.Max(
+        int endgameGrowthSteps = Mathf.Clamp(
+            safeRound - endgameCashQuotaStartRound,
             0,
-            safeRound - endgameCashQuotaStartRound);
+            sustainedCashQuotaStartRound - endgameCashQuotaStartRound);
+        int sustainedGrowthSteps = Mathf.Max(
+            0,
+            safeRound - sustainedCashQuotaStartRound);
         double target = baseRoundCashQuotaCents
             * Math.Pow(earlyCashQuotaGrowth, earlyGrowthSteps)
             * Math.Pow(midCashQuotaGrowth, midGrowthSteps)
             * Math.Pow(lateCashQuotaGrowth, lateGrowthSteps)
-            * Math.Pow(endgameCashQuotaGrowth, endgameGrowthSteps);
+            * Math.Pow(endgameCashQuotaGrowth, endgameGrowthSteps)
+            * Math.Pow(sustainedCashQuotaGrowth, sustainedGrowthSteps);
 
         // Whole-dollar targets are easier to scan during a fast 30-second round.
         double roundedToDollar = Math.Round(
@@ -7973,6 +8017,13 @@ public sealed class RoundSystem : MonoBehaviour
             endgameCashQuotaStartRound);
         endgameCashQuotaGrowth = Mathf.Clamp(
             endgameCashQuotaGrowth,
+            1f,
+            2f);
+        sustainedCashQuotaStartRound = Mathf.Max(
+            endgameCashQuotaStartRound + 1,
+            sustainedCashQuotaStartRound);
+        sustainedCashQuotaGrowth = Mathf.Clamp(
+            sustainedCashQuotaGrowth,
             1f,
             2f);
         maximumRoundCashQuotaCents = Math.Max(
