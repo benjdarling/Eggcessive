@@ -7,8 +7,18 @@ using UnityEngine.Serialization;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
+[DefaultExecutionOrder(100)]
 public sealed class EggCollectorRobot : MonoBehaviour
 {
+    private enum RobotDuty
+    {
+        None,
+        GatherEggs,
+        CashIn,
+        Incubator,
+        Crosshatcher
+    }
+
     private static readonly List<EggCollectorRobot> ActiveRobots =
         new List<EggCollectorRobot>();
     private const int MaximumReachabilityCandidates = 12;
@@ -24,6 +34,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const string EggSocketPrefix = "SOCKET_EGG_";
     private const string EggStackPrefix = "robot_stack";
     private const int EggsPerStack = 9;
+    private static readonly int BaseMapProperty = Shader.PropertyToID(
+        "_BaseMap");
+    private static readonly int MainTextureProperty = Shader.PropertyToID(
+        "_MainTex");
     public const int IncubatorRoutingSmartnessLevel = 1;
     public const int PopulationGrowthSmartnessLevel = 2;
     public const int ChickenArmsSmartnessLevel = 4;
@@ -47,6 +61,22 @@ public sealed class EggCollectorRobot : MonoBehaviour
     [SerializeField, Min(1f)] private float turnInPlaceSpeed = 360f;
     [SerializeField, Min(0f)] private float turnSpeedBonusPerTier = 0.25f;
     [SerializeField, Min(0f)] private float movingHeadingCorrectionSpeed = 35f;
+
+    [Header("Robot Audio")]
+    [SerializeField] private AudioClip robotMotorClip = null;
+    [SerializeField] private AudioClip robotThinkClip = null;
+    [SerializeField] private AudioClip robotDoneClip = null;
+    [SerializeField, Range(0f, 1f)] private float motorMaximumVolume = 0.45f;
+    [SerializeField, Range(0.1f, 3f)] private float motorMinimumPitch = 0.75f;
+    [SerializeField, Range(0.1f, 3f)] private float motorMaximumPitch = 1.3f;
+    [SerializeField, Min(0.1f)] private float motorAudioResponse = 5f;
+    [SerializeField, Range(0f, 1f)] private float robotCueVolume = 0.75f;
+
+    [Header("Robot Face")]
+    [SerializeField] private Texture2D robotFaceIdleTexture = null;
+    [SerializeField] private Texture2D robotFaceCarryEggsTexture = null;
+    [SerializeField] private Texture2D robotFaceCashInTexture = null;
+    [SerializeField] private Texture2D robotFaceCarryChickensTexture = null;
 
     [Header("Chicken Bumper")]
     [SerializeField] private bool pushChickens = true;
@@ -95,9 +125,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     [Header("Smart 4 Chicken Arms")]
     [SerializeField] private GameObject chickenArmRoot = null;
-    [SerializeField] private FastIKFabric[] chickenArmSolvers = null;
+    [SerializeField] private RobotArmIK[] chickenArmSolvers = null;
     [SerializeField] private Transform[] chickenArmTargets = null;
     [SerializeField] private Transform[] chickenCarrySlots = null;
+    [SerializeField] private Transform[] chickenGrabSockets = null;
+    [SerializeField] private SkinnedMeshRenderer[] chickenHandRenderers = null;
+    [SerializeField] private string chickenHandGrabBlendShapeName = "grab";
+    [SerializeField, Range(0f, 1f)]
+    private float chickenHandGrabAmount = 1f;
     [SerializeField, Min(0.1f)] private float chickenPickupDistance = 0.62f;
     [SerializeField, Range(1f, 45f)] private float chickenFacingTolerance = 15f;
     [SerializeField, Min(1f)] private float chickenTurnSpeed = 300f;
@@ -152,6 +187,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool deliveringChickenPair;
     private int carriedChickenCount;
     private float nextChickenMissionCheckTime;
+    private bool debugChickenArmMissionPending;
+    private readonly int[] chickenHandGrabBlendShapeIndices = { -1, -1 };
     private readonly HashSet<ChickenEgg> vacuumEggsInFlight =
         new HashSet<ChickenEgg>();
     private readonly List<GameObject> carriedEggVisuals =
@@ -176,6 +213,16 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool hasVisualMotionSample;
     private bool tankTurningInPlace;
     private int robotVisualTier = 1;
+    private AudioSource motorAudioSource;
+    private AudioSource cueAudioSource;
+    private readonly Queue<AudioClip> robotCueQueue = new Queue<AudioClip>();
+    private RobotDuty currentRobotDuty;
+    private float previousAudioYaw;
+    private bool hasAudioMotionSample;
+    private Renderer robotFaceRenderer;
+    private int robotFaceMaterialIndex = -1;
+    private MaterialPropertyBlock robotFaceProperties;
+    private Texture currentRobotFaceTexture;
 
     private sealed class EggStackAnimationState
     {
@@ -221,6 +268,12 @@ public sealed class EggCollectorRobot : MonoBehaviour
     public static IReadOnlyList<EggCollectorRobot> ActiveInstances =>
         ActiveRobots;
 
+    public void EnableSingleChickenArmDebugMission()
+    {
+        debugChickenArmMissionPending = true;
+        nextChickenMissionCheckTime = 0f;
+    }
+
     private void RefreshTurboMovementSpeed()
     {
         if (agent == null)
@@ -258,8 +311,12 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             obstructionMask &= ~(1 << eggLayer);
         }
+        ResolveChickenArmBindings();
+        SetAllChickenHandsGrabbed(false);
         InitializeCarriedEggVisuals();
         InitializeProceduralAnimation();
+        InitializeRobotAudio();
+        InitializeRobotFace();
         RefreshVisibleEggs();
     }
 
@@ -275,6 +332,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     {
         CancelChickenMission(true);
         ReleaseVacuumEggs();
+        ResetRobotAudio();
         ActiveRobots.Remove(this);
     }
 
@@ -319,11 +377,12 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private void Update()
     {
-        UpdateChickenCarryPoses();
+        UpdateChickenArmTargets();
 
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
         {
             CancelChickenMission(true);
+            SetRobotDuty(RobotDuty.None, false);
             StopMoving();
             return;
         }
@@ -388,6 +447,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
+        SetRobotDuty(RobotDuty.GatherEggs);
         if (targetEgg == null
             || targetEgg.IsCollected
             || targetEgg.IsHeld
@@ -434,6 +494,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private void LateUpdate()
     {
         UpdateProceduralAnimation();
+        UpdateCarriedChickenPoses();
+        UpdateRobotAudio(Time.deltaTime);
+        UpdateRobotFace();
     }
 
     public void FinalizeRound()
@@ -451,6 +514,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         delivering = false;
         deliveringToIncubator = false;
         finalDeliveryCommitted = false;
+        SetRobotDuty(RobotDuty.None, false);
         nextFinalDeliveryAssessmentTime = 0f;
         cachedFinalDeliverySeconds = 0f;
         crowdStallStartTime = -1f;
@@ -572,6 +636,10 @@ public sealed class EggCollectorRobot : MonoBehaviour
         deliveringToIncubator = !forceContainer
             && !finalDeliveryCommitted
             && CanDeliverToIncubator();
+        SetRobotDuty(
+            deliveringToIncubator
+                ? RobotDuty.Incubator
+                : RobotDuty.CashIn);
         Vector3 target = deliveringToIncubator
             ? incubator.DepositPosition
             : eggContainer.DepositPosition;
@@ -667,6 +735,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
             if (storedEggs > 0)
             {
                 deliveringToIncubator = false;
+                SetRobotDuty(RobotDuty.CashIn);
                 SetDestination(eggContainer.DepositPosition);
                 return;
             }
@@ -692,6 +761,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         if (!delivering)
         {
             collectionTripStartTime = 0f;
+            SetRobotDuty(RobotDuty.None);
         }
         noTargetTime = 0f;
         RefreshVisibleEggs();
@@ -815,7 +885,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
             || Time.time < nextChickenMissionCheckTime
             || crosshatcher == null
             || !crosshatcher.isActiveAndEnabled
-            || NeedsPopulationRecovery())
+            || (NeedsPopulationRecovery()
+                && !debugChickenArmMissionPending))
         {
             return false;
         }
@@ -829,9 +900,11 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
         chickenMissionActive = true;
         deliveringChickenPair = false;
+        debugChickenArmMissionPending = false;
         targetEgg = null;
         targetChicken = first;
         carriedChickenCount = 0;
+        SetRobotDuty(RobotDuty.Crosshatcher);
         return true;
     }
 
@@ -916,8 +989,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
         chicken.SetHeldByHand(true);
         carriedChickens[slotIndex] = chicken;
         carriedChickenCount++;
+        SetChickenHandGrabbed(slotIndex, true);
         chicken.UpdateHeldCarryPose(
-            GetChickenCarryPosition(slotIndex),
+            GetChickenGrabPosition(slotIndex),
             0f);
 
         if (carriedChickenCount >= carriedChickens.Length)
@@ -961,6 +1035,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
             {
                 carriedChickens[index] = null;
                 carriedChickenCount--;
+                SetChickenHandGrabbed(index, false);
             }
         }
 
@@ -976,6 +1051,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         targetChicken = null;
         chickenMissionActive = false;
         deliveringChickenPair = false;
+        SetRobotDuty(RobotDuty.None);
         noTargetTime = 0f;
         ResetArmTargets();
     }
@@ -1005,6 +1081,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 chicken.AlignHeldBoneTo(releasePosition);
                 chicken.SetMachineControlled(false);
                 carriedChickens[index] = null;
+                SetChickenHandGrabbed(index, false);
             }
         }
 
@@ -1012,10 +1089,15 @@ public sealed class EggCollectorRobot : MonoBehaviour
         targetChicken = null;
         chickenMissionActive = false;
         deliveringChickenPair = false;
+        if (currentRobotDuty == RobotDuty.Crosshatcher)
+        {
+            SetRobotDuty(RobotDuty.None, false);
+        }
+        SetAllChickenHandsGrabbed(false);
         ResetArmTargets();
     }
 
-    private void UpdateChickenCarryPoses()
+    private void UpdateCarriedChickenPoses()
     {
         for (int index = 0; index < carriedChickens.Length; index++)
         {
@@ -1024,17 +1106,24 @@ public sealed class EggCollectorRobot : MonoBehaviour
             {
                 chicken.SetHeldCarryRotation(transform.rotation);
                 chicken.UpdateHeldCarryPose(
-                    GetChickenCarryPosition(index),
+                    GetChickenGrabPosition(index),
                     Time.deltaTime);
             }
         }
+    }
 
+    private void UpdateChickenArmTargets()
+    {
         for (int index = 0;
              chickenArmTargets != null && index < chickenArmTargets.Length;
              index++)
         {
             Transform armTarget = chickenArmTargets[index];
-            if (armTarget == null)
+            RobotArmIK solver = chickenArmSolvers != null
+                && index < chickenArmSolvers.Length
+                ? chickenArmSolvers[index]
+                : null;
+            if (armTarget == null || solver == null)
             {
                 continue;
             }
@@ -1043,14 +1132,32 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 && targetChicken != null
                 && index == carriedChickenCount)
             {
-                armTarget.position = targetChicken.transform.position
-                    + Vector3.up * 0.22f;
+                solver.ApplyReachPose(
+                    targetChicken.transform.position + Vector3.up * 0.22f);
+            }
+            else if (index < carriedChickens.Length
+                && carriedChickens[index] != null)
+            {
+                solver.ApplyCarryPose();
             }
             else
             {
-                armTarget.position = GetChickenCarryPosition(index);
+                solver.ApplyIdlePose();
             }
         }
+    }
+
+    private Vector3 GetChickenGrabPosition(int index)
+    {
+        if (chickenGrabSockets != null
+            && index >= 0
+            && index < chickenGrabSockets.Length
+            && chickenGrabSockets[index] != null)
+        {
+            return chickenGrabSockets[index].position;
+        }
+
+        return GetChickenCarryPosition(index);
     }
 
     private Vector3 GetChickenCarryPosition(int index)
@@ -1077,8 +1184,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             if (chickenArmTargets[index] != null)
             {
-                chickenArmTargets[index].position =
-                    GetChickenCarryPosition(index);
+                RobotArmIK solver = chickenArmSolvers != null
+                    && index < chickenArmSolvers.Length
+                    ? chickenArmSolvers[index]
+                    : null;
+                if (solver != null)
+                {
+                    solver.ApplyIdlePose();
+                }
             }
         }
     }
@@ -1090,18 +1203,273 @@ public sealed class EggCollectorRobot : MonoBehaviour
             chickenArmRoot.SetActive(enabled);
         }
 
-        if (chickenArmSolvers == null)
-        {
-            return;
-        }
-
-        for (int index = 0; index < chickenArmSolvers.Length; index++)
+        for (int index = 0;
+             chickenArmSolvers != null && index < chickenArmSolvers.Length;
+             index++)
         {
             if (chickenArmSolvers[index] != null)
             {
                 chickenArmSolvers[index].enabled = enabled;
             }
         }
+
+        if (!enabled)
+        {
+            SetAllChickenHandsGrabbed(false);
+        }
+    }
+
+    private void ResolveChickenArmBindings()
+    {
+        var sockets = new List<Transform>();
+        Transform[] descendants = GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < descendants.Length; index++)
+        {
+            if (descendants[index].name == "SOCKET_GRAB")
+            {
+                sockets.Add(descendants[index]);
+            }
+        }
+
+        sockets.Sort((first, second) =>
+            transform.InverseTransformPoint(first.position).x.CompareTo(
+                transform.InverseTransformPoint(second.position).x));
+        if (sockets.Count >= carriedChickens.Length)
+        {
+            chickenGrabSockets = new Transform[carriedChickens.Length];
+            for (int index = 0; index < chickenGrabSockets.Length; index++)
+            {
+                chickenGrabSockets[index] = sockets[index];
+            }
+        }
+
+        ResolveChickenArmSolvers();
+
+        if (chickenHandRenderers == null
+            || chickenHandRenderers.Length != carriedChickens.Length)
+        {
+            chickenHandRenderers =
+                new SkinnedMeshRenderer[carriedChickens.Length];
+        }
+
+        for (int index = 0; index < chickenHandGrabBlendShapeIndices.Length;
+             index++)
+        {
+            chickenHandGrabBlendShapeIndices[index] = -1;
+            Transform socket = chickenGrabSockets != null
+                && index < chickenGrabSockets.Length
+                ? chickenGrabSockets[index]
+                : null;
+            if (socket == null)
+            {
+                continue;
+            }
+
+            SkinnedMeshRenderer renderer = FindGrabBlendShapeRenderer(socket);
+            chickenHandRenderers[index] = renderer;
+            if (renderer != null)
+            {
+                chickenHandGrabBlendShapeIndices[index] =
+                    FindBlendShapeIndex(renderer.sharedMesh);
+            }
+        }
+    }
+
+    private void ResolveChickenArmSolvers()
+    {
+        if (chickenGrabSockets == null
+            || chickenGrabSockets.Length < carriedChickens.Length)
+        {
+            return;
+        }
+
+        FastIKFabric[] legacySolvers =
+            GetComponentsInChildren<FastIKFabric>(true);
+        for (int index = 0; index < legacySolvers.Length; index++)
+        {
+            legacySolvers[index].enabled = false;
+        }
+
+        RobotArmIK[] existingSolvers =
+            GetComponentsInChildren<RobotArmIK>(true);
+        for (int index = 0; index < existingSolvers.Length; index++)
+        {
+            existingSolvers[index].enabled = false;
+        }
+
+        var resolvedSolvers = new RobotArmIK[carriedChickens.Length];
+        for (int index = 0; index < resolvedSolvers.Length; index++)
+        {
+            Transform socket = chickenGrabSockets[index];
+            Transform target = chickenArmTargets != null
+                && index < chickenArmTargets.Length
+                ? chickenArmTargets[index]
+                : null;
+            if (socket == null || target == null)
+            {
+                continue;
+            }
+
+            Transform hand = FindNamedAncestor(socket, "robot_hand");
+            Transform forearm = FindNamedAncestor(
+                socket,
+                "robot_arm_forearm");
+            Transform upper = FindNamedAncestor(
+                socket,
+                "robot_arm_upper");
+            Transform shoulder = upper != null
+                ? FindNamedAncestor(upper.parent, "robot_arm")
+                : null;
+            if (upper == null || forearm == null || hand == null)
+            {
+                continue;
+            }
+
+            RobotArmIK solver = upper.GetComponent<RobotArmIK>();
+            if (solver == null)
+            {
+                solver = upper.gameObject.AddComponent<RobotArmIK>();
+            }
+
+            solver.Configure(
+                shoulder,
+                upper,
+                forearm,
+                hand,
+                socket,
+                target,
+                FindChickenArmPole(index, false),
+                chickenCarrySlots != null
+                    && index < chickenCarrySlots.Length
+                    ? chickenCarrySlots[index]
+                    : null,
+                FindChickenArmPole(index, true));
+            solver.CaptureRuntimeIdlePose();
+            solver.enabled = smartnessLevel >= ChickenArmsSmartnessLevel;
+            resolvedSolvers[index] = solver;
+        }
+
+        chickenArmSolvers = resolvedSolvers;
+    }
+
+    private static Transform FindNamedAncestor(
+        Transform descendant,
+        string expectedName)
+    {
+        Transform current = descendant;
+        while (current != null)
+        {
+            if (string.Equals(
+                    current.name,
+                    expectedName,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return current;
+            }
+
+            current = current.parent;
+        }
+
+        return null;
+    }
+
+    private Transform FindChickenArmPole(int index, bool carryPose)
+    {
+        string side = index == 0 ? "Left" : "Right";
+        string expectedName = carryPose
+            ? $"{side} Chicken Carry Pole"
+            : $"{side} Arm IK Pole";
+        Transform[] descendants = GetComponentsInChildren<Transform>(true);
+        for (int descendantIndex = 0;
+             descendantIndex < descendants.Length;
+             descendantIndex++)
+        {
+            if (descendants[descendantIndex].name == expectedName)
+            {
+                return descendants[descendantIndex];
+            }
+        }
+
+        return null;
+    }
+
+    private SkinnedMeshRenderer FindGrabBlendShapeRenderer(Transform socket)
+    {
+        Transform handRoot = socket.parent;
+        if (handRoot == null)
+        {
+            return null;
+        }
+
+        SkinnedMeshRenderer[] renderers =
+            handRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        for (int index = 0; index < renderers.Length; index++)
+        {
+            if (FindBlendShapeIndex(renderers[index].sharedMesh) >= 0)
+            {
+                return renderers[index];
+            }
+        }
+
+        return null;
+    }
+
+    private int FindBlendShapeIndex(Mesh mesh)
+    {
+        if (mesh == null || string.IsNullOrWhiteSpace(
+                chickenHandGrabBlendShapeName))
+        {
+            return -1;
+        }
+
+        for (int index = 0; index < mesh.blendShapeCount; index++)
+        {
+            string shapeName = mesh.GetBlendShapeName(index);
+            if (string.Equals(
+                    shapeName,
+                    chickenHandGrabBlendShapeName,
+                    System.StringComparison.OrdinalIgnoreCase)
+                || shapeName.EndsWith(
+                    "." + chickenHandGrabBlendShapeName,
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private void SetAllChickenHandsGrabbed(bool grabbed)
+    {
+        for (int index = 0; index < carriedChickens.Length; index++)
+        {
+            SetChickenHandGrabbed(index, grabbed);
+        }
+    }
+
+    private void SetChickenHandGrabbed(int index, bool grabbed)
+    {
+        if (chickenHandRenderers == null
+            || index < 0
+            || index >= chickenHandRenderers.Length
+            || index >= chickenHandGrabBlendShapeIndices.Length)
+        {
+            return;
+        }
+
+        SkinnedMeshRenderer renderer = chickenHandRenderers[index];
+        int shapeIndex = chickenHandGrabBlendShapeIndices[index];
+        if (renderer == null || shapeIndex < 0)
+        {
+            return;
+        }
+
+        // Blender's normalized 0..1 shape-key value is represented as a
+        // 0..100 blendshape weight by Unity.
+        renderer.SetBlendShapeWeight(
+            shapeIndex,
+            grabbed ? chickenHandGrabAmount * 100f : 0f);
     }
 
     private bool TryFindChickenPair(
@@ -1751,6 +2119,287 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
     }
 
+    private void InitializeRobotAudio()
+    {
+        motorAudioSource = FindOrCreateRobotAudioSource(
+            "Robot Motor Audio");
+        cueAudioSource = FindOrCreateRobotAudioSource("Robot Cue Audio");
+
+        ConfigureRobotAudioSource(motorAudioSource);
+        motorAudioSource.clip = robotMotorClip;
+        motorAudioSource.loop = true;
+        motorAudioSource.volume = 0f;
+        motorAudioSource.pitch = motorMinimumPitch;
+
+        ConfigureRobotAudioSource(cueAudioSource);
+        cueAudioSource.loop = false;
+        cueAudioSource.volume = robotCueVolume;
+
+        previousAudioYaw = transform.eulerAngles.y;
+        hasAudioMotionSample = false;
+    }
+
+    private AudioSource FindOrCreateRobotAudioSource(string childName)
+    {
+        Transform child = transform.Find(childName);
+        if (child == null)
+        {
+            var audioObject = new GameObject(childName);
+            child = audioObject.transform;
+            child.SetParent(transform, false);
+        }
+
+        AudioSource source = child.GetComponent<AudioSource>();
+        return source != null
+            ? source
+            : child.gameObject.AddComponent<AudioSource>();
+    }
+
+    private static void ConfigureRobotAudioSource(AudioSource source)
+    {
+        source.playOnAwake = false;
+        source.spatialBlend = 1f;
+        source.dopplerLevel = 0f;
+        source.rolloffMode = AudioRolloffMode.Linear;
+        source.minDistance = 1.5f;
+        source.maxDistance = 18f;
+    }
+
+    private void UpdateRobotAudio(float deltaTime)
+    {
+        UpdateMotorAudio(deltaTime);
+        UpdateRobotCueAudio();
+    }
+
+    private void UpdateMotorAudio(float deltaTime)
+    {
+        if (motorAudioSource == null || robotMotorClip == null)
+        {
+            return;
+        }
+
+        float currentYaw = transform.eulerAngles.y;
+        if (!hasAudioMotionSample || deltaTime <= 0f)
+        {
+            previousAudioYaw = currentYaw;
+            hasAudioMotionSample = true;
+            return;
+        }
+
+        Vector3 velocity = agent != null && agent.isOnNavMesh
+            ? agent.velocity
+            : Vector3.zero;
+        float forwardSpeed = Mathf.Abs(Vector3.Dot(velocity, transform.forward));
+        float yawRateRadians = Mathf.Abs(Mathf.DeltaAngle(
+            previousAudioYaw,
+            currentYaw) / deltaTime) * Mathf.Deg2Rad;
+        previousAudioYaw = currentYaw;
+
+        float trackRadius = 0.12f;
+        for (int index = 0; index < wheelAnimationStates.Count; index++)
+        {
+            trackRadius = Mathf.Max(
+                trackRadius,
+                Mathf.Abs(wheelAnimationStates[index].LocalSideOffset));
+        }
+
+        float wheelMotionSpeed = forwardSpeed + yawRateRadians * trackRadius;
+        float referenceSpeed = agent != null
+            ? Mathf.Max(0.1f, agent.speed)
+            : Mathf.Max(0.1f, configuredMovementSpeed);
+        float speedAmount = Mathf.Clamp01(wheelMotionSpeed / referenceSpeed);
+        float targetVolume = speedAmount > 0.005f
+            ? Mathf.Lerp(motorMaximumVolume * 0.2f, motorMaximumVolume,
+                speedAmount)
+            : 0f;
+        float targetPitch = Mathf.Lerp(
+            motorMinimumPitch,
+            motorMaximumPitch,
+            speedAmount);
+        float response = 1f - Mathf.Exp(
+            -Mathf.Max(0.1f, motorAudioResponse) * deltaTime);
+
+        motorAudioSource.volume = Mathf.Lerp(
+            motorAudioSource.volume,
+            targetVolume,
+            response);
+        motorAudioSource.pitch = Mathf.Lerp(
+            motorAudioSource.pitch,
+            targetPitch,
+            response);
+
+        if (targetVolume > 0f && !motorAudioSource.isPlaying)
+        {
+            motorAudioSource.Play();
+        }
+        else if (targetVolume <= 0f
+            && motorAudioSource.volume <= 0.005f
+            && motorAudioSource.isPlaying)
+        {
+            motorAudioSource.Stop();
+            motorAudioSource.volume = 0f;
+        }
+    }
+
+    private void SetRobotDuty(
+        RobotDuty nextDuty,
+        bool completedPrevious = true)
+    {
+        if (currentRobotDuty == nextDuty)
+        {
+            if (!completedPrevious && nextDuty == RobotDuty.None)
+            {
+                ClearRobotCueQueue();
+            }
+
+            return;
+        }
+
+        if (currentRobotDuty != RobotDuty.None && completedPrevious)
+        {
+            QueueRobotCue(robotDoneClip);
+        }
+
+        currentRobotDuty = nextDuty;
+        if (nextDuty != RobotDuty.None)
+        {
+            QueueRobotCue(robotThinkClip);
+        }
+        else if (!completedPrevious)
+        {
+            ClearRobotCueQueue();
+        }
+    }
+
+    private void QueueRobotCue(AudioClip clip)
+    {
+        if (clip != null)
+        {
+            robotCueQueue.Enqueue(clip);
+        }
+    }
+
+    private void UpdateRobotCueAudio()
+    {
+        if (cueAudioSource == null
+            || cueAudioSource.isPlaying
+            || robotCueQueue.Count <= 0)
+        {
+            return;
+        }
+
+        cueAudioSource.clip = robotCueQueue.Dequeue();
+        cueAudioSource.volume = robotCueVolume;
+        cueAudioSource.pitch = 1f;
+        cueAudioSource.Play();
+    }
+
+    private void ClearRobotCueQueue()
+    {
+        robotCueQueue.Clear();
+        if (cueAudioSource != null)
+        {
+            cueAudioSource.Stop();
+            cueAudioSource.clip = null;
+        }
+    }
+
+    private void ResetRobotAudio()
+    {
+        currentRobotDuty = RobotDuty.None;
+        ClearRobotCueQueue();
+        if (motorAudioSource != null)
+        {
+            motorAudioSource.Stop();
+            motorAudioSource.volume = 0f;
+        }
+
+        hasAudioMotionSample = false;
+    }
+
+    private void InitializeRobotFace()
+    {
+        robotFaceRenderer = null;
+        robotFaceMaterialIndex = -1;
+        robotFaceProperties = new MaterialPropertyBlock();
+        currentRobotFaceTexture = null;
+
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+        for (int rendererIndex = 0;
+             rendererIndex < renderers.Length;
+             rendererIndex++)
+        {
+            Material[] materials = renderers[rendererIndex].sharedMaterials;
+            for (int materialIndex = 0;
+                 materialIndex < materials.Length;
+                 materialIndex++)
+            {
+                Material material = materials[materialIndex];
+                if (material == null
+                    || !material.name.StartsWith(
+                        "mat_robot_face",
+                        System.StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                robotFaceRenderer = renderers[rendererIndex];
+                robotFaceMaterialIndex = materialIndex;
+                UpdateRobotFace(true);
+                return;
+            }
+        }
+    }
+
+    private void UpdateRobotFace(bool force = false)
+    {
+        if (robotFaceRenderer == null
+            || robotFaceMaterialIndex < 0
+            || robotFaceProperties == null)
+        {
+            return;
+        }
+
+        Texture desiredTexture = GetDesiredRobotFaceTexture();
+        if (desiredTexture == null
+            || (!force && desiredTexture == currentRobotFaceTexture))
+        {
+            return;
+        }
+
+        robotFaceRenderer.GetPropertyBlock(
+            robotFaceProperties,
+            robotFaceMaterialIndex);
+        robotFaceProperties.SetTexture(BaseMapProperty, desiredTexture);
+        robotFaceProperties.SetTexture(MainTextureProperty, desiredTexture);
+        robotFaceRenderer.SetPropertyBlock(
+            robotFaceProperties,
+            robotFaceMaterialIndex);
+        currentRobotFaceTexture = desiredTexture;
+    }
+
+    private Texture GetDesiredRobotFaceTexture()
+    {
+        if (carriedChickenCount > 0
+            && robotFaceCarryChickensTexture != null)
+        {
+            return robotFaceCarryChickensTexture;
+        }
+
+        if (currentRobotDuty == RobotDuty.CashIn
+            && robotFaceCashInTexture != null)
+        {
+            return robotFaceCashInTexture;
+        }
+
+        if (storedEggs > 0 && robotFaceCarryEggsTexture != null)
+        {
+            return robotFaceCarryEggsTexture;
+        }
+
+        return robotFaceIdleTexture;
+    }
+
     private void InitializeProceduralAnimation()
     {
         robotBodyVisual = FindVisualTransform("robot_body");
@@ -2265,5 +2914,6 @@ public sealed class EggCollectorRobot : MonoBehaviour
             45f);
         chickenTurnSpeed = Mathf.Max(1f, chickenTurnSpeed);
         chickenDeliveryDistance = Mathf.Max(0.1f, chickenDeliveryDistance);
+        chickenHandGrabAmount = Mathf.Clamp01(chickenHandGrabAmount);
     }
 }

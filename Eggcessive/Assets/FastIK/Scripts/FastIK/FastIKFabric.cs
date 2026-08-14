@@ -15,6 +15,12 @@ namespace DitzelGames.FastIK
         /// </summary>
         public int ChainLength = 2;
 
+        [Tooltip(
+            "Optional ordered chain from the fixed root joint to the end "
+            + "effector. Use this when model socket transforms make the "
+            + "moving joints non-contiguous in the hierarchy.")]
+        public Transform[] ExplicitBones;
+
         /// <summary>
         /// Target the chain should bent to
         /// </summary>
@@ -52,11 +58,18 @@ namespace DitzelGames.FastIK
         // Start is called before the first frame update
         void Awake()
         {
-            Init();
+            // Components added by runtime rig setup receive their target just
+            // after AddComponent returns. Defer initialization in that case.
+            if (Target != null)
+                Init();
         }
 
         void Init()
         {
+            bool usesExplicitBones = HasValidExplicitBones();
+            if (usesExplicitBones)
+                ChainLength = ExplicitBones.Length - 1;
+
             //initial array
             Bones = new Transform[ChainLength + 1];
             Positions = new Vector3[ChainLength + 1];
@@ -65,12 +78,19 @@ namespace DitzelGames.FastIK
             StartRotationBone = new Quaternion[ChainLength + 1];
 
             //find root
-            Root = transform;
-            for (var i = 0; i <= ChainLength; i++)
+            if (usesExplicitBones)
             {
-                if (Root == null)
-                    throw new UnityException("The chain value is longer than the ancestor chain!");
-                Root = Root.parent;
+                Root = ExplicitBones[0].parent;
+            }
+            else
+            {
+                Root = transform;
+                for (var i = 0; i <= ChainLength; i++)
+                {
+                    if (Root == null)
+                        throw new UnityException("The chain value is longer than the ancestor chain!");
+                    Root = Root.parent;
+                }
             }
 
             //init target
@@ -87,23 +107,24 @@ namespace DitzelGames.FastIK
             CompleteLength = 0;
             for (var i = Bones.Length - 1; i >= 0; i--)
             {
-                Bones[i] = current;
-                StartRotationBone[i] = GetRotationRootSpace(current);
+                Bones[i] = usesExplicitBones ? ExplicitBones[i] : current;
+                StartRotationBone[i] = GetRotationRootSpace(Bones[i]);
 
                 if (i == Bones.Length - 1)
                 {
                     //leaf
-                    StartDirectionSucc[i] = GetPositionRootSpace(Target) - GetPositionRootSpace(current);
+                    StartDirectionSucc[i] = GetPositionRootSpace(Target) - GetPositionRootSpace(Bones[i]);
                 }
                 else
                 {
                     //mid bone
-                    StartDirectionSucc[i] = GetPositionRootSpace(Bones[i + 1]) - GetPositionRootSpace(current);
+                    StartDirectionSucc[i] = GetPositionRootSpace(Bones[i + 1]) - GetPositionRootSpace(Bones[i]);
                     BonesLength[i] = StartDirectionSucc[i].magnitude;
                     CompleteLength += BonesLength[i];
                 }
 
-                current = current.parent;
+                if (!usesExplicitBones)
+                    current = current.parent;
             }
 
 
@@ -121,7 +142,7 @@ namespace DitzelGames.FastIK
             if (Target == null)
                 return;
 
-            if (BonesLength.Length != ChainLength)
+            if (NeedsInit())
                 Init();
 
             //Fabric
@@ -196,6 +217,40 @@ namespace DitzelGames.FastIK
                     SetRotationRootSpace(Bones[i], Quaternion.FromToRotation(StartDirectionSucc[i], Positions[i + 1] - Positions[i]) * Quaternion.Inverse(StartRotationBone[i]));
                 SetPositionRootSpace(Bones[i], Positions[i]);
             }
+        }
+
+        private bool HasValidExplicitBones()
+        {
+            if (ExplicitBones == null || ExplicitBones.Length < 2)
+                return false;
+
+            for (int i = 0; i < ExplicitBones.Length; i++)
+            {
+                if (ExplicitBones[i] == null)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private bool NeedsInit()
+        {
+            if (BonesLength == null || Bones == null)
+                return true;
+
+            if (!HasValidExplicitBones())
+                return BonesLength.Length != ChainLength;
+
+            if (Bones.Length != ExplicitBones.Length)
+                return true;
+
+            for (int i = 0; i < Bones.Length; i++)
+            {
+                if (Bones[i] != ExplicitBones[i])
+                    return true;
+            }
+
+            return false;
         }
 
         private Vector3 GetPositionRootSpace(Transform current)

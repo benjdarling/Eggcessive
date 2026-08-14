@@ -68,6 +68,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e741e7ad129849fab063d8d594782dc2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::EggCollectorRobot
+  robotMotorClip: {fileID: 8300000, guid: c4f23e1a8b9d4c57a6012f3d4e5a6b70, type: 3}
+  robotThinkClip: {fileID: 8300000, guid: d5a34f2b9c0e4d68b7123a4e5f6b7c81, type: 3}
+  robotDoneClip: {fileID: 8300000, guid: e6b45a3c0d1f4e79c8234b5f6a7c8d92, type: 3}
+  robotFaceIdleTexture: {fileID: 2800000, guid: e5c79bd9609f0644db5bef7de7e807ad, type: 3}
+  robotFaceCarryEggsTexture: {fileID: 2800000, guid: 5f2f555ac1d0ff445b26197f212b80cd, type: 3}
+  robotFaceCashInTexture: {fileID: 2800000, guid: 502d638495e90844b92cbf76349ae5a3, type: 3}
+  robotFaceCarryChickensTexture: {fileID: 2800000, guid: 9760b647e62828d448352c682cada167, type: 3}
+  motorMaximumVolume: 0.45
+  motorMinimumPitch: 0.75
+  motorMaximumPitch: 1.3
+  motorAudioResponse: 5
+  robotCueVolume: 0.75
   carriedEggVisualPrefab: {fileID: 919132149155446097, guid: b967b5c79c9fa71419f0f86f15459787, type: 3}
   carriedEggVisualScale: {x: 1, y: 1, z: 1}
   visibleEggSlots:

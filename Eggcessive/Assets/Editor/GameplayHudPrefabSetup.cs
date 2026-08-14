@@ -766,7 +766,7 @@ public static class GameplayHudPrefabSetup
         Button closeButton = closeRect.gameObject.AddComponent<Button>();
         closeButton.targetGraphic = closeImage;
         TMP_Text closeLabel = CreateText(
-            "Label", closeRect, font, "▲", 22f,
+            "Label", closeRect, font, "X", 22f,
             TextAlignmentOptions.Center);
         closeLabel.fontStyle = FontStyles.Bold;
         Stretch(closeLabel.rectTransform, 0f);

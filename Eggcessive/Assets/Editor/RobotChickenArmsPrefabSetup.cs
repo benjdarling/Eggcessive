@@ -1,4 +1,6 @@
 #if UNITY_EDITOR
+using System;
+using System.Collections.Generic;
 using DitzelGames.FastIK;
 using UnityEditor;
 using UnityEngine;
@@ -8,19 +10,38 @@ public static class RobotChickenArmsPrefabSetup
 {
     private const string RobotPrefabPath =
         "Assets/Collection/prefabs/prefab_EggCollectorRobot_T3.prefab";
-    private const string ArmRootName = "Chicken Arms";
+    private const string UpperArmPrefabPath =
+        "Assets/Robot/meshes/robot_arm_upper.fbx";
+    private const string ForearmPrefabPath =
+        "Assets/Robot/meshes/robot_arm_forearm.fbx";
+    private const string HandPrefabPath =
+        "Assets/Robot/meshes/robot_hand.fbx";
+    private const string EggVisualPrefabPath =
+        "Assets/Eggs/meshes/egg_chicken.fbx";
+    private const string TargetRootName = "Chicken Arm Targets";
+    private const string GrabSocketName = "SOCKET_GRAB";
+    private const string GrabBlendShapeName = "grab";
     private const string MigrationKey =
-        "Eggcessive.RobotChickenArmsPrefabSetup.v1";
+        "Eggcessive.RobotChickenArmsPrefabSetup.v6";
+
+    private sealed class ArmRig
+    {
+        public Transform Shoulder;
+        public Transform Upper;
+        public Transform Forearm;
+        public Transform Hand;
+        public Transform GrabSocket;
+    }
 
     static RobotChickenArmsPrefabSetup()
     {
         EditorApplication.delayCall += EnsurePrefabOnce;
     }
 
-    [MenuItem("Eggcessive/Prefabs/Rebuild Robot Chicken Arms")]
-    public static void RebuildRobotChickenArms()
+    [MenuItem("Eggcessive/Prefabs/Configure T3 Robot Chicken Arms")]
+    public static void ConfigureRobotChickenArms()
     {
-        BuildPrefab(true);
+        ConfigurePrefab(true);
     }
 
     private static void EnsurePrefabOnce()
@@ -33,16 +54,71 @@ public static class RobotChickenArmsPrefabSetup
         SessionState.SetBool(MigrationKey, true);
         GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
             RobotPrefabPath);
-        if (prefab == null
-            || prefab.transform.Find(ArmRootName) != null)
+        if (prefab != null && NeedsConfiguration(prefab))
         {
-            return;
+            ConfigurePrefab(false);
         }
-
-        BuildPrefab(false);
     }
 
-    private static void BuildPrefab(bool forceRebuild)
+    private static bool NeedsConfiguration(GameObject prefab)
+    {
+        List<Transform> shoulders = FindNamedTransforms(
+            prefab.transform,
+            "robot_arm");
+        List<Transform> uppers = FindNamedTransforms(
+            prefab.transform,
+            "robot_arm_upper");
+        RobotArmIK[] solvers =
+            prefab.GetComponentsInChildren<RobotArmIK>(true);
+        FastIKFabric[] legacySolvers =
+            prefab.GetComponentsInChildren<FastIKFabric>(true);
+        EggCollectorRobot robot = prefab.GetComponent<EggCollectorRobot>();
+        if (robot == null)
+        {
+            return true;
+        }
+
+        SerializedObject serializedRobot = new SerializedObject(
+            robot);
+        bool hasEggVisual = serializedRobot
+            .FindProperty("carriedEggVisualPrefab")
+            .objectReferenceValue != null;
+        if (shoulders.Count != 2
+            || uppers.Count != 2
+            || solvers.Length != 2
+            || legacySolvers.Length != 0
+            || !hasEggVisual
+            || CountEggStackSockets(prefab.transform) != 27)
+        {
+            return true;
+        }
+
+        for (int index = 0; index < solvers.Length; index++)
+        {
+            RobotArmIK solver = solvers[index];
+            if (solver.ShoulderAttachment == null
+                || solver.ShoulderAttachment.name != "robot_arm"
+                || solver.UpperArm == null
+                || solver.UpperArm.name != "robot_arm_upper"
+                || solver.Forearm == null
+                || solver.Forearm.name != "robot_arm_forearm"
+                || solver.Hand == null
+                || solver.Hand.name != "robot_hand"
+                || solver.GrabSocket == null
+                || solver.GrabSocket.name != GrabSocketName
+                || solver.Target == null
+                || solver.Pole == null
+                || solver.CarryTarget == null
+                || solver.CarryPole == null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void ConfigurePrefab(bool logSuccess)
     {
         GameObject root = PrefabUtility.LoadPrefabContents(RobotPrefabPath);
         if (root == null)
@@ -53,122 +129,157 @@ public static class RobotChickenArmsPrefabSetup
 
         try
         {
-            Transform existing = root.transform.Find(ArmRootName);
-            if (existing != null)
+            EggCollectorRobot robot = root.GetComponent<EggCollectorRobot>();
+            GameObject upperPrefab =
+                AssetDatabase.LoadAssetAtPath<GameObject>(UpperArmPrefabPath);
+            GameObject forearmPrefab =
+                AssetDatabase.LoadAssetAtPath<GameObject>(ForearmPrefabPath);
+            GameObject handPrefab =
+                AssetDatabase.LoadAssetAtPath<GameObject>(HandPrefabPath);
+            GameObject eggVisualPrefab =
+                AssetDatabase.LoadAssetAtPath<GameObject>(EggVisualPrefabPath);
+            if (robot == null
+                || upperPrefab == null
+                || forearmPrefab == null
+                || handPrefab == null
+                || eggVisualPrefab == null)
             {
-                if (!forceRebuild)
-                {
-                    return;
-                }
-
-                Object.DestroyImmediate(existing.gameObject);
+                throw new UnityException(
+                    "The T3 robot or one of its arm model prefabs is missing.");
             }
 
-            Transform oldTargets = root.transform.Find("Chicken Arm Targets");
-            if (oldTargets != null)
+            Transform placeholderArms = root.transform.Find("Chicken Arms");
+            if (placeholderArms != null)
             {
-                Object.DestroyImmediate(oldTargets.gameObject);
+                UnityEngine.Object.DestroyImmediate(
+                    placeholderArms.gameObject);
             }
 
-            Material material = FindRobotMaterial(root);
-            Transform armRoot = CreateChild(root.transform, ArmRootName);
-            Transform targetsRoot = CreateChild(
+            FastIKFabric[] oldSolvers =
+                root.GetComponentsInChildren<FastIKFabric>(true);
+            for (int index = 0; index < oldSolvers.Length; index++)
+            {
+                UnityEngine.Object.DestroyImmediate(oldSolvers[index]);
+            }
+
+            RobotArmIK[] oldRobotSolvers =
+                root.GetComponentsInChildren<RobotArmIK>(true);
+            for (int index = 0; index < oldRobotSolvers.Length; index++)
+            {
+                UnityEngine.Object.DestroyImmediate(oldRobotSolvers[index]);
+            }
+
+            List<Transform> shoulders = FindNamedTransforms(
                 root.transform,
-                "Chicken Arm Targets");
+                "robot_arm");
+            if (shoulders.Count != 2)
+            {
+                throw new UnityException(
+                    $"Expected two fixed robot_arm shoulders, found "
+                    + $"{shoulders.Count}.");
+            }
 
-            var solvers = new FastIKFabric[2];
+            var rigs = new List<ArmRig>(2);
+            for (int index = 0; index < shoulders.Count; index++)
+            {
+                rigs.Add(RebuildArmChain(
+                    shoulders[index],
+                    upperPrefab,
+                    forearmPrefab,
+                    handPrefab));
+            }
+
+            rigs.Sort((first, second) =>
+                root.transform.InverseTransformPoint(
+                    first.GrabSocket.position).x.CompareTo(
+                    root.transform.InverseTransformPoint(
+                        second.GrabSocket.position).x));
+
+            Transform targetsRoot = FindOrCreateChild(
+                root.transform,
+                TargetRootName);
+            var solvers = new RobotArmIK[2];
             var targets = new Transform[2];
             var carrySlots = new Transform[2];
-            for (int index = 0; index < 2; index++)
+            var carryPoles = new Transform[2];
+            var grabSockets = new Transform[2];
+            var handRenderers = new SkinnedMeshRenderer[2];
+
+            for (int index = 0; index < rigs.Count; index++)
             {
                 float side = index == 0 ? -1f : 1f;
                 string label = index == 0 ? "Left" : "Right";
-                carrySlots[index] = CreateChild(
-                    targetsRoot,
-                    $"{label} Chicken Carry Socket");
-                carrySlots[index].localPosition = new Vector3(
-                    side * 0.49f,
-                    0.56f,
-                    0.31f);
+                string carryName = $"{label} Chicken Carry Socket";
+                carrySlots[index] = targetsRoot.Find(carryName);
+                if (carrySlots[index] == null)
+                {
+                    carrySlots[index] = FindOrCreateChild(
+                        targetsRoot,
+                        carryName);
+                    carrySlots[index].localPosition = new Vector3(
+                        side * 0.49f,
+                        0.56f,
+                        0.31f);
+                }
 
-                targets[index] = CreateChild(
-                    targetsRoot,
-                    $"{label} Arm IK Target");
-                targets[index].localPosition =
-                    carrySlots[index].localPosition;
+                string carryPoleName = $"{label} Chicken Carry Pole";
+                carryPoles[index] = targetsRoot.Find(carryPoleName);
+                if (carryPoles[index] == null)
+                {
+                    carryPoles[index] = FindOrCreateChild(
+                        targetsRoot,
+                        carryPoleName);
+                    carryPoles[index].localPosition = new Vector3(
+                        side * 0.52f,
+                        0.62f,
+                        -0.12f);
+                }
 
-                Transform pole = CreateChild(
-                    targetsRoot,
-                    $"{label} Arm IK Pole");
-                pole.localPosition = new Vector3(
-                    side * 0.52f,
-                    0.62f,
-                    -0.12f);
+                string targetName = $"{label} Arm IK Target";
+                targets[index] = targetsRoot.Find(targetName);
+                if (targets[index] == null)
+                {
+                    targets[index] = FindOrCreateChild(
+                        targetsRoot,
+                        targetName);
+                    targets[index].position = carrySlots[index].position;
+                    targets[index].rotation = rigs[index].GrabSocket.rotation;
+                }
 
-                Transform upper = CreateChild(
-                    armRoot,
-                    $"{label} Upper Arm");
-                upper.localPosition = new Vector3(
-                    side * 0.28f,
-                    0.36f,
-                    0.06f);
-                Vector3 upperSegment = new Vector3(
-                    side * 0.2f,
-                    0.08f,
-                    0.08f);
-                CreateSegmentMesh(
-                    upper,
-                    $"{label} Upper Arm Mesh",
-                    upperSegment,
-                    0.075f,
-                    material);
+                string poleName = $"{label} Arm IK Pole";
+                Transform pole = targetsRoot.Find(poleName);
+                if (pole == null)
+                {
+                    pole = FindOrCreateChild(targetsRoot, poleName);
+                    pole.localPosition = new Vector3(
+                        side * 0.52f,
+                        0.62f,
+                        -0.12f);
+                }
 
-                Transform forearm = CreateChild(
-                    upper,
-                    $"{label} Forearm");
-                forearm.localPosition = upperSegment;
-                Vector3 forearmSegment = new Vector3(
-                    side * 0.13f,
-                    0.06f,
-                    0.14f);
-                CreateSegmentMesh(
-                    forearm,
-                    $"{label} Forearm Mesh",
-                    forearmSegment,
-                    0.065f,
-                    material);
-
-                Transform hand = CreateChild(
-                    forearm,
-                    $"{label} Hand");
-                hand.localPosition = forearmSegment;
-                CreateBox(
-                    hand,
-                    $"{label} Hand Mesh",
-                    Vector3.zero,
-                    new Vector3(0.11f, 0.09f, 0.13f),
-                    material);
-
-                FastIKFabric solver = hand.gameObject.AddComponent<FastIKFabric>();
-                solver.ChainLength = 2;
-                solver.Target = targets[index];
-                solver.Pole = pole;
-                solver.Iterations = 10;
-                solver.Delta = 0.001f;
-                solver.SnapBackStrength = 0.2f;
+                ArmRig rig = rigs[index];
+                RobotArmIK solver = rig.Upper.gameObject
+                    .AddComponent<RobotArmIK>();
+                solver.Configure(
+                    rig.Shoulder,
+                    rig.Upper,
+                    rig.Forearm,
+                    rig.Hand,
+                    rig.GrabSocket,
+                    targets[index],
+                    pole,
+                    carrySlots[index],
+                    carryPoles[index]);
                 solvers[index] = solver;
-            }
-
-            EggCollectorRobot robot = root.GetComponent<EggCollectorRobot>();
-            if (robot == null)
-            {
-                throw new UnityException(
-                    $"{root.name} has no {nameof(EggCollectorRobot)} component.");
+                grabSockets[index] = rig.GrabSocket;
+                handRenderers[index] = FindGrabRenderer(rig.GrabSocket);
             }
 
             SerializedObject serializedRobot = new SerializedObject(robot);
-            serializedRobot.FindProperty("chickenArmRoot").objectReferenceValue =
-                armRoot.gameObject;
+            serializedRobot.FindProperty("carriedEggVisualPrefab")
+                .objectReferenceValue = eggVisualPrefab;
+            serializedRobot.FindProperty("chickenArmRoot")
+                .objectReferenceValue = null;
             AssignArray(
                 serializedRobot.FindProperty("chickenArmSolvers"),
                 solvers);
@@ -178,12 +289,28 @@ public static class RobotChickenArmsPrefabSetup
             AssignArray(
                 serializedRobot.FindProperty("chickenCarrySlots"),
                 carrySlots);
+            AssignArray(
+                serializedRobot.FindProperty("chickenGrabSockets"),
+                grabSockets);
+            AssignArray(
+                serializedRobot.FindProperty("chickenHandRenderers"),
+                handRenderers);
+            serializedRobot.FindProperty("chickenHandGrabBlendShapeName")
+                .stringValue = GrabBlendShapeName;
+            serializedRobot.FindProperty("chickenHandGrabAmount")
+                .floatValue = 1f;
             serializedRobot.ApplyModifiedPropertiesWithoutUndo();
 
             PrefabUtility.SaveAsPrefabAsset(root, RobotPrefabPath);
             AssetDatabase.SaveAssets();
-            Debug.Log(
-                "Authored paired FastIK chicken arms on the tier-3 robot prefab.");
+            if (logSuccess)
+            {
+                Debug.Log(
+                    "Configured both T3 arms with fixed shoulder housings, "
+                    + "ball-joint shoulders, hinged elbows, and swivelling "
+                    + "hands.",
+                    root);
+            }
         }
         finally
         {
@@ -191,10 +318,193 @@ public static class RobotChickenArmsPrefabSetup
         }
     }
 
+    private static ArmRig RebuildArmChain(
+        Transform shoulder,
+        GameObject upperPrefab,
+        GameObject forearmPrefab,
+        GameObject handPrefab)
+    {
+        RemoveNamedDescendants(shoulder, "robot_arm_upper");
+        RemoveNamedDescendants(shoulder, "robot_arm_forearm");
+        RemoveNamedDescendants(shoulder, "robot_hand");
+
+        Transform upperSocket = FindNamedDescendant(
+            shoulder,
+            "SOCKET_ARM_UPPER");
+        if (upperSocket == null)
+        {
+            throw new UnityException(
+                $"{shoulder.name} is missing SOCKET_ARM_UPPER.");
+        }
+
+        Transform upper = InstantiateModel(upperPrefab, upperSocket);
+        Transform forearmSocket = FindNamedDescendant(
+            upper,
+            "SOCKET_ARM_FOREARM");
+        Transform forearm = InstantiateModel(forearmPrefab, forearmSocket);
+        Transform handSocket = FindNamedDescendant(forearm, "SOCKET_HAND");
+        Transform hand = InstantiateModel(handPrefab, handSocket);
+        Transform grabSocket = FindNamedDescendant(hand, GrabSocketName);
+        if (forearmSocket == null || handSocket == null || grabSocket == null)
+        {
+            throw new UnityException(
+                $"The arm chain below {shoulder.name} is missing a required "
+                + "model socket.");
+        }
+
+        return new ArmRig
+        {
+            Shoulder = shoulder,
+            Upper = upper,
+            Forearm = forearm,
+            Hand = hand,
+            GrabSocket = grabSocket
+        };
+    }
+
+    private static Transform InstantiateModel(
+        GameObject prefab,
+        Transform parent)
+    {
+        if (parent == null)
+        {
+            throw new UnityException(
+                $"Cannot instantiate {prefab.name} without its parent socket.");
+        }
+
+        GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(
+            prefab,
+            parent);
+        instance.transform.localPosition = Vector3.zero;
+        instance.transform.localRotation = Quaternion.identity;
+        instance.transform.localScale = Vector3.one;
+        return instance.transform;
+    }
+
+    private static void RemoveNamedDescendants(
+        Transform root,
+        string objectName)
+    {
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int index = transforms.Length - 1; index >= 0; index--)
+        {
+            Transform candidate = transforms[index];
+            if (candidate != root && candidate.name == objectName)
+            {
+                UnityEngine.Object.DestroyImmediate(candidate.gameObject);
+            }
+        }
+    }
+
+    private static List<Transform> FindNamedTransforms(
+        Transform root,
+        string objectName)
+    {
+        var result = new List<Transform>();
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < transforms.Length; index++)
+        {
+            if (transforms[index].name == objectName)
+            {
+                result.Add(transforms[index]);
+            }
+        }
+
+        return result;
+    }
+
+    private static Transform FindNamedDescendant(
+        Transform root,
+        string objectName)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < transforms.Length; index++)
+        {
+            if (transforms[index].name == objectName)
+            {
+                return transforms[index];
+            }
+        }
+
+        return null;
+    }
+
+    private static SkinnedMeshRenderer FindGrabRenderer(Transform grabSocket)
+    {
+        SkinnedMeshRenderer[] renderers = grabSocket.parent
+            .GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        for (int rendererIndex = 0;
+             rendererIndex < renderers.Length;
+             rendererIndex++)
+        {
+            Mesh mesh = renderers[rendererIndex].sharedMesh;
+            if (mesh == null)
+            {
+                continue;
+            }
+
+            for (int shapeIndex = 0;
+                 shapeIndex < mesh.blendShapeCount;
+                 shapeIndex++)
+            {
+                string shapeName = mesh.GetBlendShapeName(shapeIndex);
+                if (string.Equals(
+                        shapeName,
+                        GrabBlendShapeName,
+                        StringComparison.OrdinalIgnoreCase)
+                    || shapeName.EndsWith(
+                        "." + GrabBlendShapeName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return renderers[rendererIndex];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static int CountEggStackSockets(Transform root)
+    {
+        int count = 0;
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int index = 0; index < transforms.Length; index++)
+        {
+            Transform current = transforms[index];
+            if (!current.name.StartsWith(
+                    "SOCKET_EGG_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Transform ancestor = current.parent;
+            while (ancestor != null && ancestor != root)
+            {
+                if (ancestor.name.StartsWith(
+                        "robot_stack",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    count++;
+                    break;
+                }
+
+                ancestor = ancestor.parent;
+            }
+        }
+
+        return count;
+    }
+
     private static void AssignArray<T>(
         SerializedProperty property,
         T[] values)
-        where T : Object
+        where T : UnityEngine.Object
     {
         property.arraySize = values.Length;
         for (int index = 0; index < values.Length; index++)
@@ -204,71 +514,17 @@ public static class RobotChickenArmsPrefabSetup
         }
     }
 
-    private static Transform CreateChild(Transform parent, string name)
+    private static Transform FindOrCreateChild(Transform parent, string name)
     {
-        GameObject child = new GameObject(name);
-        child.transform.SetParent(parent, false);
-        return child.transform;
-    }
-
-    private static void CreateSegmentMesh(
-        Transform parent,
-        string name,
-        Vector3 segment,
-        float thickness,
-        Material material)
-    {
-        GameObject mesh = CreateBox(
-            parent,
-            name,
-            segment * 0.5f,
-            new Vector3(thickness, segment.magnitude, thickness),
-            material);
-        mesh.transform.localRotation = Quaternion.FromToRotation(
-            Vector3.up,
-            segment.normalized);
-    }
-
-    private static GameObject CreateBox(
-        Transform parent,
-        string name,
-        Vector3 localPosition,
-        Vector3 localScale,
-        Material material)
-    {
-        GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        box.name = name;
-        box.transform.SetParent(parent, false);
-        box.transform.localPosition = localPosition;
-        box.transform.localScale = localScale;
-        Collider collider = box.GetComponent<Collider>();
-        if (collider != null)
+        Transform child = parent.Find(name);
+        if (child != null)
         {
-            Object.DestroyImmediate(collider);
+            return child;
         }
 
-        MeshRenderer renderer = box.GetComponent<MeshRenderer>();
-        if (renderer != null && material != null)
-        {
-            renderer.sharedMaterial = material;
-        }
-
-        return box;
-    }
-
-    private static Material FindRobotMaterial(GameObject root)
-    {
-        MeshRenderer[] renderers =
-            root.GetComponentsInChildren<MeshRenderer>(true);
-        for (int index = 0; index < renderers.Length; index++)
-        {
-            if (renderers[index].sharedMaterial != null)
-            {
-                return renderers[index].sharedMaterial;
-            }
-        }
-
-        return null;
+        var childObject = new GameObject(name);
+        childObject.transform.SetParent(parent, false);
+        return childObject.transform;
     }
 }
 #endif

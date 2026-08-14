@@ -254,9 +254,10 @@ public sealed class PenExpansionManager : MonoBehaviour
             bool spawned = TryDebugSpawnRobot();
             Debug.Log(
                 spawned
-                    ? $"F7 debug robot: added robot {debugRobotSpawnCount} "
-                        + $"to Pen {focusedPenIndex + 1}."
-                    : "F7 debug robot: could not add a robot to the focused pen.",
+                    ? $"F7 T3 test: added robot {debugRobotSpawnCount} and "
+                        + $"enabled the crosshatcher in Pen {focusedPenIndex + 1}."
+                    : "F7 T3 test: could not add a T3 robot and crosshatcher "
+                        + "to the focused pen.",
                 this);
         }
 
@@ -866,7 +867,17 @@ public sealed class PenExpansionManager : MonoBehaviour
         }
 
         PenSlot slot = slots[focusedPenIndex];
-        int visualTier = debugRobotSpawnCount % 2 + 1;
+        if (slot.crosshatcher == null)
+        {
+            return false;
+        }
+
+        if (!slot.crosshatcher.gameObject.activeSelf)
+        {
+            slot.crosshatcher.InstallOrUpgrade(1, 1);
+        }
+
+        const int visualTier = 3;
         int positionIndex = debugRobotSpawnCount;
         float angle = positionIndex * 137.5f * Mathf.Deg2Rad;
         float radius = 0.55f + positionIndex / 6 * 0.25f;
@@ -886,7 +897,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             slot.crosshatcher,
             visualTier,
             visualTier,
-            0,
+            EggCollectorRobot.ChickenArmsSmartnessLevel,
             0,
             slot.runtimeRoot != null ? slot.runtimeRoot.transform : null,
             spawnPosition,
@@ -896,6 +907,7 @@ public sealed class PenExpansionManager : MonoBehaviour
             return false;
         }
 
+        robot.EnableSingleChickenArmDebugMission();
         debugRobotSpawnCount++;
         robot.gameObject.name =
             $"Debug Robot {debugRobotSpawnCount:00} (T{visualTier})";

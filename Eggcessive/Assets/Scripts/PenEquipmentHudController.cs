@@ -445,10 +445,10 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             view.action.text = !hasUpgrade
                 ? "MAXED"
                 : expanded
-                    ? "COLLAPSE\n▲"
+                    ? "COLLAPSE."
                     : ready
-                        ? "READY\n▼"
-                        : "UPGRADES\n▼";
+                        ? "READY."
+                        : "UPGRADES.";
             view.progressRoot.SetActive(hasUpgrade && !ready);
             view.progressText.gameObject.SetActive(hasUpgrade && !ready);
             if (hasUpgrade && !ready)
