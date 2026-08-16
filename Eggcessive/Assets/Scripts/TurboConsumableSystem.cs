@@ -29,16 +29,16 @@ public static class TurboConsumableSystem
     private static readonly long[,] PurchaseCostsByTier =
     {
         {
-            2000L, 5000L, 12500L,
-            32000L, 80000L, 200000L
+            2000L, 10000L, 50000L,
+            250000L, 1250000L, 6000000L
         },
         {
-            4000L, 10000L, 25000L,
-            64000L, 160000L, 400000L
+            4000L, 20000L, 100000L,
+            500000L, 2500000L, 12000000L
         },
         {
-            8000L, 20000L, 50000L,
-            128000L, 320000L, 800000L
+            8000L, 40000L, 200000L,
+            1000000L, 5000000L, 25000000L
         }
     };
 

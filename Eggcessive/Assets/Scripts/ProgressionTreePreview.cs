@@ -17,12 +17,52 @@ public sealed class ProgressionTreePreview : MonoBehaviour
     [SerializeField] private Button dismissButton = null;
 
     private ProgressionNodeButton selectedNode;
+    private float scheduledHideTime = -1f;
+    private bool selectionPinned;
+    private CanvasGroup popupCanvasGroup;
+    private Transform popupMotionTransform;
+    private Vector3 popupRestingScale = Vector3.one;
+    private Quaternion popupRestingRotation = Quaternion.identity;
+    private SpringUtils.FloatSpring popupScaleSpring =
+        new SpringUtils.FloatSpring(1f);
+    private SpringUtils.AngleSpring popupRotationSpring =
+        new SpringUtils.AngleSpring(0f);
+    private SpringUtils.FloatSpring popupAlphaSpring =
+        new SpringUtils.FloatSpring(0f);
+    private bool popupAnimatingOut;
+    private float popupExitDirection = 1f;
 
-    public bool IsOpen => previewPanel != null && previewPanel.activeSelf;
+    public bool IsOpen => previewPanel != null
+        && previewPanel.activeSelf
+        && !popupAnimatingOut;
+
+    public bool ContainsScreenPoint(Vector2 screenPoint)
+    {
+        if (!IsOpen
+            || previewPanel.transform is not RectTransform panelRect)
+        {
+            return false;
+        }
+
+        Canvas canvas = panelRect.GetComponentInParent<Canvas>();
+        Camera uiCamera = canvas != null
+            && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                ? canvas.worldCamera
+                : null;
+        return RectTransformUtility.RectangleContainsScreenPoint(
+            panelRect,
+            screenPoint,
+            uiCamera);
+    }
 
     public bool IsSelected(ProgressionNodeButton node)
     {
         return selectedNode == node && previewPanel != null && previewPanel.activeSelf;
+    }
+
+    public bool IsPinned(ProgressionNodeButton node)
+    {
+        return selectionPinned && IsSelected(node);
     }
 
     private void OnEnable()
@@ -39,7 +79,7 @@ public sealed class ProgressionTreePreview : MonoBehaviour
 
         ProgressionSystem.Changed += Refresh;
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
-        Hide();
+        HideImmediate();
     }
 
     private void OnDisable()
@@ -49,6 +89,21 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         ProgressionSystem.Changed -= Refresh;
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
         selectedNode = null;
+        scheduledHideTime = -1f;
+        selectionPinned = false;
+        HideImmediate();
+    }
+
+    private void Update()
+    {
+        if (scheduledHideTime >= 0f
+            && Time.unscaledTime >= scheduledHideTime)
+        {
+            scheduledHideTime = -1f;
+            Hide();
+        }
+
+        StepPopupMotion();
     }
 
     public void Configure(
@@ -63,6 +118,13 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         TMP_Text purchaseButtonText,
         Button backgroundDismissButton)
     {
+        bool rebind = isActiveAndEnabled;
+        if (rebind)
+        {
+            buyButton?.onClick.RemoveListener(PurchaseSelected);
+            dismissButton?.onClick.RemoveListener(Hide);
+        }
+
         previewPanel = panel;
         titleText = title;
         levelText = level;
@@ -73,10 +135,37 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         buyButton = purchaseButton;
         buyButtonText = purchaseButtonText;
         dismissButton = backgroundDismissButton;
-        Hide();
+        if (buyButton != null
+            && buyButton.GetComponent<SpringMenuButton>() == null)
+        {
+            SpringMenuButton springButton =
+                buyButton.gameObject.AddComponent<SpringMenuButton>();
+            springButton.Initialize(buyButton, buyButtonText, null);
+        }
+        popupMotionTransform = null;
+        EnsurePopupMotion();
+        if (rebind)
+        {
+            buyButton?.onClick.AddListener(PurchaseSelected);
+            dismissButton?.onClick.AddListener(Hide);
+        }
+        HideImmediate();
     }
 
     public void Select(ProgressionNodeButton node)
+    {
+        Show(node, true);
+    }
+
+    public void Preview(ProgressionNodeButton node)
+    {
+        if (!selectionPinned)
+        {
+            Show(node, false);
+        }
+    }
+
+    private void Show(ProgressionNodeButton node, bool pinSelection)
     {
         if (node == null)
         {
@@ -85,10 +174,35 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         }
 
         ProgressionNodeButton previous = selectedNode;
+        CancelScheduledHide();
         selectedNode = node;
+        selectionPinned = pinSelection;
         PositionBeside(node);
+        EnsurePopupMotion();
+        bool animateEntrance = !previewPanel.activeSelf || popupAnimatingOut;
         previewPanel.SetActive(true);
         previewPanel.transform.SetAsLastSibling();
+        popupAnimatingOut = false;
+        popupExitDirection = (node.GetInstanceID() & 1) == 0 ? 1f : -1f;
+        if (popupCanvasGroup != null)
+        {
+            popupCanvasGroup.interactable = true;
+            popupCanvasGroup.blocksRaycasts = true;
+        }
+        if (animateEntrance)
+        {
+            popupScaleSpring.Reset(0.82f, 1.1f);
+            popupRotationSpring.Reset(
+                popupExitDirection * 4.5f,
+                -popupExitDirection * 18f);
+            popupAlphaSpring.Reset(0f, 4f);
+            ApplyPopupMotion();
+        }
+        else
+        {
+            popupScaleSpring.AddImpulse(0.34f);
+            popupRotationSpring.AddImpulse(-popupExitDirection * 18f);
+        }
         previous?.Refresh();
         selectedNode.Refresh();
         Refresh();
@@ -96,15 +210,141 @@ public sealed class ProgressionTreePreview : MonoBehaviour
 
     public void Hide()
     {
+        scheduledHideTime = -1f;
         ProgressionNodeButton previous = selectedNode;
         selectedNode = null;
+        selectionPinned = false;
 
+        if (previewPanel != null && previewPanel.activeSelf)
+        {
+            EnsurePopupMotion();
+            popupAnimatingOut = true;
+            popupScaleSpring.AddImpulse(-0.32f);
+            popupRotationSpring.AddImpulse(popupExitDirection * 22f);
+            if (popupCanvasGroup != null)
+            {
+                popupCanvasGroup.interactable = false;
+                popupCanvasGroup.blocksRaycasts = false;
+            }
+        }
+
+        previous?.Refresh();
+    }
+
+    private void HideImmediate()
+    {
+        scheduledHideTime = -1f;
+        ProgressionNodeButton previous = selectedNode;
+        selectedNode = null;
+        selectionPinned = false;
+        popupAnimatingOut = false;
+        EnsurePopupMotion();
+        popupScaleSpring.Reset(1f);
+        popupRotationSpring.Reset(0f);
+        popupAlphaSpring.Reset(0f);
+        if (popupCanvasGroup != null)
+        {
+            popupCanvasGroup.alpha = 0f;
+            popupCanvasGroup.interactable = false;
+            popupCanvasGroup.blocksRaycasts = false;
+        }
         if (previewPanel != null)
         {
             previewPanel.SetActive(false);
         }
-
         previous?.Refresh();
+    }
+
+    private void EnsurePopupMotion()
+    {
+        if (previewPanel == null
+            || popupMotionTransform == previewPanel.transform)
+        {
+            return;
+        }
+
+        popupMotionTransform = previewPanel.transform;
+        popupRestingScale = popupMotionTransform.localScale;
+        popupRestingRotation = popupMotionTransform.localRotation;
+        popupCanvasGroup = previewPanel.GetComponent<CanvasGroup>();
+        if (popupCanvasGroup == null)
+        {
+            popupCanvasGroup = previewPanel.AddComponent<CanvasGroup>();
+        }
+        popupScaleSpring.Reset(1f);
+        popupRotationSpring.Reset(0f);
+        popupAlphaSpring.Reset(previewPanel.activeSelf ? 1f : 0f);
+    }
+
+    private void StepPopupMotion()
+    {
+        if (previewPanel == null || !previewPanel.activeSelf)
+        {
+            return;
+        }
+
+        float deltaTime = Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+        float scaleTarget = popupAnimatingOut ? 0.88f : 1f;
+        float rotationTarget = popupAnimatingOut
+            ? popupExitDirection * 2.75f
+            : 0f;
+        float alphaTarget = popupAnimatingOut ? 0f : 1f;
+        popupScaleSpring.Update(
+            scaleTarget,
+            deltaTime,
+            popupAnimatingOut ? 10f : 7f,
+            popupAnimatingOut ? 0.72f : 0.5f);
+        popupRotationSpring.Update(
+            rotationTarget,
+            deltaTime,
+            popupAnimatingOut ? 9f : 6.5f,
+            popupAnimatingOut ? 0.72f : 0.48f);
+        popupAlphaSpring.Update(alphaTarget, deltaTime, 12f, 0.82f);
+        popupScaleSpring.ClampValue(0.78f, 1.12f);
+        popupRotationSpring.ClampValue(-7f, 7f);
+        popupAlphaSpring.ClampValue(0f, 1f);
+        ApplyPopupMotion();
+
+        if (popupAnimatingOut
+            && popupAlphaSpring.Value <= 0.015f
+            && Mathf.Abs(popupScaleSpring.Value - scaleTarget) <= 0.015f)
+        {
+            previewPanel.SetActive(false);
+            popupAnimatingOut = false;
+        }
+    }
+
+    private void ApplyPopupMotion()
+    {
+        if (popupMotionTransform == null)
+        {
+            return;
+        }
+
+        popupMotionTransform.localScale = Vector3.Scale(
+            popupRestingScale,
+            Vector3.one * popupScaleSpring.Value);
+        popupMotionTransform.localRotation = popupRestingRotation
+            * Quaternion.Euler(0f, 0f, popupRotationSpring.Value);
+        if (popupCanvasGroup != null)
+        {
+            popupCanvasGroup.alpha = popupAlphaSpring.Value;
+        }
+    }
+
+    public void ScheduleHide(float delay = 0.12f)
+    {
+        if (selectionPinned)
+        {
+            return;
+        }
+
+        scheduledHideTime = Time.unscaledTime + Mathf.Max(0f, delay);
+    }
+
+    public void CancelScheduledHide()
+    {
+        scheduledHideTime = -1f;
     }
 
     public void Refresh()
@@ -136,7 +376,7 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             : ownershipOnly
                 ? maxed ? "OWNED" : "UNLOCK"
                 : state.IsRepeatable
-                    ? $"OWNED  {state.Level}"
+                    ? $"IN STOCK  {state.Level}"
                     : $"LEVEL  {state.Level} / {state.MaximumLevel}";
         descriptionText.text =
             $"{GetDescription(selectedNode.UpgradeId)}\n\n" +
@@ -169,7 +409,9 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             : !state.Visible || !state.PrerequisiteMet
                 ? "LOCKED"
                 : affordable
-                    ? $"BUY  {FormatMoney(state.Cost)}"
+                    ? state.IsRepeatable && state.Level > 0
+                        ? $"BUY ANOTHER  {FormatMoney(state.Cost)}"
+                        : $"BUY  {FormatMoney(state.Cost)}"
                     : $"NEED  {FormatMoney(state.Cost - balance)}";
 
         Image buttonImage = buyButton.targetGraphic as Image;
@@ -197,6 +439,12 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         if (purchased)
         {
             RoundSystem.Instance?.AnimateShopSpend(state.Cost);
+            popupScaleSpring.AddImpulse(0.7f);
+            popupRotationSpring.AddImpulse(-popupExitDirection * 34f);
+        }
+        else
+        {
+            popupRotationSpring.AddImpulse(popupExitDirection * 48f);
         }
         selectedNode.Refresh();
         Refresh();
@@ -216,15 +464,29 @@ public sealed class ProgressionTreePreview : MonoBehaviour
         Vector2 nodePosition = panelParent != null
             ? (Vector2)panelParent.InverseTransformPoint(nodeWorldCenter)
             : nodeRect.anchoredPosition;
-        float side = nodePosition.x > 180f ? -1f : 1f;
+        Rect parentBounds = panelParent != null
+            ? panelParent.rect
+            : new Rect(-940f, -460f, 1880f, 920f);
+        float rightSpace = parentBounds.xMax - nodePosition.x;
+        float leftSpace = nodePosition.x - parentBounds.xMin;
+        float side = rightSpace >= panelRect.rect.width + 24f
+            ? 1f
+            : leftSpace >= panelRect.rect.width + 24f
+                ? -1f
+                : rightSpace >= leftSpace ? 1f : -1f;
         float horizontalOffset =
             (nodeRect.rect.width + panelRect.rect.width) * 0.5f + 12f;
+        float halfWidth = panelRect.rect.width * 0.5f;
+        float halfHeight = panelRect.rect.height * 0.5f;
         panelRect.anchoredPosition = new Vector2(
             Mathf.Clamp(
                 nodePosition.x + side * horizontalOffset,
-                -445f,
-                445f),
-            Mathf.Clamp(nodePosition.y, -320f, 270f));
+                parentBounds.xMin + halfWidth + 18f,
+                parentBounds.xMax - halfWidth - 18f),
+            Mathf.Clamp(
+                nodePosition.y,
+                parentBounds.yMin + halfHeight + 18f,
+                parentBounds.yMax - halfHeight - 78f));
     }
 
     private void HandleBalanceChanged(long _)

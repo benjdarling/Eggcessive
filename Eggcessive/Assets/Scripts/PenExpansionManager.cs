@@ -34,7 +34,7 @@ public sealed class PenExpansionManager : MonoBehaviour
     }
 
     private const int RuntimeGroundMaskResolution = 64;
-    private const int IncubatorInstallCost = 400;
+    private const int IncubatorInstallCost = 800;
     private const int CrosshatcherInstallCost = 15000;
     private const int RobotInstallCost = 120000;
     private const int AutoFeederInstallCost = 2500000;
@@ -42,54 +42,54 @@ public sealed class PenExpansionManager : MonoBehaviour
 
     private static readonly int[] IncubatorCapacityCosts =
     {
-        1000, 2600
+        2500, 12000
     };
 
     private static readonly int[] IncubatorSpeedCosts =
     {
-        1400, 3800
+        4000, 20000
     };
 
     private static readonly int[] CrosshatcherSpeedCosts =
     {
-        22000, 50000, 110000, 240000, 520000,
-        1100000, 2300000, 4800000, 10000000
+        22000, 55000, 140000, 360000, 900000,
+        2200000, 5500000, 14000000, 35000000
     };
 
     private static readonly int[] CrosshatcherQualityCosts =
     {
-        30000, 70000, 160000, 360000, 800000,
-        1750000, 3800000, 8200000, 18000000
+        30000, 75000, 190000, 480000, 1200000,
+        3000000, 7500000, 19000000, 48000000
     };
 
     private static readonly int[] RobotSpeedCosts =
     {
-        180000, 520000, 1600000, 4200000, 9500000
+        180000, 650000, 2400000, 9000000, 35000000
     };
 
     private static readonly int[] RobotCapacityCosts =
     {
-        240000, 750000, 2400000, 6500000, 15000000
+        240000, 900000, 3400000, 13000000, 50000000
     };
 
     private static readonly int[] RobotSmartnessCosts =
     {
-        600000, 3500000, 12000000, 60000000
+        600000, 4000000, 20000000, 100000000
     };
 
     private static readonly int[] RobotVacuumCosts =
     {
-        300000, 900000, 2700000, 8000000, 24000000
+        300000, 1200000, 5000000, 22000000, 100000000
     };
 
     private static readonly int[] AutoFeederSpeedCosts =
     {
-        7500000, 25000000
+        7500000, 30000000
     };
 
     private static readonly int[] AutoFeederRangeCosts =
     {
-        2500000, 7500000, 25000000, 90000000, 350000000
+        2500000, 10000000, 40000000, 160000000, 640000000
     };
 
     private static readonly EquipmentUpgrade[] IncubatorUpgrades =

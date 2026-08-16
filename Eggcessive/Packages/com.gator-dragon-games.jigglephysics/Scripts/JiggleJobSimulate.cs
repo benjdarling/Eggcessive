@@ -1,4 +1,3 @@
-using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -513,21 +512,8 @@ public struct JiggleJobSimulate : IJobFor {
         }
     }
 
-    private bool Validate(JiggleTreeJobData tree) {
-        if (!tree.GetIsValid(out string failReason)) {
-            throw new InvalidOperationException(failReason);
-        }
-
-        return true;
-    }
-
     public void Execute(int index) {
         var tree = jiggleTrees[index];
-        #if UNITY_EDITOR
-        if (!Validate(tree)) {
-            return;
-        }
-        #endif
         Cache(ref tree);
         VerletIntegrate(tree);
         Constrain(tree);

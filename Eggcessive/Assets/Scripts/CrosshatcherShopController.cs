@@ -5,14 +5,14 @@ public sealed class CrosshatcherShopController : MonoBehaviour
 {
     private static readonly int[] SpeedCosts =
     {
-        22000, 50000, 110000, 240000, 520000,
-        1100000, 2300000, 4800000, 10000000
+        22000, 55000, 140000, 360000, 900000,
+        2200000, 5500000, 14000000, 35000000
     };
 
     private static readonly int[] QualityCosts =
     {
-        30000, 70000, 160000, 360000, 800000,
-        1750000, 3800000, 8200000, 18000000
+        30000, 75000, 190000, 480000, 1200000,
+        3000000, 7500000, 19000000, 48000000
     };
 
     private const int InstallationCost = 15000;

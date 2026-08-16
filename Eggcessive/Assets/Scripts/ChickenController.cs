@@ -409,6 +409,7 @@ public sealed class ChickenController : MonoBehaviour
     public static IReadOnlyList<ChickenController> ActiveInstances => ActiveChickens;
     public ChickenBreed Breed => breed;
     public bool IsMachineControlled => isMachineControlled;
+    public bool IsHeldByHand => isHeldByHand;
     public bool CanBePickedUp =>
         !isMachineControlled
         && !isTraversingIncubatorExit
@@ -3003,7 +3004,11 @@ public sealed class ChickenController : MonoBehaviour
         var controlledComponents = new List<Behaviour>();
         secondaryMotionJiggleRigs =
             GetComponentsInChildren<JiggleRig>(true);
-        controlledComponents.AddRange(secondaryMotionJiggleRigs);
+        // Jiggle Physics applies tree removals over several frames. Repeatedly
+        // disabling and re-enabling rigs as chickens cross an LOD boundary can
+        // therefore regenerate unmanaged tree data while an older simulation
+        // still references it. Keep rigs registered and use their blend value
+        // below to hide secondary motion outside the detailed LOD instead.
         controlledComponents.AddRange(
             GetComponentsInChildren<ChickenWattlePendulum>(true));
         controlledComponents.AddRange(
@@ -3551,6 +3556,10 @@ public sealed class ChickenController : MonoBehaviour
         {
             return;
         }
+
+        // SetParameters writes directly into the package's unmanaged job data.
+        // Ensure the previous simulation no longer reads that memory first.
+        JigglePhysics.CompleteSimulation();
 
         for (int index = 0;
              index < secondaryMotionJiggleRigs.Length;

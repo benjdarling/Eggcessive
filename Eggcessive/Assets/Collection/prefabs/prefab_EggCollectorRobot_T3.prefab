@@ -1371,10 +1371,10 @@ MonoBehaviour:
   CarryPole: {fileID: 700000000000000004}
   HandSwivelWeight: 1
   PreviewInEditMode: 1
-  PoseToAuthor: 1
-  upperBindLocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  forearmBindLocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  handBindLocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  PoseToAuthor: 0
+  upperBindLocalRotation: {x: 0.00000017385194, y: -0.05386335, z: -0.2964003, w: 0.9535437}
+  forearmBindLocalRotation: {x: -0.73331064, y: 0.000000257045, z: 0.14235394, w: 0.664824}
+  handBindLocalRotation: {x: -0.000000119209275, y: -0.19944014, z: 0.000000059604638, w: 0.97991}
   bindPoseCaptured: 1
 --- !u!1001 &6286243303578504622
 PrefabInstance:

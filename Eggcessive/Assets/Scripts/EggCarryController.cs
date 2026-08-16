@@ -19,9 +19,9 @@ public sealed class EggCarryController : MonoBehaviour
 
     private static readonly int[] UpgradeCosts =
     {
-        800, 1800, 4200, 8000, 9000,
+        800, 1800, 4200, 8000, 74000,
         400000, 4000000,
-        45000, 75000, 120000
+        120000, 1550000, 6400000
     };
 
     private static readonly string[] TierNames =
@@ -47,6 +47,10 @@ public sealed class EggCarryController : MonoBehaviour
     private static readonly float[] VacuumRanges = { 0.675f, 0.95f, 1.3f };
     private static readonly float[] VacuumPowers = { 0.5f, 0.825f, 1.25f };
     private static readonly float[] VacuumConeAngles = { 34f, 43f, 52f };
+    private const float VacuumSuctionBaseDuration = 0.3f;
+    private const float BasketLobDuration = 0.22f;
+    private const float BasketMinimumLobHeight = 0.18f;
+    private const float BasketMaximumLobHeight = 0.42f;
     private static readonly float[] RobotSpeeds =
     {
         2.4f, 3f, 3.6f, 4.2f, 4.8f, 5.4f
@@ -101,6 +105,7 @@ public sealed class EggCarryController : MonoBehaviour
     private Vector3 cursorGroundPosition;
     private Vector3 toolVelocity;
     private GameObject activeCursorTool;
+    private Transform activeVacuumNozzle;
     private GameObject basketFullIndicator;
     private Transform[] activeToolEggSlots = Array.Empty<Transform>();
     private EggCollectorRobot activeRobot;
@@ -690,28 +695,39 @@ public sealed class EggCarryController : MonoBehaviour
         Vector3 startPosition = egg.transform.position;
         Quaternion startRotation = egg.transform.rotation;
         Vector3 startScale = egg.transform.localScale;
-        const float duration = 0.3f;
+        Vector3 initialTarget = slotIndex < activeToolEggSlots.Length
+            && activeToolEggSlots[slotIndex] != null
+                ? activeToolEggSlots[slotIndex].position
+                : startPosition;
+        float lobHeight = Mathf.Clamp(
+            Vector3.Distance(startPosition, initialTarget) * 0.35f,
+            BasketMinimumLobHeight,
+            BasketMaximumLobHeight);
         float elapsed = 0f;
 
         while (egg != null
-            && elapsed < duration
+            && elapsed < BasketLobDuration
             && generation == basketAnimationGeneration
             && slotIndex < activeToolEggSlots.Length
             && activeToolEggSlots[slotIndex] != null)
         {
             elapsed += Time.deltaTime;
             Transform targetSlot = activeToolEggSlots[slotIndex];
-            float progress = Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.Clamp01(elapsed / duration));
+            float progress = Mathf.Clamp01(elapsed / BasketLobDuration);
+            float rotationProgress = Mathf.SmoothStep(0f, 1f, progress);
+            Vector3 lobOffset = Vector3.up
+                * (4f * progress * (1f - progress) * lobHeight);
             egg.transform.SetPositionAndRotation(
-                Vector3.Lerp(startPosition, targetSlot.position, progress),
-                Quaternion.Slerp(startRotation, targetSlot.rotation, progress));
+                Vector3.Lerp(startPosition, targetSlot.position, progress)
+                    + lobOffset,
+                Quaternion.Slerp(
+                    startRotation,
+                    targetSlot.rotation,
+                    rotationProgress));
             egg.transform.localScale = Vector3.Lerp(
                 startScale,
                 targetSlot.lossyScale,
-                progress);
+                rotationProgress);
             yield return null;
         }
 
@@ -852,19 +868,18 @@ public sealed class EggCarryController : MonoBehaviour
 
         RoundSystem.Instance?.PlayVacuumEggSfx();
         Vector3 start = egg.transform.position;
-        float suctionDuration = 0.48f / Mathf.Max(0.1f, power);
+        float suctionDuration = VacuumSuctionBaseDuration
+            / Mathf.Max(0.1f, power);
         float elapsed = 0f;
 
         while (egg != null && elapsed < suctionDuration)
         {
             elapsed += Time.deltaTime;
-            Vector3 nozzle = activeCursorTool != null
-                ? activeCursorTool.transform.position + Vector3.up * 0.08f
-                : cursorGroundPosition + Vector3.up * toolHeight;
-            float progress = Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.Clamp01(elapsed / suctionDuration));
+            Vector3 nozzle = GetVacuumNozzleTipPosition();
+            float normalizedTime = Mathf.Clamp01(elapsed / suctionDuration);
+            // Quadratic ease-in keeps the initial tug readable, then rapidly
+            // accelerates the egg as it nears the end of the barrel.
+            float progress = normalizedTime * normalizedTime;
             egg.transform.position = Vector3.Lerp(start, nozzle, progress);
             yield return null;
         }
@@ -937,6 +952,7 @@ public sealed class EggCarryController : MonoBehaviour
             Destroy(activeCursorTool);
             activeCursorTool = null;
         }
+        activeVacuumNozzle = null;
         basketFullIndicator = null;
 
         if (activeRobot != null)
@@ -972,6 +988,7 @@ public sealed class EggCarryController : MonoBehaviour
                     0,
                     2),
                 "vacuum");
+            activeVacuumNozzle = FindToolChild("Suction Nozzle");
         }
 
         bool shouldShow = RoundSystem.Instance != null
@@ -1551,6 +1568,48 @@ public sealed class EggCarryController : MonoBehaviour
         {
             activeCursorTool.SetActive(visible);
         }
+    }
+
+    private Transform FindToolChild(string childName)
+    {
+        if (activeCursorTool == null)
+        {
+            return null;
+        }
+
+        foreach (Transform child in
+            activeCursorTool.GetComponentsInChildren<Transform>(true))
+        {
+            if (string.Equals(child.name, childName, StringComparison.Ordinal))
+            {
+                return child;
+            }
+        }
+
+        return null;
+    }
+
+    private Vector3 GetVacuumNozzleTipPosition()
+    {
+        if (activeVacuumNozzle == null)
+        {
+            return activeCursorTool != null
+                ? activeCursorTool.transform.position + Vector3.up * 0.08f
+                : cursorGroundPosition + Vector3.up * toolHeight;
+        }
+
+        Vector3 nozzleAxis = activeVacuumNozzle.up;
+        if (activeCursorTool != null
+            && Vector3.Dot(nozzleAxis, activeCursorTool.transform.forward) < 0f)
+        {
+            nozzleAxis = -nozzleAxis;
+        }
+
+        // The authored nozzle is a unit cylinder scaled along its local Y axis.
+        // Its transform sits at the cylinder centre, so advance by its scaled
+        // half-length to reach the visible mouth at the front of the barrel.
+        return activeVacuumNozzle.position
+            + nozzleAxis * Mathf.Abs(activeVacuumNozzle.lossyScale.y);
     }
 
     private void CacheToolEggSlots()

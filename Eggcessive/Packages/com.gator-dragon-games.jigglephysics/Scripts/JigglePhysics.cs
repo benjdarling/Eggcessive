@@ -53,6 +53,10 @@ public static class JigglePhysics {
         jobs?.CompletePoses();
     }
 
+    public static void CompleteSimulation() {
+        jobs?.CompleteSimulation();
+    }
+
     public static void OnDrawGizmos() {
         if (!Application.isPlaying) {
             return;

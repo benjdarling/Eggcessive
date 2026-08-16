@@ -43,14 +43,14 @@ public sealed class FoodShopController : MonoBehaviour
 
     private static readonly int[] FeedBagCosts =
     {
-        150, 250, 400, 600, 900, 1300, 1900, 2700, 3800, 5200,
-        7200, 10000, 14000, 19500, 27000
+        150, 250, 400, 700, 1200, 2200, 4000, 7500, 14000, 27000,
+        52000, 100000, 190000, 360000, 700000
     };
 
     private static readonly int[] FeedUnlockCosts =
     {
-        0, 600, 1400, 2800, 5000, 8500, 14000, 22000, 34000, 50000,
-        75000, 110000, 160000, 230000, 330000
+        0, 600, 1600, 4500, 12000, 35000, 100000, 300000, 900000,
+        2700000, 8000000, 24000000, 72000000, 220000000, 700000000
     };
 
     private static readonly float[] PrimeFeedMultipliers =
@@ -60,7 +60,7 @@ public sealed class FoodShopController : MonoBehaviour
 
     private static readonly int[] PrimeFeedUpgradeCosts =
     {
-        2000, 7500, 25000, 80000, 250000
+        2000, 15000, 120000, 1000000, 10000000
     };
 
     private static readonly int BaseColorProperty = Shader.PropertyToID("_BaseColor");
@@ -489,7 +489,9 @@ public sealed class FoodShopController : MonoBehaviour
         }
     }
 
-    private bool TryGetPlacementPosition(Vector2 pointerPosition, out Vector3 position)
+    public bool TryGetPlacementPosition(
+        Vector2 pointerPosition,
+        out Vector3 position)
     {
         position = Vector3.zero;
 

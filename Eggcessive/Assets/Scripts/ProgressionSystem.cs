@@ -77,8 +77,8 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     private static readonly long[] RareChanceCosts =
     {
-        1200, 3500, 9000, 22000, 55000, 140000, 350000, 900000,
-        2700000, 8000000, 24000000, 75000000
+        1200, 3500, 9000, 22000, 55000, 140000, 500000, 2000000,
+        10000000, 60000000, 400000000, 3000000000L
     };
 
     private static readonly float[] RareChanceByLevel =
@@ -134,8 +134,8 @@ public sealed class ProgressionSystem : MonoBehaviour
     private static readonly long[] ChickenPerkCosts =
     {
         2500000, 12500000, 60000000, 300000000, 1500000000,
-        6000000000L, 24000000000L, 90000000000L,
-        350000000000L, 1400000000000L
+        5000000000L, 15000000000L, 45000000000L,
+        130000000000L, 400000000000L
     };
 
     // Each purchased tier adds this amount to the premium-egg multiplier for
@@ -156,16 +156,16 @@ public sealed class ProgressionSystem : MonoBehaviour
     private static readonly long[] EggValueCosts =
     {
         5000, 17000, 60000, 210000, 730000, 2500000, 9100000, 30000000,
-        110000000, 400000000, 1400000000L, 4900000000L,
-        18000000000L, 64000000000L, 230000000000L,
-        850000000000L, 3100000000000L, 12000000000000L
+        110000000, 400000000, 500000000, 1200000000L,
+        3000000000L, 7500000000L, 19000000000L,
+        48000000000L, 120000000000L, 300000000000L
     };
 
     private static readonly float[] EggValueMultipliers =
     {
-        1f, 1.7f, 3f, 5.5f, 10f, 18f, 33f, 60f, 110f,
-        200f, 370f, 680f, 1250f, 2300f, 4200f, 7700f, 14000f,
-        26000f, 48000f
+        1f, 1.5f, 2.25f, 3.5f, 5.5f, 8.5f, 13f, 20f, 32f,
+        50f, 80f, 130f, 210f, 340f, 550f, 900f, 1500f,
+        2600f, 5000f
     };
 
     private static readonly long[] TruckBonusCosts =
@@ -198,10 +198,10 @@ public sealed class ProgressionSystem : MonoBehaviour
     {
         14000, 250000, 2500000
     };
-    private static readonly long[] RobotSpeedCosts = { 180000, 520000, 1600000 };
-    private static readonly long[] RobotCapacityCosts = { 240000, 750000, 2400000 };
+    private static readonly long[] RobotSpeedCosts = { 180000, 650000, 2400000 };
+    private static readonly long[] RobotCapacityCosts = { 240000, 900000, 3400000 };
     private static readonly long[] RobotSmartCosts =
-        { 600000, 3500000, 12000000, 60000000 };
+        { 600000, 4000000, 20000000, 100000000 };
     private const int RobotUnlockCost = 120000;
 
     [SerializeField, Range(0, 12)] private int rareEggChanceLevel;

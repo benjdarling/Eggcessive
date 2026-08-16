@@ -7,17 +7,19 @@ public sealed class IncubatorShopController : MonoBehaviour
 {
     private static readonly int[] LevelCosts =
     {
-        400, 1000, 2200
+        // Legacy combined-upgrade path: match the equivalent capacity + speed
+        // purchases so this route cannot bypass the progression tree.
+        800, 6500, 32000
     };
 
     private static readonly int[] CapacityCosts =
     {
-        1000, 2600
+        2500, 12000
     };
 
     private static readonly int[] SpeedCosts =
     {
-        1400, 3800
+        4000, 20000
     };
 
     [Header("Scene Incubator")]

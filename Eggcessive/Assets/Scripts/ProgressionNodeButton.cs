@@ -1,11 +1,21 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Button))]
 public sealed class ProgressionNodeButton : MonoBehaviour
+    , IPointerEnterHandler
+    , IPointerExitHandler
+    , IPointerDownHandler
+    , IPointerUpHandler
 {
+    private const float HoverScale = 1.09f;
+    private const float SelectedScale = 0.965f;
+    private const float PressedScale = 0.88f;
+    private const float HoverTilt = 2.25f;
+
     [SerializeField] private ProgressionSystem.UpgradeId upgradeId;
     [SerializeField] private TMP_Text iconText = null;
     [SerializeField] private TMP_Text nodeText = null;
@@ -17,10 +27,24 @@ public sealed class ProgressionNodeButton : MonoBehaviour
 
     private Button button;
     private ProgressionTreePreview treePreview;
+    private CanvasGroup graphCanvasGroup;
+    private bool graphVisible = true;
+    private Vector3 restingScale = Vector3.one;
+    private Quaternion restingRotation = Quaternion.identity;
+    private SpringUtils.FloatSpring scaleSpring =
+        new SpringUtils.FloatSpring(1f);
+    private SpringUtils.AngleSpring rotationSpring =
+        new SpringUtils.AngleSpring(0f);
+    private bool motionInitialized;
+    private bool isHovered;
+    private bool isPointerDown;
+    private bool wasPinned;
+    private float hoverDirection = 1f;
 
     public ProgressionSystem.UpgradeId UpgradeId => upgradeId;
     public int TargetLevel => targetLevel;
     public bool IsTierNode => targetLevel > 0;
+    public bool IsGraphVisible => graphVisible;
 
     public ProgressionSystem.NodeState GetNodeState()
     {
@@ -33,6 +57,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
     {
         button = GetComponent<Button>();
         treePreview = GetComponentInParent<ProgressionTreePreview>(true);
+        InitializeMotion();
     }
 
     private void OnEnable()
@@ -45,6 +70,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         button.onClick.AddListener(Select);
         ProgressionSystem.Changed += Refresh;
         EggScoreHud.BalanceChanged += HandleBalanceChanged;
+        ResetMotion();
         Refresh();
     }
 
@@ -53,6 +79,128 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         button?.onClick.RemoveListener(Select);
         ProgressionSystem.Changed -= Refresh;
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
+        ResetMotion();
+    }
+
+    private void LateUpdate()
+    {
+        if (!motionInitialized)
+        {
+            InitializeMotion();
+        }
+
+        bool pinned = graphVisible
+            && treePreview != null
+            && treePreview.IsPinned(this);
+        if (pinned != wasPinned)
+        {
+            scaleSpring.AddImpulse(pinned ? -0.8f : 0.62f);
+            rotationSpring.AddImpulse(
+                hoverDirection * (pinned ? -22f : 16f));
+            wasPinned = pinned;
+        }
+
+        bool pressed = graphVisible && isPointerDown;
+        bool hovered = graphVisible && isHovered && !pinned;
+        float targetScale = pressed
+            ? PressedScale
+            : pinned
+                ? SelectedScale
+                : hovered
+                    ? HoverScale
+                    : 1f;
+        float targetRotation = pressed
+            ? -hoverDirection * 1.25f
+            : hovered
+                ? hoverDirection * HoverTilt
+                : 0f;
+        float frequency = pressed ? 17f : 7.5f;
+        float damping = pressed ? 0.78f : 0.5f;
+        float deltaTime = Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+        SpringUtils.MotionParams motion = SpringUtils.CalculateMotionParams(
+            deltaTime,
+            frequency,
+            damping);
+        scaleSpring.Update(targetScale, 0f, deltaTime, motion);
+        rotationSpring.Update(targetRotation, 0f, deltaTime, motion);
+        scaleSpring.ClampValue(0.84f, 1.16f);
+        rotationSpring.ClampValue(-5f, 5f);
+        transform.localScale = Vector3.Scale(
+            restingScale,
+            Vector3.one * scaleSpring.Value);
+        transform.localRotation = restingRotation
+            * Quaternion.Euler(0f, 0f, rotationSpring.Value);
+    }
+
+    public void OnPointerEnter(PointerEventData eventData)
+    {
+        if (!graphVisible)
+        {
+            return;
+        }
+
+        isHovered = true;
+        scaleSpring.AddImpulse(0.58f);
+        rotationSpring.AddImpulse(hoverDirection * 32f);
+        treePreview?.Preview(this);
+    }
+
+    public void OnPointerExit(PointerEventData eventData)
+    {
+        isHovered = false;
+        isPointerDown = false;
+        scaleSpring.AddImpulse(-0.2f);
+        treePreview?.ScheduleHide(0.1f);
+    }
+
+    public void OnPointerDown(PointerEventData eventData)
+    {
+        if (!graphVisible
+            || eventData == null
+            || eventData.button != PointerEventData.InputButton.Left)
+        {
+            return;
+        }
+
+        isPointerDown = true;
+        scaleSpring.AddImpulse(-1.2f);
+        rotationSpring.AddImpulse(-hoverDirection * 38f);
+    }
+
+    public void OnPointerUp(PointerEventData eventData)
+    {
+        if (!isPointerDown)
+        {
+            return;
+        }
+
+        isPointerDown = false;
+        scaleSpring.AddImpulse(0.36f);
+    }
+
+    private void InitializeMotion()
+    {
+        restingScale = transform.localScale;
+        restingRotation = transform.localRotation;
+        hoverDirection = (GetInstanceID() & 1) == 0 ? 1f : -1f;
+        motionInitialized = true;
+        ResetMotion();
+    }
+
+    private void ResetMotion()
+    {
+        if (!motionInitialized)
+        {
+            return;
+        }
+
+        isHovered = false;
+        isPointerDown = false;
+        wasPinned = false;
+        scaleSpring.Reset(1f);
+        rotationSpring.Reset(0f);
+        transform.localScale = restingScale;
+        transform.localRotation = restingRotation;
     }
 
     public void Configure(
@@ -96,8 +244,36 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         Refresh();
     }
 
+    public void SetGraphVisible(bool visible)
+    {
+        graphVisible = visible;
+        if (graphCanvasGroup == null)
+        {
+            graphCanvasGroup = GetComponent<CanvasGroup>();
+            if (graphCanvasGroup == null)
+            {
+                graphCanvasGroup = gameObject.AddComponent<CanvasGroup>();
+            }
+        }
+
+        graphCanvasGroup.alpha = visible ? 1f : 0f;
+        graphCanvasGroup.interactable = visible;
+        graphCanvasGroup.blocksRaycasts = visible;
+    }
+
     public void Refresh()
     {
+        if (!enabled)
+        {
+            return;
+        }
+
+        if (IsLegacySidebarSourceInsideGraph())
+        {
+            gameObject.SetActive(false);
+            return;
+        }
+
         if (button == null)
         {
             button = GetComponent<Button>();
@@ -122,6 +298,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
 
         ProgressionSystem.NodeState state = GetNodeState();
         gameObject.SetActive(true);
+        SetGraphVisible(graphVisible);
 
         bool maxed = state.IsMaxed;
         bool affordable = state.Cost <= EggScoreHud.CurrentCents;
@@ -186,7 +363,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
             else
             {
                 string level = state.IsRepeatable
-                    ? $"OWNED {state.Level}"
+                    ? $"IN STOCK {state.Level}"
                     : state.MaximumLevel == 1
                         ? maxed ? "OWNED" : "UNLOCK"
                     : $"LV {state.Level}/{state.MaximumLevel}";
@@ -232,6 +409,17 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         }
     }
 
+    private bool IsLegacySidebarSourceInsideGraph()
+    {
+        bool repeatableSupply = upgradeId
+            is ProgressionSystem.UpgradeId.FoodBag
+            or ProgressionSystem.UpgradeId.IncubatorTurbo
+            or ProgressionSystem.UpgradeId.CrosshatcherTurbo
+            or ProgressionSystem.UpgradeId.RobotTurbo;
+        return repeatableSupply
+            && GetComponentInParent<SupplyShopGraphController>(true) != null;
+    }
+
     private void Select()
     {
         if (treePreview == null)
@@ -240,6 +428,8 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         }
 
         treePreview?.Select(this);
+        scaleSpring.AddImpulse(-0.72f);
+        rotationSpring.AddImpulse(-hoverDirection * 24f);
     }
 
     private void HandleBalanceChanged(long _)

@@ -26,11 +26,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private const float DestinationMoveThreshold = 0.05f;
     private const float MaximumCollectionTripDuration = 3.5f;
     private const float VacuumSuctionSpeed = 6f;
+    private const float VacuumLiftDistance = 0.32f;
     private const float FinalDeliveryUnloadSeconds = 0.75f;
     private const float FinalDeliveryCongestionMultiplier = 1.35f;
     private const float CrowdProgressSampleInterval = 0.2f;
     private const float CrowdStallDuration = 0.65f;
     private const float CrowdDetourDuration = 0.85f;
+    private const float MaximumChickenMissionDuration = 12f;
+    private const float ChickenMissionRetryDelay = 1f;
     private const string EggSocketPrefix = "SOCKET_EGG_";
     private const string EggStackPrefix = "robot_stack";
     private const int EggsPerStack = 9;
@@ -187,6 +190,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private bool deliveringChickenPair;
     private int carriedChickenCount;
     private float nextChickenMissionCheckTime;
+    private float chickenMissionStartedTime;
     private bool debugChickenArmMissionPending;
     private readonly int[] chickenHandGrabBlendShapeIndices = { -1, -1 };
     private readonly HashSet<ChickenEgg> vacuumEggsInFlight =
@@ -223,7 +227,6 @@ public sealed class EggCollectorRobot : MonoBehaviour
     private int robotFaceMaterialIndex = -1;
     private MaterialPropertyBlock robotFaceProperties;
     private Texture currentRobotFaceTexture;
-
     private sealed class EggStackAnimationState
     {
         public readonly Transform Transform;
@@ -370,13 +373,18 @@ public sealed class EggCollectorRobot : MonoBehaviour
         crowdProgressPosition = transform.position;
         nextCrowdProgressSampleTime = Time.time + CrowdProgressSampleInterval;
         nextFinalDeliveryAssessmentTime = 0f;
-        SetChickenArmsEnabled(
-            smartnessLevel >= ChickenArmsSmartnessLevel);
+        // The arms are part of the visible T3 model even before chicken-carry
+        // logic unlocks. Keep their IK active so both sides hold the authored
+        // idle pose; TryBeginChickenMission remains the gameplay gate for
+        // smartness level 4. Disabling these solvers exposed the asymmetric
+        // bind pose, leaving the right arm pointing upright.
+        SetChickenArmsEnabled(true);
         RefreshVisibleEggs();
     }
 
     private void Update()
     {
+        ReconcileCarriedChickenState();
         UpdateChickenArmTargets();
 
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
@@ -421,13 +429,26 @@ public sealed class EggCollectorRobot : MonoBehaviour
             return;
         }
 
+        // Once the round quota is safe, chicken improvement outranks both an
+        // active egg delivery and a partially filled vacuum load. Eggs can
+        // remain on the stack while the arms service the crosshatcher, then
+        // resume their previous delivery normally afterward.
+        bool prioritizeChickenMission = RoundSystem.Instance != null
+            && RoundSystem.Instance.IsCashQuotaMet;
+        if (prioritizeChickenMission && TryBeginChickenMission())
+        {
+            return;
+        }
+
         if (delivering)
         {
             UpdateDelivery();
             return;
         }
 
-        if (storedEggs <= 0 && TryBeginChickenMission())
+        if (!prioritizeChickenMission
+            && storedEggs <= 0
+            && TryBeginChickenMission())
         {
             return;
         }
@@ -574,12 +595,29 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private IEnumerator PullEggIntoRobot(ChickenEgg egg)
     {
+        float groundHeight = egg != null
+            ? egg.transform.position.y
+            : transform.position.y;
         while (egg != null && egg.gameObject.activeSelf)
         {
             Vector3 target = transform.position + Vector3.up * 0.22f;
+            Vector3 planarEgg = egg.transform.position;
+            Vector3 planarTarget = target;
+            planarEgg.y = 0f;
+            planarTarget.y = 0f;
+            float planarDistance = Vector3.Distance(planarEgg, planarTarget);
+            float liftProgress = Mathf.SmoothStep(
+                0f,
+                1f,
+                1f - Mathf.Clamp01(planarDistance / VacuumLiftDistance));
+            Vector3 pathTarget = target;
+            pathTarget.y = Mathf.Lerp(
+                groundHeight,
+                target.y,
+                liftProgress);
             egg.transform.position = Vector3.MoveTowards(
                 egg.transform.position,
-                target,
+                pathTarget,
                 VacuumSuctionSpeed
                     * TurboConsumableSystem.GetProductivityMultiplier(
                         TurboConsumableSystem.TurboType.Robot)
@@ -599,7 +637,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
             egg.ReleaseToPool();
         }
 
-        if (storedEggs >= capacity && vacuumEggsInFlight.Count == 0)
+        if (!chickenMissionActive
+            && storedEggs >= capacity
+            && vacuumEggsInFlight.Count == 0)
         {
             BeginDelivery();
         }
@@ -621,7 +661,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
     public static float GetVacuumRadius(int level)
     {
         int clampedLevel = Mathf.Clamp(level, 0, MaximumVacuumLevel);
-        return clampedLevel > 0 ? 0.5f + clampedLevel * 0.5f : 0f;
+        return clampedLevel > 0 ? 0.4f + clampedLevel * 0.4f : 0f;
     }
 
     private void BeginDelivery(bool forceContainer = false)
@@ -706,6 +746,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
     private void UpdateDelivery()
     {
+        // Incubator availability can change after a delivery begins. If it
+        // fills, goes offline, or is disabled while the robot is travelling,
+        // abandon that route immediately so carried eggs cannot become stuck.
+        if (deliveringToIncubator && !CanDeliverToIncubator())
+        {
+            RerouteDeliveryToContainer();
+        }
+
         Vector3 target = deliveringToIncubator && incubator != null
             ? incubator.DepositPosition
             : eggContainer != null
@@ -713,12 +761,21 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 : transform.position;
         SetDestination(target);
 
-        // A completed NavMesh path is not proof of delivery: the active path
-        // may end at a temporary crowd detour. Container delivery instead uses
-        // its physical trigger volume because its transform origin can sit
-        // beyond the edge of the walkable NavMesh.
+        // The incubator's raw deposit point can sit beyond the walkable edge,
+        // so its nearest completed NavMesh endpoint also counts once a crowd
+        // detour has cleared. Container delivery continues to use its physical
+        // trigger volume.
+        bool reachedIncubatorTarget = deliveringToIncubator
+            && (PlanarDistance(transform.position, target) <= deliveryDistance
+                || Time.time >= crowdDetourUntilTime
+                    && !agent.pathPending
+                    && agent.hasPath
+                    && agent.remainingDistance
+                        <= Mathf.Max(
+                            deliveryDistance,
+                            agent.stoppingDistance + 0.05f));
         bool reachedTarget = deliveringToIncubator
-            ? PlanarDistance(transform.position, target) <= deliveryDistance
+            ? reachedIncubatorTarget
             : eggContainer != null
                 && eggContainer.IsWithinDepositRange(
                     transform.position,
@@ -734,9 +791,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
 
             if (storedEggs > 0)
             {
-                deliveringToIncubator = false;
-                SetRobotDuty(RobotDuty.CashIn);
-                SetDestination(eggContainer.DepositPosition);
+                RerouteDeliveryToContainer();
                 return;
             }
         }
@@ -765,6 +820,25 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
         noTargetTime = 0f;
         RefreshVisibleEggs();
+    }
+
+    private void RerouteDeliveryToContainer()
+    {
+        deliveringToIncubator = false;
+        SetRobotDuty(RobotDuty.CashIn);
+
+        // Discard any incubator path or temporary crowd detour so the new cash
+        // destination is calculated immediately, even when both machines are
+        // close enough to fall within the normal destination-change threshold.
+        hasDestination = false;
+        crowdStallStartTime = -1f;
+        crowdDetourUntilTime = 0f;
+        nextDestinationRefreshTime = 0f;
+
+        if (eggContainer != null)
+        {
+            SetDestination(eggContainer.DepositPosition);
+        }
     }
 
     private void DepositSmartEggs()
@@ -899,6 +973,7 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
 
         chickenMissionActive = true;
+        chickenMissionStartedTime = Time.time;
         deliveringChickenPair = false;
         debugChickenArmMissionPending = false;
         targetEgg = null;
@@ -913,6 +988,18 @@ public sealed class EggCollectorRobot : MonoBehaviour
         if (crosshatcher == null || !crosshatcher.isActiveAndEnabled)
         {
             CancelChickenMission(true);
+            return;
+        }
+
+        if (Time.time - chickenMissionStartedTime
+            >= MaximumChickenMissionDuration)
+        {
+            // Never let an unreachable moving chicken or pathing failure hold
+            // the machine reservation forever. Manual automation can take over
+            // during the retry window, and a lone robot will try again shortly.
+            CancelChickenMission(true);
+            nextChickenMissionCheckTime =
+                Time.time + ChickenMissionRetryDelay;
             return;
         }
 
@@ -1112,6 +1199,35 @@ public sealed class EggCollectorRobot : MonoBehaviour
         }
     }
 
+    private void ReconcileCarriedChickenState()
+    {
+        int actualCarriedCount = 0;
+        for (int index = 0; index < carriedChickens.Length; index++)
+        {
+            ChickenController chicken = carriedChickens[index];
+            bool hasChicken = chicken != null && chicken.IsHeldByHand;
+            if (hasChicken)
+            {
+                actualCarriedCount++;
+            }
+            else
+            {
+                carriedChickens[index] = null;
+            }
+
+            // The hand grip is visual state separate from the chicken
+            // reference, so keep it synchronized even when a chicken is
+            // destroyed or removed outside the normal delivery callback.
+            SetChickenHandGrabbed(index, hasChicken);
+        }
+
+        carriedChickenCount = actualCarriedCount;
+        if (deliveringChickenPair && actualCarriedCount <= 0)
+        {
+            CancelChickenMission(true);
+        }
+    }
+
     private void UpdateChickenArmTargets()
     {
         for (int index = 0;
@@ -1128,9 +1244,14 @@ public sealed class EggCollectorRobot : MonoBehaviour
                 continue;
             }
 
-            if (!deliveringChickenPair
+            if (chickenMissionActive
+                && !deliveringChickenPair
                 && targetChicken != null
-                && index == carriedChickenCount)
+                && index == carriedChickenCount
+                && PlanarDistance(
+                    transform.position,
+                    targetChicken.transform.position)
+                    <= chickenPickupDistance)
             {
                 solver.ApplyReachPose(
                     targetChicken.transform.position + Vector3.up * 0.22f);
@@ -1345,7 +1466,9 @@ public sealed class EggCollectorRobot : MonoBehaviour
                     : null,
                 FindChickenArmPole(index, true));
             solver.CaptureRuntimeIdlePose();
-            solver.enabled = smartnessLevel >= ChickenArmsSmartnessLevel;
+            // Visible arms always need an active solver to maintain their idle
+            // pose. Chicken mission eligibility is controlled separately.
+            solver.enabled = true;
             resolvedSolvers[index] = solver;
         }
 
@@ -2761,6 +2884,24 @@ public sealed class EggCollectorRobot : MonoBehaviour
         {
             eggStackRoots.AddRange(socketsByStack.Keys);
             eggStackRoots.Sort(CompareEggStackRoots);
+
+            // Each higher tray is a child of the tray immediately below it.
+            // Its local spring therefore adds another rotation on top of all
+            // lower tray springs, producing a genuinely cumulative wobble
+            // instead of several sibling trays leaning in parallel.
+            for (int stackIndex = 1;
+                 stackIndex < eggStackRoots.Count;
+                 stackIndex++)
+            {
+                Transform lowerStack = eggStackRoots[stackIndex - 1];
+                Transform upperStack = eggStackRoots[stackIndex];
+                if (lowerStack != null
+                    && upperStack != null
+                    && upperStack.parent != lowerStack)
+                {
+                    upperStack.SetParent(lowerStack, true);
+                }
+            }
 
             Vector3 visualScale = carriedEggVisualPrefab != null
                 ? carriedEggVisualScale

@@ -61,7 +61,6 @@ public sealed class RobotArmIK : MonoBehaviour
     private Vector3 runtimeIdlePoleLocalPosition;
     private Quaternion runtimeIdlePoleLocalRotation;
     private bool runtimeIdlePoseCaptured;
-
     public void Configure(
         Transform shoulderAttachment,
         Transform upperArm,

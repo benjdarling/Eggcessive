@@ -428,7 +428,8 @@ public sealed class GameMenuController : MonoBehaviour
             GetShowTipsToggleLabel(),
             35f,
             ToggleTutorialTips,
-            42f);
+            30f,
+            false);
         showTipsToggle.name = "SHOW TIPS Toggle";
         showTipsToggleText = showTipsToggle
             .GetComponentInChildren<TMP_Text>(true);
@@ -1040,7 +1041,8 @@ public sealed class GameMenuController : MonoBehaviour
         string label,
         float y,
         UnityEngine.Events.UnityAction action,
-        float fontSize = 48f)
+        float fontSize = 48f,
+        bool useSpringAnimation = true)
     {
         GameObject buttonObject = CreateUiObject(label + " Button", parent);
         RectTransform rect = buttonObject.GetComponent<RectTransform>();
@@ -1068,9 +1070,16 @@ public sealed class GameMenuController : MonoBehaviour
             EggYellow,
             FontStyles.Bold);
         StretchToParent(text.rectTransform);
-        SpringMenuButton springButton =
-            buttonObject.AddComponent<SpringMenuButton>();
-        springButton.Initialize(button, text, action);
+        if (useSpringAnimation)
+        {
+            SpringMenuButton springButton =
+                buttonObject.AddComponent<SpringMenuButton>();
+            springButton.Initialize(button, text, action);
+        }
+        else
+        {
+            button.onClick.AddListener(action);
+        }
         return button;
     }
 

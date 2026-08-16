@@ -4,20 +4,25 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
-public sealed class ProgressionTreePanController : MonoBehaviour, IPointerClickHandler
+public sealed class ProgressionTreePanController : MonoBehaviour,
+    IPointerClickHandler,
+    IBeginDragHandler,
+    IScrollHandler
 {
     [SerializeField] private ScrollRect scrollRect = null;
     [SerializeField] private RectTransform viewport = null;
     [SerializeField] private ProgressionTreePreview treePreview = null;
-    [SerializeField, Min(10f)] private float edgeZonePixels = 72f;
-    [SerializeField, Min(0.01f)] private float edgePanSpeed = 0.48f;
-    [SerializeField, Min(0f)] private float boundsPadding = 28f;
+    [SerializeField, Min(0f)] private float boundsPadding = 56f;
+    [SerializeField, Min(0f)] private float keyboardPanPixelsPerSecond = 620f;
+    [SerializeField, Min(0f)] private float homeTransitionDuration = 0.28f;
 
-    private float upperLimitY;
-    private float lowerLimitY;
-    private float nextBoundsRefreshTime;
-    private bool hasScrollLimits;
-    private readonly Vector3[] worldCorners = new Vector3[4];
+    private Vector2 minimumPosition;
+    private Vector2 maximumPosition;
+    private Vector2 initialFocus;
+    private Vector2 homeTransitionStart;
+    private Vector2 homeTransitionTarget;
+    private float homeTransitionElapsed;
+    private bool isReturningHome;
 
     public void Configure(
         ScrollRect treeScrollRect,
@@ -29,9 +34,34 @@ public sealed class ProgressionTreePanController : MonoBehaviour, IPointerClickH
         treePreview = preview;
     }
 
+    public void SetInitialFocus(Vector2 contentLocalPosition)
+    {
+        initialFocus = contentLocalPosition;
+    }
+
     public void OnPointerClick(PointerEventData eventData)
     {
-        if (eventData != null && !eventData.dragging)
+        if (eventData != null
+            && !eventData.dragging
+            && !IsOverPreview(eventData.position))
+        {
+            treePreview?.Hide();
+        }
+    }
+
+    public void OnBeginDrag(PointerEventData eventData)
+    {
+        isReturningHome = false;
+        if (eventData == null || !IsOverPreview(eventData.position))
+        {
+            treePreview?.Hide();
+        }
+    }
+
+    public void OnScroll(PointerEventData eventData)
+    {
+        isReturningHome = false;
+        if (eventData == null || !IsOverPreview(eventData.position))
         {
             treePreview?.Hide();
         }
@@ -39,127 +69,158 @@ public sealed class ProgressionTreePanController : MonoBehaviour, IPointerClickH
 
     private void Start()
     {
-        Canvas.ForceUpdateCanvases();
-        RecalculateLimits(true);
-    }
-
-    public void ResetToTop()
-    {
-        Canvas.ForceUpdateCanvases();
-        RecalculateLimits(true);
-    }
-
-    public bool Reveal(RectTransform target)
-    {
-        RectTransform content = scrollRect != null ? scrollRect.content : null;
-        if (target == null
-            || content == null
-            || viewport == null
-            || !target.gameObject.activeInHierarchy)
-        {
-            return false;
-        }
-
-        Canvas.ForceUpdateCanvases();
-        RecalculateLimits(false);
-        Vector3 targetWorldCenter = target.TransformPoint(target.rect.center);
-        float targetViewportY = viewport.InverseTransformPoint(
-            targetWorldCenter).y;
-        Vector2 position = content.anchoredPosition;
-        position.y = Mathf.Clamp(
-            position.y + viewport.rect.center.y - targetViewportY,
-            upperLimitY,
-            lowerLimitY);
-        scrollRect.StopMovement();
-        content.anchoredPosition = position;
-        Canvas.ForceUpdateCanvases();
-        return true;
+        ResetToTop();
     }
 
     private void Update()
     {
-        Mouse mouse = GameplayTestBot.PointerMouse;
-        if (mouse == null
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard == null
             || scrollRect == null
+            || scrollRect.content == null
             || viewport == null
             || !scrollRect.isActiveAndEnabled)
         {
             return;
         }
 
-        Canvas canvas = viewport.GetComponentInParent<Canvas>();
-        Camera uiCamera = canvas != null
-            && canvas.renderMode != RenderMode.ScreenSpaceOverlay
-                ? canvas.worldCamera
-                : null;
-        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                viewport,
-                mouse.position.ReadValue(),
-                uiCamera,
-                out Vector2 localPoint)
-            || !viewport.rect.Contains(localPoint))
+        if (keyboard.hKey.wasPressedThisFrame)
+        {
+            BeginReturnHome();
+            return;
+        }
+
+        Vector2 movement = Vector2.zero;
+        if (keyboard.aKey.isPressed)
+        {
+            movement.x += 1f;
+        }
+
+        if (keyboard.dKey.isPressed)
+        {
+            movement.x -= 1f;
+        }
+
+        if (keyboard.wKey.isPressed)
+        {
+            movement.y -= 1f;
+        }
+
+        if (keyboard.sKey.isPressed)
+        {
+            movement.y += 1f;
+        }
+
+        if (movement.sqrMagnitude <= 0.001f)
+        {
+            UpdateReturnHome();
+            return;
+        }
+
+        isReturningHome = false;
+        treePreview?.Hide();
+        RecalculateLimits();
+        scrollRect.StopMovement();
+        scrollRect.content.anchoredPosition = Clamp(
+            scrollRect.content.anchoredPosition
+            + movement.normalized
+            * keyboardPanPixelsPerSecond
+            * Time.unscaledDeltaTime);
+    }
+
+    public void ResetToTop()
+    {
+        isReturningHome = false;
+        Canvas.ForceUpdateCanvases();
+        RecalculateLimits();
+        FocusOn(initialFocus);
+    }
+
+    public bool Reveal(RectTransform target)
+    {
+        if (target == null
+            || scrollRect == null
+            || scrollRect.content == null
+            || !target.gameObject.activeInHierarchy)
+        {
+            return false;
+        }
+
+        Vector3 worldCenter = target.TransformPoint(target.rect.center);
+        Vector2 localCenter = scrollRect.content.InverseTransformPoint(worldCenter);
+        FocusOn(localCenter);
+        return true;
+    }
+
+    private void FocusOn(Vector2 contentLocalPosition)
+    {
+        if (scrollRect == null || scrollRect.content == null)
         {
             return;
         }
 
-        float direction = 0f;
-        float topDistance = viewport.rect.yMax - localPoint.y;
-        float bottomDistance = localPoint.y - viewport.rect.yMin;
+        RecalculateLimits();
+        scrollRect.StopMovement();
+        scrollRect.content.anchoredPosition = Clamp(-contentLocalPosition);
+    }
 
-        if (topDistance < edgeZonePixels)
+    private void BeginReturnHome()
+    {
+        Canvas.ForceUpdateCanvases();
+        RecalculateLimits();
+        scrollRect.StopMovement();
+        treePreview?.Hide();
+        homeTransitionStart = scrollRect.content.anchoredPosition;
+        homeTransitionTarget = Clamp(-initialFocus);
+        homeTransitionElapsed = 0f;
+        isReturningHome = true;
+
+        if (homeTransitionDuration <= 0f)
         {
-            direction = 1f - topDistance / edgeZonePixels;
+            scrollRect.content.anchoredPosition = homeTransitionTarget;
+            isReturningHome = false;
         }
-        else if (bottomDistance < edgeZonePixels)
+    }
+
+    private void UpdateReturnHome()
+    {
+        if (!isReturningHome)
         {
-            direction = -(1f - bottomDistance / edgeZonePixels);
+            return;
         }
 
-        if (Mathf.Abs(direction) > 0.001f)
+        homeTransitionElapsed += Time.unscaledDeltaTime;
+        float progress = Mathf.Clamp01(
+            homeTransitionElapsed / Mathf.Max(0.0001f, homeTransitionDuration));
+        float easedProgress = progress * progress * (3f - 2f * progress);
+        scrollRect.content.anchoredPosition = Vector2.LerpUnclamped(
+            homeTransitionStart,
+            homeTransitionTarget,
+            easedProgress);
+        if (progress >= 1f)
         {
-            RectTransform content = scrollRect.content;
-            if (content != null)
-            {
-                Vector2 position = content.anchoredPosition;
-                float range = Mathf.Max(1f, lowerLimitY - upperLimitY);
-                position.y = Mathf.Clamp(
-                    position.y - direction
-                        * edgePanSpeed
-                        * range
-                        * Time.unscaledDeltaTime,
-                    upperLimitY,
-                    lowerLimitY);
-                content.anchoredPosition = position;
-            }
+            isReturningHome = false;
         }
     }
 
     private void LateUpdate()
     {
-        if (scrollRect == null
-            || scrollRect.content == null
-            || viewport == null)
+        if (scrollRect == null || scrollRect.content == null || viewport == null)
         {
             return;
         }
 
-        if (!hasScrollLimits || Time.unscaledTime >= nextBoundsRefreshTime)
-        {
-            nextBoundsRefreshTime = Time.unscaledTime + 0.2f;
-            RecalculateLimits(false);
-        }
-
+        RecalculateLimits();
         Vector2 position = scrollRect.content.anchoredPosition;
-        float clampedY = Mathf.Clamp(position.y, upperLimitY, lowerLimitY);
-        if (!Mathf.Approximately(position.y, clampedY))
+        Vector2 clamped = Clamp(position);
+        if ((position - clamped).sqrMagnitude > 0.01f)
         {
-            position.y = clampedY;
-            scrollRect.content.anchoredPosition = position;
+            scrollRect.content.anchoredPosition = clamped;
             scrollRect.StopMovement();
         }
     }
 
-    private void RecalculateLimits(bool snapToTop)
+    private void RecalculateLimits()
     {
         RectTransform content = scrollRect != null ? scrollRect.content : null;
         if (content == null || viewport == null)
@@ -167,85 +228,33 @@ public sealed class ProgressionTreePanController : MonoBehaviour, IPointerClickH
             return;
         }
 
-        bool foundBounds = false;
-        float highest = float.NegativeInfinity;
-        float lowest = float.PositiveInfinity;
-        ProgressionNodeButton[] nodes =
-            content.GetComponentsInChildren<ProgressionNodeButton>(true);
-        for (int index = 0; index < nodes.Length; index++)
-        {
-            RectTransform rect = nodes[index] != null
-                && nodes[index].gameObject.activeInHierarchy
-                    ? nodes[index].transform as RectTransform
-                    : null;
-            IncludeRectBounds(content, rect, ref foundBounds, ref highest, ref lowest);
-        }
-
-        string[] headerNames =
-        {
-            "CONSUMABLES Branch",
-            "FOOD Branch",
-            "TECH Branch",
-            "COLLECTION Branch"
-        };
-        for (int index = 0; index < headerNames.Length; index++)
-        {
-            RectTransform header = content.Find(headerNames[index])
-                as RectTransform;
-            IncludeRectBounds(content, header, ref foundBounds, ref highest, ref lowest);
-        }
-
-        if (!foundBounds)
-        {
-            upperLimitY = content.anchoredPosition.y;
-            lowerLimitY = upperLimitY;
-        }
-        else
-        {
-            upperLimitY = -boundsPadding - highest;
-            lowerLimitY = Mathf.Max(
-                upperLimitY,
-                -viewport.rect.height + boundsPadding - lowest);
-        }
-
-        hasScrollLimits = true;
-        Vector2 position = content.anchoredPosition;
-        position.y = snapToTop
-            ? upperLimitY
-            : Mathf.Clamp(position.y, upperLimitY, lowerLimitY);
-        content.anchoredPosition = position;
-        if (snapToTop)
-        {
-            scrollRect.StopMovement();
-        }
+        float horizontal = Mathf.Max(
+            0f,
+            (content.rect.width - viewport.rect.width) * 0.5f + boundsPadding);
+        float vertical = Mathf.Max(
+            0f,
+            (content.rect.height - viewport.rect.height) * 0.5f + boundsPadding);
+        minimumPosition = new Vector2(-horizontal, -vertical);
+        maximumPosition = new Vector2(horizontal, vertical);
     }
 
-    private void IncludeRectBounds(
-        RectTransform content,
-        RectTransform rect,
-        ref bool foundBounds,
-        ref float highest,
-        ref float lowest)
+    private Vector2 Clamp(Vector2 position)
     {
-        if (rect == null || !rect.gameObject.activeInHierarchy)
-        {
-            return;
-        }
+        return new Vector2(
+            Mathf.Clamp(position.x, minimumPosition.x, maximumPosition.x),
+            Mathf.Clamp(position.y, minimumPosition.y, maximumPosition.y));
+    }
 
-        rect.GetWorldCorners(worldCorners);
-        for (int index = 0; index < worldCorners.Length; index++)
-        {
-            float y = content.InverseTransformPoint(worldCorners[index]).y;
-            highest = Mathf.Max(highest, y);
-            lowest = Mathf.Min(lowest, y);
-        }
-        foundBounds = true;
+    private bool IsOverPreview(Vector2 screenPosition)
+    {
+        return treePreview != null
+            && treePreview.ContainsScreenPoint(screenPosition);
     }
 
     private void OnValidate()
     {
-        edgeZonePixels = Mathf.Max(10f, edgeZonePixels);
-        edgePanSpeed = Mathf.Max(0.01f, edgePanSpeed);
         boundsPadding = Mathf.Max(0f, boundsPadding);
+        keyboardPanPixelsPerSecond = Mathf.Max(0f, keyboardPanPixelsPerSecond);
+        homeTransitionDuration = Mathf.Max(0f, homeTransitionDuration);
     }
 }

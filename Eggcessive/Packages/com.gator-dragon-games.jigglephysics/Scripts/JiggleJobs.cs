@@ -58,6 +58,7 @@ public class JiggleJobs {
     private JiggleJobTransformWrite jobTransformWrite;
 
     private List<IntPtr> freePointers;
+    private readonly HashSet<int> reportedInvalidTreeIds = new();
 
     public delegate void JiggleFinishSimulateAction(JiggleJobs job, double simulatedTime);
     public event JiggleFinishSimulateAction OnFinishSimulate;
@@ -97,7 +98,7 @@ public class JiggleJobs {
         if (hasHandleBulkRead) handleBulkRead.Complete();
         if (hasHandleBulkReset) handleBulkReset.Complete();
         if (hasHandleRootRead) handleRootRead.Complete();
-        if (hasHandleSimulate) handleSimulate.Complete();
+        CompleteSimulation();
         if (hasHandleTransformWrite) handleTransformWrite.Complete();
         if (hasHandleInterpolate) handleInterpolate.Complete();
         if (hasHandlePersonalColliderRead) handlePersonalColliderRead.Complete();
@@ -107,6 +108,37 @@ public class JiggleJobs {
         if (hasHandleInputInterpolate) handleInputInterpolate.Complete();
         Free();
         _memoryBus.Dispose();
+    }
+
+    public void CompleteSimulation() {
+        if (!hasHandleSimulate) {
+            return;
+        }
+
+        handleSimulate.Complete();
+        hasHandleSimulate = false;
+        Free();
+        OnFinishSimulate?.Invoke(this, jobSimulate.timeStamp);
+    }
+
+    private bool ValidateTreesForSimulation() {
+        bool allValid = true;
+        for (int index = 0; index < _memoryBus.treeCount; index++) {
+            var tree = _memoryBus.jiggleTreeStructs[index];
+            tree.Sanitize();
+            if (tree.GetIsValid(out string failReason)) {
+                reportedInvalidTreeIds.Remove(tree.rootID);
+                continue;
+            }
+
+            allValid = false;
+            if (reportedInvalidTreeIds.Add(tree.rootID)) {
+                Debug.LogError(
+                    $"JigglePhysics: Skipping simulation because tree {tree.rootID} is invalid: {failReason}");
+            }
+        }
+
+        return allValid;
     }
 
     public JobHandle SchedulePoses(double timeAsDouble) {
@@ -186,11 +218,7 @@ public class JiggleJobs {
 
         // TODO: Use an external monobehavior to update gravity?
         var gravity = Physics.gravity;
-        if (hasHandleSimulate) {
-            handleSimulate.Complete();
-            Free();
-            OnFinishSimulate?.Invoke(this, simulateTime);
-        }
+        CompleteSimulation();
 
 
         _memoryBus.RotateBuffers();
@@ -211,6 +239,13 @@ public class JiggleJobs {
         jobBroadPhase.UpdateArrays(_memoryBus);
         jobBroadPhaseClear.UpdateArrays(_memoryBus);
         jobInputInterpolation.UpdateArrays(_memoryBus);
+
+        // Validate on the managed thread. Throwing from a Burst job discards
+        // the useful failure reason and aborts the worker instead of allowing
+        // the bad frame to be skipped safely.
+        if (!ValidateTreesForSimulation()) {
+            return;
+        }
 
         if (hasHandleSimulate) {
             handlePersonalColliderRead = jobBulkPersonalColliderTransformRead.ScheduleReadOnly( _memoryBus.GetPersonalColliderTransformAccessArray(), 128, handleSimulate);

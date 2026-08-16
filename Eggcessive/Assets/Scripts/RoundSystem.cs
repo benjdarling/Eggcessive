@@ -92,7 +92,10 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField, Min(3)] private int endgameCashQuotaStartRound = 30;
     [SerializeField, Range(1f, 2f)] private float endgameCashQuotaGrowth = 1.355f;
     [SerializeField, Min(4)] private int sustainedCashQuotaStartRound = 35;
-    [SerializeField, Range(1f, 2f)] private float sustainedCashQuotaGrowth = 1.25f;
+    // Level 100 is the standard-mode finish. Fourteen percent sustained
+    // growth keeps the final quota within fully developed farm output; the old
+    // 25% curve compounded the level-35 quota more than two million times.
+    [SerializeField, Range(1f, 2f)] private float sustainedCashQuotaGrowth = 1.14f;
     [SerializeField, Min(100)]
     private long maximumRoundCashQuotaCents = 9_000_000_000_000_000_000L;
 
@@ -499,6 +502,7 @@ public sealed class RoundSystem : MonoBehaviour
 
         coinEffectLayer.SetAsLastSibling();
         InitializeRewardParticleSystems();
+        SupplyShopGraphController.Install(suppliesShopScreen);
         BindButtonClickSfx();
         BindUiEvents();
         EggScoreHud gameplayHud = FindFirstObjectByType<EggScoreHud>(
@@ -857,6 +861,13 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void BindSupplyShopTabs()
     {
+        if (suppliesShopScreen != null
+            && suppliesShopScreen.GetComponentInChildren<SupplyShopGraphController>(true)
+                != null)
+        {
+            return;
+        }
+
         RectTransform card = suppliesShopScreen != null
             ? suppliesShopScreen.transform.Find("Supplies") as RectTransform
             : null;
@@ -1194,7 +1205,6 @@ public sealed class RoundSystem : MonoBehaviour
         {
             roundNumberText.text = $"ROUND {roundNumber}";
         }
-        timerText.text = "--:--";
         StartCoroutine(FinalizeRoundAfterSettlement());
     }
 
@@ -1730,6 +1740,10 @@ public sealed class RoundSystem : MonoBehaviour
                 nodes[index].Refresh();
             }
 
+            SupplyShopGraphController graph =
+                suppliesShopScreen.GetComponentInChildren<SupplyShopGraphController>(true);
+            graph?.RefreshAll();
+
             RefreshSupplyShopTabIndicators();
             return;
         }
@@ -1938,6 +1952,13 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
+        if (quotaValueText != null)
+        {
+            quotaValueText.enableAutoSizing = true;
+            quotaValueText.fontSizeMin = 14f;
+            quotaValueText.fontSizeMax = 24f;
+        }
+
         for (int index = 0; index < quotaContributionFills.Length; index++)
         {
             if (quotaContributionFills[index] != null)
@@ -1959,13 +1980,17 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        quotaValueText.text =
-            $"{FormatQuotaMoney(roundCashMade)} / {FormatQuotaMoney(roundCashQuotaCents)}";
         bool met = roundCashQuotaCents > 0
             && roundCashMade >= roundCashQuotaCents;
+        quotaValueText.text =
+            $"{FormatQuotaMoney(roundCashMade)} / {FormatQuotaMoney(roundCashQuotaCents)}";
         quotaValueText.color = met
             ? new Color(0.42f, 0.94f, 0.5f)
             : new Color(1f, 0.84f, 0.3f);
+        if (quotaTitleText != null)
+        {
+            quotaTitleText.text = "CASH QUOTA";
+        }
         SetQuotaContributionFills();
     }
 
@@ -2014,12 +2039,12 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void RefreshTimer()
     {
-        int seconds = Mathf.CeilToInt(roundTimeRemaining);
+        int seconds = Mathf.Max(0, Mathf.CeilToInt(roundTimeRemaining));
         if (roundNumberText != null)
         {
             roundNumberText.text = $"ROUND {roundNumber}";
         }
-        timerText.text = $"{seconds / 60}:{seconds % 60:D2}";
+        timerText.text = $"{seconds / 60:00}:{seconds % 60:00}";
     }
 
     public void NotifyPenTruckProgressChanged()
@@ -3613,6 +3638,13 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void RefreshSupplyShopTabIndicators()
     {
+        if (suppliesShopScreen != null
+            && suppliesShopScreen.GetComponentInChildren<SupplyShopGraphController>(true)
+                != null)
+        {
+            return;
+        }
+
         RectTransform card = suppliesShopScreen != null
             ? suppliesShopScreen.transform.Find("Supplies") as RectTransform
             : null;
@@ -4181,37 +4213,35 @@ public sealed class RoundSystem : MonoBehaviour
     private static string FormatQuotaMoney(long cents)
     {
         double dollars = Math.Max(0, cents) / 100d;
-        if (dollars < 100d)
+        // Keep early and mid-game quotas exact. Compact labels previously used
+        // one decimal for thousands, which could show both sides as "$3.1K"
+        // even when the player was still short of the exact cent comparison.
+        if (dollars < 100000d)
         {
-            return $"${dollars:0.00}";
-        }
-
-        if (dollars < 1000d)
-        {
-            return $"${dollars:0}";
+            return FormatMoney(cents);
         }
 
         if (dollars < 1000000d)
         {
-            return $"${dollars / 1000d:0.#}K";
+            return $"${dollars / 1000d:0.00}K";
         }
 
         if (dollars < 1000000000d)
         {
-            return $"${dollars / 1000000d:0.##}M";
+            return $"${dollars / 1000000d:0.000}M";
         }
 
         if (dollars < 1000000000000d)
         {
-            return $"${dollars / 1000000000d:0.##}B";
+            return $"${dollars / 1000000000d:0.000}B";
         }
 
         if (dollars < 1000000000000000d)
         {
-            return $"${dollars / 1000000000000d:0.##}T";
+            return $"${dollars / 1000000000000d:0.000}T";
         }
 
-        return $"${dollars / 1000000000000000d:0.##}Qa";
+        return $"${dollars / 1000000000000000d:0.000}Qa";
     }
 
     private static int CountChickens()
@@ -4406,7 +4436,7 @@ public sealed class RoundSystem : MonoBehaviour
             timerText.rectTransform,
             new Vector2(0f, -13f),
             new Vector2(184f, 42f));
-        timerText.text = "--:--";
+        timerText.text = "00:00";
 
         quotaDisplay = CreateUiObject(
             "Cash Quota HUD",
@@ -4440,6 +4470,9 @@ public sealed class RoundSystem : MonoBehaviour
             TextAlignmentOptions.Center);
         quotaValueText.fontStyle = FontStyles.Bold;
         quotaValueText.color = new Color(1f, 0.84f, 0.3f);
+        quotaValueText.enableAutoSizing = true;
+        quotaValueText.fontSizeMin = 14f;
+        quotaValueText.fontSizeMax = 24f;
         SetRect(
             quotaValueText.rectTransform,
             new Vector2(0f, 5f),

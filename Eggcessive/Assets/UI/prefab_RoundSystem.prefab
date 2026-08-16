@@ -16607,7 +16607,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &5218343796620661256
 RectTransform:
   m_ObjectHideFlags: 0
@@ -21789,7 +21789,7 @@ MonoBehaviour:
   endgameCashQuotaStartRound: 30
   endgameCashQuotaGrowth: 1.355
   sustainedCashQuotaStartRound: 35
-  sustainedCashQuotaGrowth: 1.25
+  sustainedCashQuotaGrowth: 1.14
   maximumRoundCashQuotaCents: 9000000000000000000
   truckVisualPrefab: {fileID: 919132149155446097, guid: 66cdb31714fc5094cbf9a86f6a96649e, type: 3}
   truckDepartureDuration: 2.5
@@ -48258,7 +48258,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &4406018916733984097
 RectTransform:
   m_ObjectHideFlags: 0
@@ -50842,7 +50842,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: --:--
+  m_text: 00:00
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
   m_sharedMaterial: {fileID: 577579448364869767, guid: 70c145cb28a46164ba5d56de01becbdc, type: 2}
@@ -60677,9 +60677,9 @@ MonoBehaviour:
   scrollRect: {fileID: 3465542347999672337}
   viewport: {fileID: 2542486197178766222}
   treePreview: {fileID: 2998516188423888534}
-  edgeZonePixels: 72
-  edgePanSpeed: 0.48
   boundsPadding: 28
+  keyboardPanPixelsPerSecond: 620
+  homeTransitionDuration: 0.28
 --- !u!1 &5492314826710197568
 GameObject:
   m_ObjectHideFlags: 0
@@ -77754,7 +77754,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &3290106213121544455
 RectTransform:
   m_ObjectHideFlags: 0
@@ -80293,7 +80293,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1052508157247016034
 RectTransform:
   m_ObjectHideFlags: 0
