@@ -199,6 +199,16 @@ public sealed class EggCarryController : MonoBehaviour
     public int RobotCapacityLevel => robotCapacityLevel;
     public int RobotSmartnessLevel => robotSmartnessLevel;
 
+    public static float GetRobotSpeed(int level)
+    {
+        return RobotSpeeds[Mathf.Clamp(level, 1, MaximumRobotLevel) - 1];
+    }
+
+    public static int GetRobotCapacity(int level)
+    {
+        return RobotCapacities[Mathf.Clamp(level, 1, MaximumRobotLevel) - 1];
+    }
+
     private bool IsBasketMode => basketUpgradeLevel > 0 && !HasVacuum;
     private bool IsVacuumMode => HasVacuum;
     private bool IsRobotMode => HasRobot;
@@ -209,6 +219,10 @@ public sealed class EggCarryController : MonoBehaviour
     {
         Instance = this;
         viewCamera = GetComponent<Camera>();
+        if (GetComponent<PlacementTargetGuideController>() == null)
+        {
+            gameObject.AddComponent<PlacementTargetGuideController>();
+        }
         basketReachLevel = Mathf.Clamp(
             basketReachLevel,
             0,

@@ -65,6 +65,10 @@ public sealed class RoundSystem : MonoBehaviour
 #if UNITY_EDITOR
     private const string UiFontAssetPath =
         "Assets/Fonts/Cat Song SDF.asset";
+    private const string CountdownFontAssetPath =
+        "Assets/Fonts/Cat Song Countdown SDF.asset";
+    private const string CountdownFontMaterialPath =
+        "Assets/Fonts/Cat Song SDF - Countdown.mat";
 #endif
 
     [Header("Round")]
@@ -136,7 +140,6 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private TMP_Text resultsPerMinuteText;
     [SerializeField] private TMP_Text resultsHatchedText;
     [SerializeField] private TMP_Text resultsChickenCountText;
-    [SerializeField] private TMP_Text resultsQuotaText;
     [SerializeField] private TMP_Text shopBalanceText;
     [SerializeField] private TMP_Text shopFeedDetailsText;
     [SerializeField] private TMP_Text shopIncubatorDetailsText;
@@ -353,6 +356,9 @@ public sealed class RoundSystem : MonoBehaviour
     private readonly int[] roundEggContributions = new int[8];
     private TMP_Text resultsSubtitleText;
     private TMP_Text resultsQuotaLabelText;
+    private GameObject resultsTipsPanel;
+    private TMP_Text resultsTipsTitleText;
+    private TMP_Text resultsTipsBodyText;
     [SerializeField] private GameObject additionalPenMilestoneScreen = null;
     [SerializeField] private Button additionalPenMilestoneButton = null;
     private bool milestoneReturnsToShop;
@@ -1415,6 +1421,7 @@ public sealed class RoundSystem : MonoBehaviour
                 ? new Color(0.66f, 0.9f, 0.68f)
                 : new Color(1f, 0.62f, 0.42f);
         }
+        RefreshResultsTips();
         SetButtonText(
             resultsContinueButton,
             roundPassed ? "NEXT ROUND" : "RETRY");
@@ -1441,7 +1448,6 @@ public sealed class RoundSystem : MonoBehaviour
         resultsPerMinuteText.text = ".";
         resultsHatchedText.text = ".";
         resultsChickenCountText.text = ".";
-        resultsQuotaText.text = ".";
 
         yield return CountLongResult(
             resultsCashText,
@@ -1471,11 +1477,6 @@ public sealed class RoundSystem : MonoBehaviour
             resultsChickenCountText,
             finalChickenCount,
             value => Mathf.RoundToInt(value).ToString());
-        yield return CountLongResult(
-            resultsQuotaText,
-            roundCashMade,
-            value => $"{FormatMoney(value)} / {FormatMoney(roundCashQuotaCents)}");
-
         resultsAnimation = null;
         resultsShopButton.gameObject.SetActive(true);
         resultsContinueButton.gameObject.SetActive(true);
@@ -1922,6 +1923,12 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
+        Transform redundantQuotaRow = resultsScreen.transform.Find(
+            "Results Card/Cash Quota Row");
+        if (redundantQuotaRow != null)
+        {
+            redundantQuotaRow.gameObject.SetActive(false);
+        }
         TMP_Text[] texts = resultsScreen.GetComponentsInChildren<TMP_Text>(true);
         for (int index = 0; index < texts.Length; index++)
         {
@@ -1943,6 +1950,140 @@ public sealed class RoundSystem : MonoBehaviour
                 resultsQuotaLabelText.text = "CASH QUOTA";
             }
         }
+
+        EnsureResultsTipsPanel();
+        RefreshResultsTips();
+    }
+
+    private void EnsureResultsTipsPanel()
+    {
+        if (resultsScreen == null || resultsTitleText == null)
+        {
+            return;
+        }
+
+        Transform existing = resultsScreen.transform.Find("Machine Tips Panel");
+        if (existing != null)
+        {
+            resultsTipsPanel = existing.gameObject;
+            resultsTipsTitleText = existing.Find("Tips Title")
+                ?.GetComponent<TMP_Text>();
+            resultsTipsBodyText = existing.Find("Tips Body")
+                ?.GetComponent<TMP_Text>();
+            ConfigureResultsTipsPanelLayout();
+            return;
+        }
+
+        resultsTipsPanel = new GameObject(
+            "Machine Tips Panel",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image),
+            typeof(Outline),
+            typeof(Shadow));
+        resultsTipsPanel.transform.SetParent(resultsScreen.transform, false);
+        Image background = resultsTipsPanel.GetComponent<Image>();
+        background.color = new Color(0.055f, 0.075f, 0.065f, 0.98f);
+        background.raycastTarget = false;
+
+        Outline outline = resultsTipsPanel.GetComponent<Outline>();
+        outline.effectColor = new Color(0.24f, 0.68f, 0.43f, 0.95f);
+        outline.effectDistance = new Vector2(3f, -3f);
+        outline.useGraphicAlpha = false;
+
+        Shadow shadow = resultsTipsPanel.GetComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.65f);
+        shadow.effectDistance = new Vector2(6f, -7f);
+        shadow.useGraphicAlpha = true;
+
+        GameObject titleObject = Instantiate(
+            resultsTitleText.gameObject,
+            resultsTipsPanel.transform,
+            false);
+        titleObject.name = "Tips Title";
+        resultsTipsTitleText = titleObject.GetComponent<TMP_Text>();
+
+        TMP_Text bodyTemplate = resultsSubtitleText != null
+            ? resultsSubtitleText
+            : resultsTitleText;
+        GameObject bodyObject = Instantiate(
+            bodyTemplate.gameObject,
+            resultsTipsPanel.transform,
+            false);
+        bodyObject.name = "Tips Body";
+        resultsTipsBodyText = bodyObject.GetComponent<TMP_Text>();
+
+        ConfigureResultsTipsPanelLayout();
+        resultsTipsPanel.transform.SetAsLastSibling();
+    }
+
+    private void ConfigureResultsTipsPanelLayout()
+    {
+        if (resultsTipsPanel == null)
+        {
+            return;
+        }
+
+        RectTransform panelRect = resultsTipsPanel.transform as RectTransform;
+        panelRect.anchorMin = panelRect.anchorMax = new Vector2(0f, 1f);
+        panelRect.pivot = new Vector2(0f, 1f);
+        panelRect.anchoredPosition = new Vector2(26f, -26f);
+        panelRect.sizeDelta = new Vector2(500f, 430f);
+
+        if (resultsTipsTitleText != null)
+        {
+            RectTransform titleRect = resultsTipsTitleText.rectTransform;
+            titleRect.anchorMin = titleRect.anchorMax = new Vector2(0f, 1f);
+            titleRect.pivot = new Vector2(0f, 1f);
+            titleRect.anchoredPosition = new Vector2(22f, -18f);
+            titleRect.sizeDelta = new Vector2(456f, 38f);
+            resultsTipsTitleText.text = "MACHINE TIPS";
+            resultsTipsTitleText.fontSize = 24f;
+            resultsTipsTitleText.enableAutoSizing = false;
+            resultsTipsTitleText.fontStyle = FontStyles.Bold;
+            resultsTipsTitleText.alignment = TextAlignmentOptions.Left;
+            resultsTipsTitleText.textWrappingMode = TextWrappingModes.NoWrap;
+            resultsTipsTitleText.color = new Color(0.7f, 0.95f, 0.66f, 1f);
+            resultsTipsTitleText.raycastTarget = false;
+        }
+
+        if (resultsTipsBodyText != null)
+        {
+            RectTransform bodyRect = resultsTipsBodyText.rectTransform;
+            bodyRect.anchorMin = new Vector2(0f, 0f);
+            bodyRect.anchorMax = new Vector2(1f, 1f);
+            bodyRect.pivot = new Vector2(0.5f, 0.5f);
+            bodyRect.offsetMin = new Vector2(22f, 18f);
+            bodyRect.offsetMax = new Vector2(-22f, -66f);
+            resultsTipsBodyText.fontSize = 16f;
+            resultsTipsBodyText.enableAutoSizing = true;
+            resultsTipsBodyText.fontSizeMin = 12f;
+            resultsTipsBodyText.fontSizeMax = 16f;
+            resultsTipsBodyText.fontStyle = FontStyles.Normal;
+            resultsTipsBodyText.alignment = TextAlignmentOptions.TopLeft;
+            resultsTipsBodyText.textWrappingMode = TextWrappingModes.Normal;
+            resultsTipsBodyText.overflowMode = TextOverflowModes.Truncate;
+            resultsTipsBodyText.lineSpacing = -2f;
+            resultsTipsBodyText.color = new Color(0.91f, 0.93f, 0.88f, 1f);
+            resultsTipsBodyText.raycastTarget = false;
+        }
+    }
+
+    private void RefreshResultsTips()
+    {
+        if (resultsTipsBodyText == null)
+        {
+            return;
+        }
+
+        resultsTipsBodyText.text =
+            "<b><color=#B8EF7D>INCUBATOR</color></b>\n"
+            + "Drop eggs into open slots to hatch new chickens. Capacity handles more eggs at once; Hatch Rate finishes each egg sooner.\n\n"
+            + "<b><color=#76DDB0>CROSSHATCHER</color></b>\n"
+            + "Load two chickens. A matching pair always makes the next breed. A mixed pair keeps the stronger breed, while Breed Quality adds a chance to advance; Speed reduces processing time.\n\n"
+            + "<b><color=#81C9FF>COLLECTOR ROBOT</color></b>\n"
+            + "Collects eggs automatically. Speed, Capacity and Vacuum improve collection. Logic unlocks incubator routing, rarity priority and eventually paired chicken delivery.\n\n"
+            + "<size=13><color=#B8B8AA>Machines and upgrades are purchased separately for each pen in LOCAL PEN TECH.</color></size>";
     }
 
     private void InitializeQuotaHud()
@@ -4395,8 +4536,21 @@ public sealed class RoundSystem : MonoBehaviour
             TextAlignmentOptions.Center);
         countdownText.color = new Color(1f, 0.86f, 0.2f);
         countdownText.fontStyle = FontStyles.Bold;
-        countdownText.outlineWidth = 0.28f;
-        countdownText.outlineColor = new Color32(76, 35, 12, 255);
+        TMP_FontAsset countdownFontAsset =
+            UnityEditor.AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(
+                CountdownFontAssetPath);
+        if (countdownFontAsset != null)
+        {
+            countdownText.font = countdownFontAsset;
+        }
+
+        Material countdownFontMaterial =
+            UnityEditor.AssetDatabase.LoadAssetAtPath<Material>(
+                CountdownFontMaterialPath);
+        if (countdownFontMaterial != null)
+        {
+            countdownText.fontSharedMaterial = countdownFontMaterial;
+        }
         StretchToParent(countdownText.rectTransform);
         countdownText.raycastTarget = false;
 
@@ -4605,6 +4759,7 @@ public sealed class RoundSystem : MonoBehaviour
         subtitle.text = "DELIVERY COMPLETE";
         subtitle.color = new Color(0.66f, 0.78f, 0.65f);
         SetRect(subtitle.rectTransform, new Vector2(0f, 198f), new Vector2(590f, 28f));
+        resultsSubtitleText = subtitle;
 
         resultsCashText = CreateResultStat(card, "Cash Made", "CASH MADE", 135f);
         resultsCollectedText = CreateResultStat(card, "Eggs Collected", "EGGS COLLECTED", 90f);
@@ -4612,8 +4767,6 @@ public sealed class RoundSystem : MonoBehaviour
         resultsPerMinuteText = CreateResultStat(card, "Eggs Per Minute", "EGGS PER MINUTE", 0f);
         resultsHatchedText = CreateResultStat(card, "Chickens Hatched", "CHICKENS HATCHED", -45f);
         resultsChickenCountText = CreateResultStat(card, "Chicken Count", "CHICKEN COUNT", -90f);
-        resultsQuotaText = CreateResultStat(card, "Cash Quota", "CASH QUOTA", -135f);
-
         resultsShopButton = CreateButton(
             "Open Supplies Shop",
             card,
@@ -4629,6 +4782,8 @@ public sealed class RoundSystem : MonoBehaviour
             new Vector2(250f, 52f),
             "NEXT ROUND",
             new Color(0.82f, 0.26f, 0.1f));
+        EnsureResultsTipsPanel();
+        RefreshResultsTips();
         resultsScreen.SetActive(false);
     }
 
@@ -5162,6 +5317,7 @@ public sealed class RoundSystem : MonoBehaviour
         EnsureEggProgressionTiers(treeContent);
         EnsureChickenPerkTiers(treeContent);
         EnsureTruckBonusTiers(treeContent);
+        EnsurePenBonusTiers(treeContent);
         EnsureTurboConsumableNodes(treeContent);
         ApplyProgressionTreeLayout(treeContent);
         ApplySuppliesShopVisualPolish(card, treeContent);
@@ -5805,6 +5961,7 @@ public sealed class RoundSystem : MonoBehaviour
             ProgressionSystem.UpgradeId.EggWeight => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.EggValue => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.TruckBonus => node.TargetLevel == 1,
+            ProgressionSystem.UpgradeId.PenBonus => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.BasketCapacity => node.TargetLevel == 1,
             ProgressionSystem.UpgradeId.BasketReach => node.TargetLevel == 1,
             _ => false
@@ -5837,6 +5994,8 @@ public sealed class RoundSystem : MonoBehaviour
             ProgressionSystem.UpgradeId.RobotUnlock => 7,
             ProgressionSystem.UpgradeId.TruckBonus
                 when node.TargetLevel == 1 => 7,
+            ProgressionSystem.UpgradeId.PenBonus
+                when node.TargetLevel == 1 => 3,
             _ => -1
         };
     }
@@ -5902,6 +6061,8 @@ public sealed class RoundSystem : MonoBehaviour
                 new Color(0.8f, 0.62f, 0.13f, 1f),
             ProgressionSystem.UpgradeId.EggValue =>
                 new Color(0.2f, 0.62f, 0.28f, 1f),
+            ProgressionSystem.UpgradeId.PenBonus =>
+                new Color(0.1f, 0.74f, 0.62f, 1f),
             ProgressionSystem.UpgradeId.IncubatorInstall
                 or ProgressionSystem.UpgradeId.IncubatorCapacity
                 or ProgressionSystem.UpgradeId.IncubatorSpeed =>
@@ -6053,17 +6214,7 @@ public sealed class RoundSystem : MonoBehaviour
             nodes,
             ProgressionSystem.UpgradeId.IncubatorTurbo,
             0,
-            new Vector2(-735f, 400f));
-        SetRuntimeNodePosition(
-            nodes,
-            ProgressionSystem.UpgradeId.CrosshatcherTurbo,
-            0,
-            new Vector2(-735f, 265f));
-        SetRuntimeNodePosition(
-            nodes,
-            ProgressionSystem.UpgradeId.RobotTurbo,
-            0,
-            new Vector2(-735f, 130f));
+            new Vector2(175f, 535f));
 
         LayoutTurboTechBranch(
             techGroup,
@@ -6071,24 +6222,8 @@ public sealed class RoundSystem : MonoBehaviour
             ProgressionSystem.UpgradeId.IncubatorTurboPower,
             ProgressionSystem.UpgradeId.IncubatorTurboDuration,
             TurboConsumableSystem.TurboType.Incubator,
-            -300f,
-            new Color(0.95f, 0.48f, 0.12f, 1f));
-        LayoutTurboTechBranch(
-            techGroup,
-            nodes,
-            ProgressionSystem.UpgradeId.CrosshatcherTurboPower,
-            ProgressionSystem.UpgradeId.CrosshatcherTurboDuration,
-            TurboConsumableSystem.TurboType.Crosshatcher,
             175f,
-            new Color(0.35f, 0.76f, 0.32f, 1f));
-        LayoutTurboTechBranch(
-            techGroup,
-            nodes,
-            ProgressionSystem.UpgradeId.RobotTurboPower,
-            ProgressionSystem.UpgradeId.RobotTurboDuration,
-            TurboConsumableSystem.TurboType.Robot,
-            650f,
-            new Color(0.68f, 0.42f, 0.9f, 1f));
+            new Color(0.95f, 0.48f, 0.12f, 1f));
 
         Vector2 previousFeed = Vector2.zero;
         Vector2 feedTierTwo = Vector2.zero;
@@ -6244,6 +6379,28 @@ public sealed class RoundSystem : MonoBehaviour
                 position,
                 eggValueColor);
             previousValue = position;
+        }
+
+        Color penBonusColor = new Color(0.1f, 0.62f, 0.5f);
+        Vector2 previousPenBonus = previousValue;
+        for (int tier = 1;
+             tier <= ProgressionSystem.MaximumPenBonusLevel;
+             tier++)
+        {
+            Vector2 position = new Vector2(
+                1075f,
+                previousValue.y - (tier - 1) * 95f);
+            SetRuntimeNodePosition(
+                nodes,
+                ProgressionSystem.UpgradeId.PenBonus,
+                tier,
+                position);
+            CreateRuntimeTreeConnector(
+                foodGroup,
+                previousPenBonus,
+                position,
+                penBonusColor);
+            previousPenBonus = position;
         }
 
         Vector2 basketOne = new Vector2(-300f, 510f);
@@ -6406,7 +6563,8 @@ public sealed class RoundSystem : MonoBehaviour
                 or ProgressionSystem.UpgradeId.RareEggChance
                 or ProgressionSystem.UpgradeId.ChickenPerks
                 or ProgressionSystem.UpgradeId.EggWeight
-                or ProgressionSystem.UpgradeId.EggValue => foodGroup,
+                or ProgressionSystem.UpgradeId.EggValue
+                or ProgressionSystem.UpgradeId.PenBonus => foodGroup,
             ProgressionSystem.UpgradeId.IncubatorInstall
                 or ProgressionSystem.UpgradeId.IncubatorCapacity
                 or ProgressionSystem.UpgradeId.IncubatorSpeed
@@ -6691,27 +6849,19 @@ public sealed class RoundSystem : MonoBehaviour
             treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
         ProgressionSystem.UpgradeId[] roots =
         {
-            ProgressionSystem.UpgradeId.IncubatorTurbo,
-            ProgressionSystem.UpgradeId.CrosshatcherTurbo,
-            ProgressionSystem.UpgradeId.RobotTurbo
+            ProgressionSystem.UpgradeId.IncubatorTurbo
         };
         ProgressionSystem.UpgradeId[] powers =
         {
-            ProgressionSystem.UpgradeId.IncubatorTurboPower,
-            ProgressionSystem.UpgradeId.CrosshatcherTurboPower,
-            ProgressionSystem.UpgradeId.RobotTurboPower
+            ProgressionSystem.UpgradeId.IncubatorTurboPower
         };
         ProgressionSystem.UpgradeId[] durations =
         {
-            ProgressionSystem.UpgradeId.IncubatorTurboDuration,
-            ProgressionSystem.UpgradeId.CrosshatcherTurboDuration,
-            ProgressionSystem.UpgradeId.RobotTurboDuration
+            ProgressionSystem.UpgradeId.IncubatorTurboDuration
         };
         Color[] colors =
         {
-            new Color(0.78f, 0.31f, 0.07f, 1f),
-            new Color(0.18f, 0.55f, 0.25f, 1f),
-            new Color(0.46f, 0.25f, 0.67f, 1f)
+            new Color(0.78f, 0.31f, 0.07f, 1f)
         };
 
         ProgressionNodeButton rootTemplate = null;
@@ -7364,6 +7514,59 @@ public sealed class RoundSystem : MonoBehaviour
             clone.name = $"Upgrade Truck Bonus {tier}";
             clone.GetComponent<ProgressionNodeButton>()?.SetUpgrade(
                 ProgressionSystem.UpgradeId.TruckBonus,
+                tier);
+        }
+    }
+
+    private static void EnsurePenBonusTiers(RectTransform treeContent)
+    {
+        ProgressionNodeButton template = null;
+        bool[] existing = new bool[
+            ProgressionSystem.MaximumPenBonusLevel + 1];
+        ProgressionNodeButton[] nodes =
+            treeContent.GetComponentsInChildren<ProgressionNodeButton>(true);
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            ProgressionNodeButton node = nodes[index];
+            if (node == null)
+            {
+                continue;
+            }
+
+            if (node.UpgradeId == ProgressionSystem.UpgradeId.PenBonus
+                && node.TargetLevel > 0
+                && node.TargetLevel <= ProgressionSystem.MaximumPenBonusLevel)
+            {
+                existing[node.TargetLevel] = true;
+            }
+            else if (template == null
+                && node.UpgradeId == ProgressionSystem.UpgradeId.EggValue
+                && node.TargetLevel == ProgressionSystem.MaximumEggValueLevel)
+            {
+                template = node;
+            }
+        }
+
+        if (template == null)
+        {
+            return;
+        }
+
+        for (int tier = 1;
+             tier <= ProgressionSystem.MaximumPenBonusLevel;
+             tier++)
+        {
+            if (existing[tier])
+            {
+                continue;
+            }
+
+            GameObject clone = Instantiate(
+                template.gameObject,
+                template.transform.parent);
+            clone.name = $"Upgrade Pen Bonus {tier}";
+            clone.GetComponent<ProgressionNodeButton>()?.SetUpgrade(
+                ProgressionSystem.UpgradeId.PenBonus,
                 tier);
         }
     }

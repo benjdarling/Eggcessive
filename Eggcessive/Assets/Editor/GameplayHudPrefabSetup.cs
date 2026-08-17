@@ -195,6 +195,7 @@ public static class GameplayHudPrefabSetup
         DestroyNamedDescendant(root.transform, "Incubator Turbo Button");
         DestroyNamedDescendant(root.transform, "Crosshatcher Turbo Button");
         DestroyNamedDescendant(root.transform, "Robot Turbo Button");
+        DestroyNamedDescendant(root.transform, "Turbo Button");
 
         RectTransform panelRect = panel as RectTransform;
         panelRect.anchorMin = new Vector2(0.85f, panelRect.anchorMin.y);
@@ -271,15 +272,13 @@ public static class GameplayHudPrefabSetup
             7);
         CreateShortcutBadge(foodButton.transform, font, "3");
 
-        Button[] turboButtons = new Button[3];
-        Image[] turboImages = new Image[3];
-        TMP_Text[] turboCounts = new TMP_Text[3];
-        TMP_Text[] turboTimers = new TMP_Text[3];
+        Button[] turboButtons = new Button[1];
+        Image[] turboImages = new Image[1];
+        TMP_Text[] turboCounts = new TMP_Text[1];
+        TMP_Text[] turboTimers = new TMP_Text[1];
         Color[] turboColors =
         {
-            new Color(0.72f, 0.27f, 0.06f, 1f),
-            new Color(0.12f, 0.5f, 0.22f, 1f),
-            new Color(0.42f, 0.2f, 0.64f, 1f)
+            new Color(0.72f, 0.27f, 0.06f, 1f)
         };
         for (int index = 0; index < turboButtons.Length; index++)
         {
@@ -818,7 +817,7 @@ public static class GameplayHudPrefabSetup
             upgradeLabels[index] = rowLabel;
             upgradeFills[index] = rowFill;
         }
-        closeRect.gameObject.SetActive(false);
+        closeRect.gameObject.SetActive(true);
         dialogCard.gameObject.SetActive(false);
         overlayRect.gameObject.SetActive(false);
 
@@ -1011,7 +1010,7 @@ public static class GameplayHudPrefabSetup
         out TMP_Text timerText)
     {
         RectTransform rect = CreateUiObject(
-            $"{TurboConsumableSystem.GetDisplayName(type)} Turbo Button",
+            "Turbo Button",
             parent);
         SetBottomLeftRect(rect, position, new Vector2(64f, 64f));
         frameImage = rect.gameObject.AddComponent<Image>();

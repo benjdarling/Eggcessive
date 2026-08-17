@@ -38,7 +38,8 @@ public sealed class ProgressionSystem : MonoBehaviour
         CrosshatcherTurboDuration,
         RobotTurbo,
         RobotTurboPower,
-        RobotTurboDuration
+        RobotTurboDuration,
+        PenBonus
     }
 
     public readonly struct NodeState
@@ -177,6 +178,19 @@ public sealed class ProgressionSystem : MonoBehaviour
     };
     private const float TruckBonusGrowthPerLevel = 1.15f;
 
+    private static readonly long[] PenBonusCosts =
+    {
+        500000000000L,
+        2500000000000L,
+        12500000000000L,
+        62500000000000L,
+        312500000000000L,
+        1562500000000000L,
+        7812500000000000L,
+        39062500000000000L
+    };
+    private const float PenBonusPercentPerStep = 0.025f;
+
     private const float EggWeightUpperRangePerLevel = 0.075f;
     private const float EggWeightChancePerLevel = 0.1f;
     private const float RarityScaleStep = 0.075f;
@@ -210,6 +224,7 @@ public sealed class ProgressionSystem : MonoBehaviour
     [SerializeField, Range(0, 18)] private int eggSaleValueLevel;
     [SerializeField, Range(0, 15)] private int truckBonusLevel;
     [SerializeField, Range(0, 10)] private int chickenPerksLevel;
+    [SerializeField, Range(0, 8)] private int penBonusLevel;
 
     public static ProgressionSystem Instance { get; private set; }
     public static event Action Changed;
@@ -219,11 +234,13 @@ public sealed class ProgressionSystem : MonoBehaviour
     public int EggValueLevel => eggSaleValueLevel;
     public int TruckBonusLevel => truckBonusLevel;
     public int ChickenPerksLevel => chickenPerksLevel;
+    public int PenBonusLevel => penBonusLevel;
     public static int MaximumRareEggChanceLevel => RareChanceCosts.Length;
     public static int MaximumEggWeightLevel => EggWeightCosts.Length;
     public static int MaximumEggValueLevel => EggValueCosts.Length;
     public static int MaximumTruckBonusLevel => TruckBonusCosts.Length;
     public static int MaximumChickenPerksLevel => ChickenPerkCosts.Length;
+    public static int MaximumPenBonusLevel => PenBonusCosts.Length;
     public float TruckBonusMultiplier =>
         Mathf.Pow(TruckBonusGrowthPerLevel, truckBonusLevel);
     public float EggValueMultiplier =>
@@ -392,6 +409,17 @@ public sealed class ProgressionSystem : MonoBehaviour
                     GetArrayCost(TruckBonusCosts, truckBonusLevel),
                     eggSaleValueLevel >= 2,
                     eggSaleValueLevel >= 2);
+
+            case UpgradeId.PenBonus:
+                return new NodeState(
+                    "Pen Bonus",
+                    "P$",
+                    GetPenBonusDescription(penBonusLevel + 1),
+                    penBonusLevel,
+                    PenBonusCosts.Length,
+                    GetArrayCost(PenBonusCosts, penBonusLevel),
+                    eggSaleValueLevel >= EggValueCosts.Length,
+                    eggSaleValueLevel >= EggValueCosts.Length);
 
             case UpgradeId.IncubatorInstall:
                 return new NodeState(
@@ -730,6 +758,20 @@ public sealed class ProgressionSystem : MonoBehaviour
                     true,
                     eggSaleValueLevel >= 2
                         && truckBonusLevel >= target - 1);
+            }
+            case UpgradeId.PenBonus:
+            {
+                int target = Mathf.Clamp(targetLevel, 1, PenBonusCosts.Length);
+                return new NodeState(
+                    $"Pen Bonus Tier {target}",
+                    "P$",
+                    GetPenBonusDescription(target),
+                    penBonusLevel,
+                    target,
+                    GetArrayCost(PenBonusCosts, target - 1),
+                    true,
+                    eggSaleValueLevel >= EggValueCosts.Length
+                        && penBonusLevel >= target - 1);
             }
             case UpgradeId.IncubatorCapacity:
             {
@@ -1213,6 +1255,10 @@ public sealed class ProgressionSystem : MonoBehaviour
                 truckBonusLevel++;
                 message = $"Truck bonuses increased to {TruckBonusMultiplier:0.0}x";
                 return true;
+            case UpgradeId.PenBonus:
+                penBonusLevel++;
+                message = $"Pen bonus increased to tier {penBonusLevel}";
+                return true;
             case UpgradeId.IncubatorInstall:
                 return IncubatorShopController.Instance.TryInstall(out message, false);
             case UpgradeId.IncubatorCapacity:
@@ -1270,90 +1316,20 @@ public sealed class ProgressionSystem : MonoBehaviour
 
     private static NodeState GetTurboPurchaseNodeState(UpgradeId id)
     {
-        TurboConsumableSystem.TurboType type = id switch
-        {
-            UpgradeId.IncubatorTurbo =>
-                TurboConsumableSystem.TurboType.Incubator,
-            UpgradeId.CrosshatcherTurbo =>
-                TurboConsumableSystem.TurboType.Crosshatcher,
-            _ => TurboConsumableSystem.TurboType.Robot
-        };
-        string name = TurboConsumableSystem.GetDisplayName(type);
-        bool unlocked = AreTurboPrerequisitesMet(type);
-        string details = unlocked
-            ? $"Owned {TurboConsumableSystem.GetInventory(type)} . "
-                + $"+{TurboConsumableSystem.GetBoostPercent(type):0}% for "
-                + $"{TurboConsumableSystem.GetDurationSeconds(type):0}s"
-            : GetTurboUnlockDescription(type);
+        TurboConsumableSystem.TurboType type =
+            TurboConsumableSystem.TurboType.Incubator;
+        string details = $"Owned {TurboConsumableSystem.GetInventory(type)} . "
+            + $"All machines +{TurboConsumableSystem.GetBoostPercent(type):0}% "
+            + $"for {TurboConsumableSystem.GetDurationSeconds(type):0}s";
         return new NodeState(
-            $"{name} Turbo",
+            "Turbo",
             "⚡",
             details,
             TurboConsumableSystem.GetInventory(type),
             0,
             TurboConsumableSystem.GetPurchaseCost(type),
             true,
-            unlocked);
-    }
-
-    private static bool AreTurboPrerequisitesMet(
-        TurboConsumableSystem.TurboType type)
-    {
-        PenExpansionManager pens = PenExpansionManager.Instance;
-        if (pens != null && pens.IsInitialized)
-        {
-            PenExpansionManager.EquipmentType equipment = type switch
-            {
-                TurboConsumableSystem.TurboType.Incubator =>
-                    PenExpansionManager.EquipmentType.Incubator,
-                TurboConsumableSystem.TurboType.Crosshatcher =>
-                    PenExpansionManager.EquipmentType.Crosshatcher,
-                _ => PenExpansionManager.EquipmentType.Robot
-            };
-            return pens.HasCompletedCoreUpgrades(equipment);
-        }
-
-        EggCarryController collection = EggCarryController.Instance;
-        return type switch
-        {
-            TurboConsumableSystem.TurboType.Incubator =>
-                IncubatorShopController.Instance != null
-                && IncubatorShopController.Instance.IsInstalled
-                && IncubatorShopController.Instance.CapacityLevel
-                    >= IncubatorController.MaximumLevel
-                && IncubatorShopController.Instance.SpeedLevel
-                    >= IncubatorController.MaximumLevel,
-            TurboConsumableSystem.TurboType.Crosshatcher =>
-                CrosshatcherShopController.Instance != null
-                && CrosshatcherShopController.Instance.IsInstalled
-                && CrosshatcherShopController.Instance.SpeedLevel
-                    >= CrosshatcherController.MaximumLevel
-                && CrosshatcherShopController.Instance.QualityLevel
-                    >= CrosshatcherController.MaximumLevel,
-            TurboConsumableSystem.TurboType.Robot =>
-                collection != null
-                && collection.HasRobot
-                && collection.RobotSpeedLevel
-                    >= EggCarryController.MaximumRobotLevel
-                && collection.RobotCapacityLevel
-                    >= EggCarryController.MaximumRobotLevel,
-            _ => false
-        };
-    }
-
-    private static string GetTurboUnlockDescription(
-        TurboConsumableSystem.TurboType type)
-    {
-        return type switch
-        {
-            TurboConsumableSystem.TurboType.Incubator =>
-                "Max Incubator Capacity + Hatch Speed in one pen to unlock",
-            TurboConsumableSystem.TurboType.Crosshatcher =>
-                "Max Crosshatch Speed + Breed Quality in one pen to unlock",
-            TurboConsumableSystem.TurboType.Robot =>
-                "Max Robot Speed + Capacity in one pen to unlock",
-            _ => "Complete both core upgrade branches to unlock"
-        };
+            true);
     }
 
     private static NodeState GetTurboUpgradeNodeState(
@@ -1378,12 +1354,11 @@ public sealed class ProgressionSystem : MonoBehaviour
             type,
             kind,
             targetLevel > 0 ? target - 1 : current);
-        string name = TurboConsumableSystem.GetDisplayName(type);
         string detail = kind == TurboConsumableSystem.UpgradeKind.Power
-            ? $"Current +{TurboConsumableSystem.GetBoostPercent(type):0}% productivity"
+            ? $"All machines currently gain +{TurboConsumableSystem.GetBoostPercent(type):0}% productivity"
             : $"Current duration {TurboConsumableSystem.GetDurationSeconds(type):0} seconds";
         return new NodeState(
-            $"{name} Turbo {kind}",
+            $"Turbo {kind}",
             kind == TurboConsumableSystem.UpgradeKind.Power ? "X%" : "SEC",
             detail,
             current,
@@ -1399,7 +1374,7 @@ public sealed class ProgressionSystem : MonoBehaviour
         out string message)
     {
         TurboConsumableSystem.AddConsumable(type);
-        message = $"Bought {TurboConsumableSystem.GetDisplayName(type)} Turbo "
+        message = "Bought Turbo "
             + $"(owned {TurboConsumableSystem.GetInventory(type)})";
         return true;
     }
@@ -1412,27 +1387,15 @@ public sealed class ProgressionSystem : MonoBehaviour
         switch (id)
         {
             case UpgradeId.IncubatorTurboPower:
+            case UpgradeId.CrosshatcherTurboPower:
+            case UpgradeId.RobotTurboPower:
                 type = TurboConsumableSystem.TurboType.Incubator;
                 kind = TurboConsumableSystem.UpgradeKind.Power;
                 return true;
             case UpgradeId.IncubatorTurboDuration:
-                type = TurboConsumableSystem.TurboType.Incubator;
-                kind = TurboConsumableSystem.UpgradeKind.Duration;
-                return true;
-            case UpgradeId.CrosshatcherTurboPower:
-                type = TurboConsumableSystem.TurboType.Crosshatcher;
-                kind = TurboConsumableSystem.UpgradeKind.Power;
-                return true;
             case UpgradeId.CrosshatcherTurboDuration:
-                type = TurboConsumableSystem.TurboType.Crosshatcher;
-                kind = TurboConsumableSystem.UpgradeKind.Duration;
-                return true;
-            case UpgradeId.RobotTurboPower:
-                type = TurboConsumableSystem.TurboType.Robot;
-                kind = TurboConsumableSystem.UpgradeKind.Power;
-                return true;
             case UpgradeId.RobotTurboDuration:
-                type = TurboConsumableSystem.TurboType.Robot;
+                type = TurboConsumableSystem.TurboType.Incubator;
                 kind = TurboConsumableSystem.UpgradeKind.Duration;
                 return true;
             default:
@@ -1458,6 +1421,42 @@ public sealed class ProgressionSystem : MonoBehaviour
         return Mathf.Pow(
             TruckBonusGrowthPerLevel,
             Mathf.Clamp(level, 0, TruckBonusCosts.Length));
+    }
+
+    public float GetPenBonusMultiplier(int penIndex)
+    {
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        int maxedUpgradeCount = manager != null
+            ? manager.GetMaxedUpgradeCount(penIndex)
+            : 0;
+        return GetPenBonusMultiplier(maxedUpgradeCount, penBonusLevel);
+    }
+
+    public static float GetPenBonusMultiplier(
+        int maxedUpgradeCount,
+        int bonusTier)
+    {
+        int maxCount = PenExpansionManager.MaximumBonusUpgradeCount;
+        int count = Mathf.Clamp(maxedUpgradeCount, 0, maxCount);
+        int tier = Mathf.Clamp(bonusTier, 0, PenBonusCosts.Length);
+        int escalatingSteps = count * (count + 1) / 2;
+        return 1f + escalatingSteps * PenBonusPercentPerStep * tier;
+    }
+
+    private static string GetPenBonusDescription(int targetTier)
+    {
+        int tier = Mathf.Clamp(targetTier, 1, PenBonusCosts.Length);
+        PenExpansionManager manager = PenExpansionManager.Instance;
+        if (manager == null)
+        {
+            return "Each maxed local pen upgrade adds an escalating egg value bonus";
+        }
+
+        int penIndex = manager.FocusedPenIndex;
+        int maxed = manager.GetMaxedUpgradeCount(penIndex);
+        float multiplier = GetPenBonusMultiplier(maxed, tier);
+        return $"Focused pen: {maxed}/{PenExpansionManager.MaximumBonusUpgradeCount} maxed . "
+            + $"Tier {tier}: +{(multiplier - 1f) * 100f:0.#}% egg value";
     }
 
     private static float GetEggWeightChance(int level)

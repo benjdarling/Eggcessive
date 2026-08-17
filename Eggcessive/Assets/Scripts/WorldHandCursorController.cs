@@ -21,6 +21,8 @@ public sealed class WorldHandCursorController : MonoBehaviour
         "Materials/mat_ui_hand_shadow";
     private static readonly int PointPoseState =
         Animator.StringToHash("Base Layer.Point");
+    private static readonly int PointPressPoseState =
+        Animator.StringToHash("Base Layer.Point Press");
     private static readonly int EggHoldPoseState =
         Animator.StringToHash("Base Layer.Egg Hold");
     private static readonly int EggReadyPoseState =
@@ -147,6 +149,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
     private bool hasCursorHotspotPosition;
     private bool handVisible;
     private bool cursorDebugMarkerHasPosition;
+    private bool uiPointerPressActive;
     private int currentPoseState;
     private bool worldDepthSortingActive;
     private bool menuCursorDepthLocked;
@@ -255,6 +258,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
 
         if (handAnimator != null)
         {
+            handAnimator.updateMode = AnimatorUpdateMode.UnscaledTime;
             handPoseAnimators.Add(handAnimator);
         }
 
@@ -286,9 +290,10 @@ public sealed class WorldHandCursorController : MonoBehaviour
 
     private void Update()
     {
+        Mouse mouse = GameplayTestBot.PointerMouse;
+        UpdateUiPointerPress(mouse);
         UpdateHandPose();
         UpdateHandWorldDepthSorting();
-        Mouse mouse = GameplayTestBot.PointerMouse;
 
         if (viewCamera == null)
         {
@@ -1091,6 +1096,78 @@ public sealed class WorldHandCursorController : MonoBehaviour
         return false;
     }
 
+    private void UpdateUiPointerPress(Mouse mouse)
+    {
+        if (mouse == null)
+        {
+            uiPointerPressActive = false;
+            return;
+        }
+
+        if (mouse.leftButton.wasPressedThisFrame)
+        {
+            uiPointerPressActive = IsPointerOverClickableUi(
+                mouse.position.ReadValue());
+        }
+        else if (!mouse.leftButton.isPressed)
+        {
+            uiPointerPressActive = false;
+        }
+    }
+
+    private bool IsPointerOverClickableUi(Vector2 pointerPosition)
+    {
+        EventSystem currentEventSystem = EventSystem.current;
+
+        if (currentEventSystem == null)
+        {
+            return false;
+        }
+
+        if (uiEventSystem != currentEventSystem
+            || uiPointerEventData == null)
+        {
+            uiEventSystem = currentEventSystem;
+            uiPointerEventData =
+                new PointerEventData(currentEventSystem);
+        }
+
+        uiPointerEventData.Reset();
+        uiPointerEventData.position = pointerPosition;
+        uiRaycastResults.Clear();
+        currentEventSystem.RaycastAll(
+            uiPointerEventData,
+            uiRaycastResults);
+
+        foreach (RaycastResult raycastResult in uiRaycastResults)
+        {
+            GameObject hitObject = raycastResult.gameObject;
+
+            if (hitObject == null)
+            {
+                continue;
+            }
+
+            GameObject handler =
+                ExecuteEvents.GetEventHandler<IPointerDownHandler>(
+                    hitObject)
+                ?? ExecuteEvents.GetEventHandler<IPointerClickHandler>(
+                    hitObject);
+
+            if (handler == null)
+            {
+                continue;
+            }
+
+            Selectable selectable = handler.GetComponent<Selectable>();
+            return selectable == null
+                ? handler.activeInHierarchy
+                : selectable.IsActive() && selectable.IsInteractable();
+        }
+
+        return false;
+    }
+
     private Transform CreateVisualProxy(
         string proxyName,
         int layer,
@@ -1138,6 +1215,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
 
         if (proxyAnimator != null)
         {
+            proxyAnimator.updateMode = AnimatorUpdateMode.UnscaledTime;
             handPoseAnimators.Add(proxyAnimator);
             PlayHandPose(
                 proxyAnimator,
@@ -1164,6 +1242,10 @@ public sealed class WorldHandCursorController : MonoBehaviour
             {
                 desiredPose = ChickenHoldPoseState;
             }
+            else if (uiPointerPressActive)
+            {
+                desiredPose = PointPressPoseState;
+            }
             else if (carryController.IsHoveringGrabbableEgg)
             {
                 desiredPose = EggReadyPoseState;
@@ -1172,6 +1254,11 @@ public sealed class WorldHandCursorController : MonoBehaviour
             {
                 desiredPose = ChickenReadyPoseState;
             }
+        }
+
+        if (carryController == null && uiPointerPressActive)
+        {
+            desiredPose = PointPressPoseState;
         }
 
         SetHandPose(desiredPose, false);

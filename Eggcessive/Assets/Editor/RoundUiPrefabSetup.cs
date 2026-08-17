@@ -13,6 +13,8 @@ using Object = UnityEngine.Object;
 public static class RoundUiPrefabSetup
 {
     private const string RoundPrefabPath = "Assets/UI/prefab_RoundSystem.prefab";
+    private const string AdditionalPenMilestonePrefabPath =
+        "Assets/UI/prefab_AdditionalPenMilestone.prefab";
     private const string FlyingCoinPrefabPath = "Assets/UI/prefab_FlyingCoin.prefab";
     private const string FloatingRewardPrefabPath = "Assets/UI/prefab_FloatingReward.prefab";
     private const string UiInputActionsPath = "Assets/UI/RoundUiInputActions.asset";
@@ -162,6 +164,19 @@ public static class RoundUiPrefabSetup
                 "Cannot author the additional-pen milestone without the results screen.");
         }
 
+        GameObject authoredMilestone = AssetDatabase.LoadAssetAtPath<GameObject>(
+            AdditionalPenMilestonePrefabPath);
+        if (authoredMilestone != null)
+        {
+            GameObject instance = PrefabUtility.InstantiatePrefab(
+                authoredMilestone,
+                resultsScreen.transform.parent) as GameObject;
+            instance.name = "Additional Pens Milestone Screen";
+            instance.SetActive(false);
+            AssignAdditionalPenMilestoneReferences(roundSystem, instance);
+            return;
+        }
+
         GameObject milestone = Object.Instantiate(
             resultsScreen,
             resultsScreen.transform.parent);
@@ -220,6 +235,8 @@ public static class RoundUiPrefabSetup
             subtitle.fontSize = 25f;
         }
 
+        FitAdditionalPenMilestoneText(milestone);
+
         Button milestoneButton = null;
         Button[] buttons = card.GetComponentsInChildren<Button>(true);
         for (int index = 0; index < buttons.Length; index++)
@@ -256,12 +273,171 @@ public static class RoundUiPrefabSetup
                 "The milestone screen has no authored continue button.");
         }
 
-        milestone.SetActive(false);
+        authoredMilestone = SaveAdditionalPenMilestoneAsset(milestone);
+        Transform parent = resultsScreen.transform.parent;
+        int siblingIndex = milestone.transform.GetSiblingIndex();
+        Object.DestroyImmediate(milestone);
+        GameObject prefabInstance = PrefabUtility.InstantiatePrefab(
+            authoredMilestone,
+            parent) as GameObject;
+        prefabInstance.name = "Additional Pens Milestone Screen";
+        prefabInstance.transform.SetSiblingIndex(siblingIndex);
+        prefabInstance.SetActive(false);
+        AssignAdditionalPenMilestoneReferences(roundSystem, prefabInstance);
+    }
+
+    [MenuItem("Tools/Eggcessive/Extract Additional Pen Milestone Prefab")]
+    public static void ExtractAdditionalPenMilestonePrefab()
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(RoundPrefabPath);
+        try
+        {
+            RoundSystem roundSystem = root.GetComponent<RoundSystem>();
+            if (roundSystem == null)
+            {
+                throw new MissingComponentException(nameof(RoundSystem));
+            }
+
+            SerializedObject serializedSystem = new SerializedObject(roundSystem);
+            GameObject milestone = serializedSystem
+                .FindProperty("additionalPenMilestoneScreen")
+                .objectReferenceValue as GameObject;
+            if (milestone == null)
+            {
+                throw new MissingReferenceException(
+                    "The round prefab has no additional-pen milestone screen.");
+            }
+
+            Transform parent = milestone.transform.parent;
+            int siblingIndex = milestone.transform.GetSiblingIndex();
+            FitAdditionalPenMilestoneText(milestone);
+            GameObject milestonePrefab = SaveAdditionalPenMilestoneAsset(
+                milestone);
+            Object.DestroyImmediate(milestone);
+
+            GameObject instance = PrefabUtility.InstantiatePrefab(
+                milestonePrefab,
+                parent) as GameObject;
+            instance.name = "Additional Pens Milestone Screen";
+            instance.transform.SetSiblingIndex(siblingIndex);
+            instance.SetActive(false);
+            AssignAdditionalPenMilestoneReferences(roundSystem, instance);
+            PrefabUtility.SaveAsPrefabAsset(root, RoundPrefabPath);
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log(
+            $"Extracted editable milestone prefab to {AdditionalPenMilestonePrefabPath}.");
+    }
+
+    [MenuItem("Tools/Eggcessive/Bake Results Machine Tips Panel")]
+    public static void BakeResultsMachineTipsPanel()
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(RoundPrefabPath);
+        try
+        {
+            RoundSystem roundSystem = root.GetComponent<RoundSystem>();
+            if (roundSystem == null)
+            {
+                throw new MissingComponentException(
+                    $"{RoundPrefabPath} has no {nameof(RoundSystem)} component.");
+            }
+
+            MethodInfo resolveMethod = typeof(RoundSystem).GetMethod(
+                "ResolveResultsPresentationReferences",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (resolveMethod == null)
+            {
+                throw new MissingMethodException(
+                    nameof(RoundSystem),
+                    "ResolveResultsPresentationReferences");
+            }
+
+            resolveMethod.Invoke(roundSystem, null);
+            EditorUtility.SetDirty(roundSystem);
+            PrefabUtility.SaveAsPrefabAsset(root, RoundPrefabPath);
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log($"Baked the editable results machine tips panel into {RoundPrefabPath}.");
+    }
+
+    private static void AssignAdditionalPenMilestoneReferences(
+        RoundSystem roundSystem,
+        GameObject milestone)
+    {
+        Button milestoneButton = null;
+        Button[] buttons = milestone.GetComponentsInChildren<Button>(true);
+        for (int index = 0; index < buttons.Length; index++)
+        {
+            if (buttons[index].name == "Additional Pens Unlocked")
+            {
+                milestoneButton = buttons[index];
+                break;
+            }
+        }
+
+        if (milestoneButton == null)
+        {
+            throw new MissingReferenceException(
+                "The additional-pen milestone prefab has no continue button.");
+        }
+
+        SerializedObject serializedSystem = new SerializedObject(roundSystem);
         serializedSystem.FindProperty("additionalPenMilestoneScreen")
             .objectReferenceValue = milestone;
         serializedSystem.FindProperty("additionalPenMilestoneButton")
             .objectReferenceValue = milestoneButton;
         serializedSystem.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    private static void FitAdditionalPenMilestoneText(GameObject milestone)
+    {
+        Transform card = milestone.transform.Find("Results Card");
+        TMP_Text subtitle = card?.Find("Results Subtitle")
+            ?.GetComponent<TMP_Text>();
+        if (subtitle == null)
+        {
+            return;
+        }
+
+        subtitle.enableAutoSizing = true;
+        subtitle.fontSizeMin = 17f;
+        subtitle.fontSizeMax = 25f;
+        subtitle.textWrappingMode = TextWrappingModes.Normal;
+        subtitle.overflowMode = TextOverflowModes.Overflow;
+        subtitle.rectTransform.anchoredPosition = new Vector2(0f, -12f);
+        subtitle.rectTransform.sizeDelta = new Vector2(570f, 180f);
+    }
+
+    private static GameObject SaveAdditionalPenMilestoneAsset(
+        GameObject source)
+    {
+        GameObject editableRoot = Object.Instantiate(source);
+        editableRoot.name = "Additional Pens Milestone Screen";
+        editableRoot.transform.SetParent(null, false);
+        editableRoot.SetActive(true);
+        FitAdditionalPenMilestoneText(editableRoot);
+        try
+        {
+            return PrefabUtility.SaveAsPrefabAsset(
+                editableRoot,
+                AdditionalPenMilestonePrefabPath);
+        }
+        finally
+        {
+            Object.DestroyImmediate(editableRoot);
+        }
     }
 
     [MenuItem("Tools/Eggcessive/Validate Round UI Input")]
@@ -505,9 +681,39 @@ public static class RoundUiPrefabSetup
         {
             GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(roundPrefab);
             SceneManager.MoveGameObjectToScene(instance, scene);
+            existingSystem = instance.GetComponent<RoundSystem>();
         }
 
+        RevertCountdownMaterialOverride(existingSystem);
+
         EditorSceneManager.SaveScene(scene);
+    }
+
+    private static void RevertCountdownMaterialOverride(
+        RoundSystem roundSystem)
+    {
+        if (roundSystem == null)
+        {
+            return;
+        }
+
+        SerializedObject serializedSystem = new SerializedObject(roundSystem);
+        TMP_Text countdown = serializedSystem.FindProperty("countdownText")
+            ?.objectReferenceValue as TMP_Text;
+        if (countdown == null)
+        {
+            return;
+        }
+
+        SerializedObject serializedCountdown = new SerializedObject(countdown);
+        SerializedProperty material =
+            serializedCountdown.FindProperty("m_sharedMaterial");
+        if (material != null && material.prefabOverride)
+        {
+            PrefabUtility.RevertPropertyOverride(
+                material,
+                InteractionMode.AutomatedAction);
+        }
     }
 
     private static GameObject CreateFlyingCoinPrefab()

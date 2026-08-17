@@ -82,10 +82,10 @@ public sealed class FoodShopController : MonoBehaviour
     [SerializeField] private RawImage handToolIcon;
     [SerializeField] private RawImage collectionToolIcon;
     [SerializeField] private RawImage foodToolIcon;
-    [SerializeField] private Button[] turboButtons = new Button[3];
-    [SerializeField] private Image[] turboButtonImages = new Image[3];
-    [SerializeField] private TMP_Text[] turboCountTexts = new TMP_Text[3];
-    [SerializeField] private TMP_Text[] turboTimerTexts = new TMP_Text[3];
+    [SerializeField] private Button[] turboButtons = new Button[1];
+    [SerializeField] private Image[] turboButtonImages = new Image[1];
+    [SerializeField] private TMP_Text[] turboCountTexts = new TMP_Text[1];
+    [SerializeField] private TMP_Text[] turboTimerTexts = new TMP_Text[1];
     private float nextTurboHudRefreshTime;
     [SerializeField] private GameObject foodPrefab = null;
     [SerializeField, Min(1)] private int foodCostCents = 200;
@@ -172,6 +172,7 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         previewProperties = new MaterialPropertyBlock();
+        ConfigureUnifiedTurboButton();
     }
 
     private void OnEnable()
@@ -269,6 +270,11 @@ public sealed class FoodShopController : MonoBehaviour
             }
         }
 
+        if (roundActive)
+        {
+            HandleMouseWheelToolCycle();
+        }
+
         if (Time.unscaledTime >= nextTurboHudRefreshTime)
         {
             nextTurboHudRefreshTime = Time.unscaledTime + 0.2f;
@@ -314,6 +320,74 @@ public sealed class FoodShopController : MonoBehaviour
         }
 
         PlaceFood();
+    }
+
+    private void HandleMouseWheelToolCycle()
+    {
+        Mouse mouse = GameplayTestBot.PointerMouse;
+        if (mouse == null
+            || (GameMenuController.Instance != null
+                && GameMenuController.Instance.IsMenuOpen)
+            || (PenEquipmentHudController.Instance != null
+                && PenEquipmentHudController.Instance.IsUpgradeDialogOpen)
+            || (EventSystem.current != null
+                && EventSystem.current.IsPointerOverGameObject()))
+        {
+            return;
+        }
+
+        float scroll = mouse.scroll.ReadValue().y;
+        if (Mathf.Abs(scroll) < 0.01f)
+        {
+            return;
+        }
+
+        // Match common shooter-wheel behaviour: wheel down advances through
+        // hand -> collection -> feed, while wheel up moves in reverse.
+        CycleTool(scroll < 0f ? 1 : -1);
+    }
+
+    private void CycleTool(int direction)
+    {
+        EggCarryController collection = EggCarryController.Instance;
+        int current = isPlacementActive
+            ? 2
+            : collection != null
+                && collection.SelectedTool
+                    == EggCarryController.PlayerTool.Collection
+                    ? 1
+                    : 0;
+
+        for (int step = 1; step <= 3; step++)
+        {
+            int candidate = (current + direction * step + 6) % 3;
+            bool available = candidate switch
+            {
+                0 => true,
+                1 => collection != null
+                    && collection.IsCollectionToolUnlocked,
+                2 => ownedFood > 0 && foodPrefab != null,
+                _ => false
+            };
+            if (!available)
+            {
+                continue;
+            }
+
+            switch (candidate)
+            {
+                case 0:
+                    SelectHandTool();
+                    break;
+                case 1:
+                    SelectCollectionTool();
+                    break;
+                case 2:
+                    BeginPlacement();
+                    break;
+            }
+            return;
+        }
     }
 
     private void BuyFood()
@@ -982,16 +1056,12 @@ public sealed class FoodShopController : MonoBehaviour
 
     private void AddTurboButtonListeners()
     {
-        GetTurboButton(0)?.onClick.AddListener(UseIncubatorTurbo);
-        GetTurboButton(1)?.onClick.AddListener(UseCrosshatcherTurbo);
-        GetTurboButton(2)?.onClick.AddListener(UseRobotTurbo);
+        GetTurboButton(0)?.onClick.AddListener(UseTurbo);
     }
 
     private void RemoveTurboButtonListeners()
     {
-        GetTurboButton(0)?.onClick.RemoveListener(UseIncubatorTurbo);
-        GetTurboButton(1)?.onClick.RemoveListener(UseCrosshatcherTurbo);
-        GetTurboButton(2)?.onClick.RemoveListener(UseRobotTurbo);
+        GetTurboButton(0)?.onClick.RemoveListener(UseTurbo);
     }
 
     private Button GetTurboButton(int index)
@@ -1003,26 +1073,22 @@ public sealed class FoodShopController : MonoBehaviour
                 : null;
     }
 
-    private void UseIncubatorTurbo() =>
-        UseTurbo(TurboConsumableSystem.TurboType.Incubator);
-
-    private void UseCrosshatcherTurbo() =>
-        UseTurbo(TurboConsumableSystem.TurboType.Crosshatcher);
-
-    private void UseRobotTurbo() =>
-        UseTurbo(TurboConsumableSystem.TurboType.Robot);
-
-    private void UseTurbo(TurboConsumableSystem.TurboType type)
+    private void UseTurbo()
     {
-        TurboConsumableSystem.TryActivate(type, out string message);
+        TurboConsumableSystem.TryActivate(
+            TurboConsumableSystem.TurboType.Incubator,
+            out string message);
         SetStatus(message);
         RefreshTurboButtons();
     }
 
-    private void RefreshTurboButtons()
+    private void ConfigureUnifiedTurboButton()
     {
-        bool roundActive = RoundSystem.Instance == null
-            || RoundSystem.Instance.IsRoundInProgress;
+        if (turboButtons == null || turboButtons.Length == 0)
+        {
+            return;
+        }
+
         for (int index = 0; index < turboButtons.Length; index++)
         {
             Button button = turboButtons[index];
@@ -1031,19 +1097,55 @@ public sealed class FoodShopController : MonoBehaviour
                 continue;
             }
 
-            TurboConsumableSystem.TurboType type =
-                (TurboConsumableSystem.TurboType)index;
+            bool primary = index == 0;
+            button.gameObject.SetActive(primary);
+            if (primary)
+            {
+                button.gameObject.name = "Turbo Button";
+            }
+        }
+    }
+
+    private void RefreshTurboButtons()
+    {
+        bool roundActive = RoundSystem.Instance == null
+            || RoundSystem.Instance.IsRoundInProgress;
+        if (turboButtons == null || turboButtons.Length == 0)
+        {
+            return;
+        }
+
+        TurboConsumableSystem.TurboType type =
+            TurboConsumableSystem.TurboType.Incubator;
+        for (int index = 0; index < turboButtons.Length; index++)
+        {
+            Button button = turboButtons[index];
+            if (button == null)
+            {
+                continue;
+            }
+
+            if (index > 0)
+            {
+                button.gameObject.SetActive(false);
+                continue;
+            }
+
             int count = TurboConsumableSystem.GetInventory(type);
             float remaining = TurboConsumableSystem.GetRemainingSeconds(type);
             bool active = remaining > 0f;
             button.interactable = roundActive
                 && count > 0
                 && TurboConsumableSystem.HasApplicableMachine(type);
-            if (turboCountTexts[index] != null)
+            if (turboCountTexts != null
+                && index < turboCountTexts.Length
+                && turboCountTexts[index] != null)
             {
                 turboCountTexts[index].text = $"x{count}";
             }
-            if (turboTimerTexts[index] != null)
+            if (turboTimerTexts != null
+                && index < turboTimerTexts.Length
+                && turboTimerTexts[index] != null)
             {
                 turboTimerTexts[index].text = active
                     ? $"{Mathf.CeilToInt(remaining)}s"

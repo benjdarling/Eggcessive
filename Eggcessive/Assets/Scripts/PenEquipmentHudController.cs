@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 [DisallowMultipleComponent]
@@ -45,6 +46,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     [SerializeField] private Button dialogCloseButton = null;
     private GameObject inlineUpgradePanel;
     private PenExpansionManager.EquipmentType dialogType;
+    private int dialogOpenedFrame = -1;
     private bool initialized;
 
     public static PenEquipmentHudController Instance { get; private set; }
@@ -122,6 +124,36 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         {
             TryBindManager();
         }
+
+        Pointer pointer = Pointer.current;
+        if (!IsUpgradeDialogOpen
+            || pointer == null
+            || !pointer.press.wasPressedThisFrame
+            || Time.frameCount == dialogOpenedFrame)
+        {
+            return;
+        }
+
+        Vector2 screenPoint = pointer.position.ReadValue();
+        if (ContainsScreenPoint(inlineUpgradePanel, screenPoint))
+        {
+            return;
+        }
+
+        // Equipment buttons already own their click behavior (collapse the
+        // current panel or switch to another machine), so leave those clicks
+        // for HandleEquipmentClicked.
+        for (int index = 0; index < equipmentViews.Count; index++)
+        {
+            if (ContainsScreenPoint(
+                    equipmentViews[index]?.button?.gameObject,
+                    screenPoint))
+            {
+                return;
+            }
+        }
+
+        CloseDialog();
     }
 
     private void OnDisable()
@@ -317,6 +349,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
     private void OpenDialog(PenExpansionManager.EquipmentType type)
     {
         dialogType = type;
+        dialogOpenedFrame = Time.frameCount;
         inlineUpgradePanel.SetActive(true);
         inlineUpgradePanel.transform.SetAsLastSibling();
         ConfigureUpgradeRows();
@@ -333,6 +366,28 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         Refresh();
     }
 
+    private static bool ContainsScreenPoint(
+        GameObject target,
+        Vector2 screenPoint)
+    {
+        if (target == null
+            || !target.activeInHierarchy
+            || target.transform is not RectTransform rect)
+        {
+            return false;
+        }
+
+        Canvas canvas = rect.GetComponentInParent<Canvas>();
+        Camera camera = canvas != null
+            && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                ? canvas.worldCamera
+                : null;
+        return RectTransformUtility.RectangleContainsScreenPoint(
+            rect,
+            screenPoint,
+            camera);
+    }
+
     private void ConfigureInlineUpgradePanel()
     {
         inlineUpgradePanel = dialogTitle.transform.parent.gameObject;
@@ -343,7 +398,7 @@ public sealed class PenEquipmentHudController : MonoBehaviour
         rect.pivot = new Vector2(0f, 1f);
         rect.anchoredPosition = new Vector2(10f, 0f);
         rect.sizeDelta = new Vector2(520f, 330f);
-        dialogCloseButton.gameObject.SetActive(false);
+        dialogCloseButton.gameObject.SetActive(true);
         inlineUpgradePanel.SetActive(false);
 
         Image overlayImage = dialogOverlay.GetComponent<Image>();
@@ -379,6 +434,15 @@ public sealed class PenEquipmentHudController : MonoBehaviour
                 rowRect.anchoredPosition =
                     new Vector2(0f, -index * (rowHeight + 8f));
                 rowRect.sizeDelta = new Vector2(464f, rowHeight);
+            }
+            if (view.label != null)
+            {
+                view.label.enableAutoSizing = true;
+                view.label.fontSizeMin = 11f;
+                view.label.fontSizeMax = 15f;
+                view.label.textWrappingMode = TextWrappingModes.NoWrap;
+                view.label.overflowMode = TextOverflowModes.Truncate;
+                view.label.lineSpacing = -6f;
             }
         }
 
@@ -459,7 +523,10 @@ public sealed class PenEquipmentHudController : MonoBehaviour
                     view.progressFill,
                     nextCost > 0 ? balance / (float)nextCost : 1f);
             }
-            view.button.interactable = hasUpgrade;
+            // Keep the selected card clickable after its final upgrade so it
+            // can still collapse the now-maxed popup. Once collapsed, maxed
+            // cards become non-interactable again.
+            view.button.interactable = hasUpgrade || expanded;
             view.background.color = expanded
                 ? new Color(0.08f, 0.36f, 0.38f, 1f)
                 : ready
@@ -493,50 +560,138 @@ public sealed class PenEquipmentHudController : MonoBehaviour
             bool atMaximum = level >= maximum;
             bool affordable = cost > 0 && balance >= cost;
             view.button.interactable = !atMaximum && affordable;
-            if (view.upgrade == PenExpansionManager.EquipmentUpgrade.RobotVacuum)
-            {
-                float currentRadius = EggCollectorRobot.GetVacuumRadius(level);
-                float nextRadius = EggCollectorRobot.GetVacuumRadius(level + 1);
-                string current = level > 0 ? $"{currentRadius:0.#}M" : "OFF";
-                view.label.text = atMaximum
-                    ? $"VACUUM  {current}  MAX"
-                    : $"VACUUM  {current} > {nextRadius:0.#}M    "
-                        + (affordable
-                            ? $"UPGRADE {FormatMoney(cost)}"
-                            : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
-            }
-            else if (view.upgrade
-                == PenExpansionManager.EquipmentUpgrade.AutoFeederRange)
-            {
-                float currentRadius =
-                    AutoFeederController.GetAttractionRadiusBonus(level);
-                float nextRadius =
-                    AutoFeederController.GetAttractionRadiusBonus(level + 1);
-                string current = level > 0
-                    ? $"+{currentRadius:0.0}M"
-                    : "OFF";
-                view.label.text = atMaximum
-                    ? $"RANGE  {current}  MAX"
-                    : $"RANGE  {current} > +{nextRadius:0.0}M    "
-                        + (affordable
-                            ? $"UPGRADE {FormatMoney(cost)}"
-                            : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
-            }
-            else
-            {
-                view.label.text = atMaximum
-                    ? $"{GetUpgradeName(view.upgrade)}  LEVEL {level}  MAX"
-                    : $"{GetUpgradeName(view.upgrade)}  {level} > {level + 1}    "
-                        + (affordable
-                            ? $"UPGRADE {FormatMoney(cost)}"
-                            : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
-            }
+            string heading = atMaximum
+                ? $"{GetUpgradeName(view.upgrade)}  LEVEL {level}  MAX"
+                : $"{GetUpgradeName(view.upgrade)}  LEVEL {level} > {level + 1}    "
+                    + (affordable
+                        ? $"BUY {FormatMoney(cost)}"
+                        : $"{FormatMoney(balance)} / {FormatMoney(cost)}");
+            view.label.text = heading + "\n"
+                + GetUpgradeEffectDescription(view.upgrade, level, atMaximum);
             SetProgressFill(
                 view.progressFill,
                 atMaximum || cost <= 0
                     ? 1f
                     : balance / (float)cost);
         }
+    }
+
+    private static string GetUpgradeEffectDescription(
+        PenExpansionManager.EquipmentUpgrade upgrade,
+        int level,
+        bool atMaximum)
+    {
+        int nextLevel = atMaximum ? level : level + 1;
+        switch (upgrade)
+        {
+            case PenExpansionManager.EquipmentUpgrade.IncubatorCapacity:
+            {
+                int current = IncubatorController.GetCapacity(level);
+                int next = IncubatorController.GetCapacity(nextLevel);
+                return atMaximum
+                    ? $"{current} EGG SLOTS"
+                    : $"{current} > {next} EGG SLOTS";
+            }
+            case PenExpansionManager.EquipmentUpgrade.IncubatorSpeed:
+                return FormatTimeUpgrade(
+                    IncubatorController.GetProductionTime(level),
+                    IncubatorController.GetProductionTime(nextLevel),
+                    "SECONDS PER HATCH",
+                    atMaximum);
+            case PenExpansionManager.EquipmentUpgrade.CrosshatcherSpeed:
+                return FormatTimeUpgrade(
+                    CrosshatcherController.GetProcessingTime(level),
+                    CrosshatcherController.GetProcessingTime(nextLevel),
+                    "SECONDS PER CROSSHATCH",
+                    atMaximum);
+            case PenExpansionManager.EquipmentUpgrade.CrosshatcherQuality:
+            {
+                float current = CrosshatcherController.GetImprovementChance(level)
+                    * 100f;
+                float next = CrosshatcherController.GetImprovementChance(nextLevel)
+                    * 100f;
+                return atMaximum
+                    ? $"{current:0.#}% NEXT-BREED CHANCE"
+                    : $"{current:0.#}% > {next:0.#}% NEXT-BREED CHANCE  (+{next - current:0.#}%)";
+            }
+            case PenExpansionManager.EquipmentUpgrade.RobotSpeed:
+            {
+                float current = EggCarryController.GetRobotSpeed(level);
+                float next = EggCarryController.GetRobotSpeed(nextLevel);
+                return atMaximum
+                    ? $"{current:0.#} M/S MOVEMENT SPEED"
+                    : $"{current:0.#} > {next:0.#} M/S MOVEMENT SPEED  (+{GetIncreasePercent(current, next):0.#}%)";
+            }
+            case PenExpansionManager.EquipmentUpgrade.RobotCapacity:
+            {
+                int current = EggCarryController.GetRobotCapacity(level);
+                int next = EggCarryController.GetRobotCapacity(nextLevel);
+                return atMaximum
+                    ? $"CARRIES {current} EGGS"
+                    : $"CARRIES {current} > {next} EGGS";
+            }
+            case PenExpansionManager.EquipmentUpgrade.RobotSmartness:
+                return GetRobotLogicDescription(nextLevel);
+            case PenExpansionManager.EquipmentUpgrade.RobotVacuum:
+            {
+                float current = EggCollectorRobot.GetVacuumRadius(level);
+                float next = EggCollectorRobot.GetVacuumRadius(nextLevel);
+                string currentText = level > 0 ? $"{current:0.#}M" : "OFF";
+                return atMaximum
+                    ? $"{currentText} EGG PICKUP RADIUS"
+                    : $"{currentText} > {next:0.#}M EGG PICKUP RADIUS";
+            }
+            case PenExpansionManager.EquipmentUpgrade.AutoFeederSpeed:
+                return FormatTimeUpgrade(
+                    AutoFeederController.GetDispenseInterval(level),
+                    AutoFeederController.GetDispenseInterval(nextLevel),
+                    "SECONDS PER FEED DROP",
+                    atMaximum);
+            case PenExpansionManager.EquipmentUpgrade.AutoFeederRange:
+            {
+                float current = AutoFeederController.GetAttractionRadiusBonus(level);
+                float next = AutoFeederController.GetAttractionRadiusBonus(nextLevel);
+                string currentText = level > 0 ? $"+{current:0.0}M" : "OFF";
+                return atMaximum
+                    ? $"{currentText} CHICKEN ATTRACTION RANGE"
+                    : $"{currentText} > +{next:0.0}M CHICKEN ATTRACTION RANGE";
+            }
+            default:
+                return $"LEVEL {level}";
+        }
+    }
+
+    private static string FormatTimeUpgrade(
+        float current,
+        float next,
+        string unit,
+        bool atMaximum)
+    {
+        if (atMaximum)
+        {
+            return $"{current:0.##} {unit}";
+        }
+
+        float faster = current > 0f
+            ? (current - next) / current * 100f
+            : 0f;
+        return $"{current:0.##} > {next:0.##} {unit}  ({faster:0.#}% FASTER)";
+    }
+
+    private static float GetIncreasePercent(float current, float next)
+    {
+        return current > 0f ? (next - current) / current * 100f : 0f;
+    }
+
+    private static string GetRobotLogicDescription(int level)
+    {
+        return level switch
+        {
+            1 => "ROUTE SURPLUS COMMON EGGS TO THE INCUBATOR",
+            2 => "KEEP THE INCUBATOR SUPPLIED FOR FLOCK GROWTH",
+            3 => "PRIORITISE HIGH-RARITY EGGS",
+            _ => "CARRY CHICKEN PAIRS TO THE CROSSHATCHER"
+        };
     }
 
     private bool HasAnyUpgrade(

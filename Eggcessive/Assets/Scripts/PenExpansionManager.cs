@@ -118,6 +118,22 @@ public sealed class PenExpansionManager : MonoBehaviour
         EquipmentUpgrade.AutoFeederRange
     };
 
+    private static readonly EquipmentUpgrade[] BonusEligibleUpgrades =
+    {
+        EquipmentUpgrade.IncubatorCapacity,
+        EquipmentUpgrade.IncubatorSpeed,
+        EquipmentUpgrade.CrosshatcherSpeed,
+        EquipmentUpgrade.CrosshatcherQuality,
+        EquipmentUpgrade.RobotSpeed,
+        EquipmentUpgrade.RobotCapacity,
+        EquipmentUpgrade.RobotSmartness,
+        EquipmentUpgrade.RobotVacuum,
+        EquipmentUpgrade.AutoFeederSpeed,
+        EquipmentUpgrade.AutoFeederRange
+    };
+
+    public static int MaximumBonusUpgradeCount => BonusEligibleUpgrades.Length;
+
     private sealed class PenSlot
     {
         public int costCents;
@@ -556,6 +572,25 @@ public sealed class PenExpansionManager : MonoBehaviour
     {
         return GetUpgradeLevel(penIndex, upgrade)
             >= GetMaximumUpgradeLevel(upgrade);
+    }
+
+    public int GetMaxedUpgradeCount(int penIndex)
+    {
+        if (!IsValidIndex(penIndex))
+        {
+            return 0;
+        }
+
+        int count = 0;
+        for (int index = 0; index < BonusEligibleUpgrades.Length; index++)
+        {
+            if (IsUpgradeMaxed(penIndex, BonusEligibleUpgrades[index]))
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     public int GetEquipmentPurchaseCost(EquipmentType type)

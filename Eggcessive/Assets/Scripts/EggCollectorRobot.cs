@@ -917,8 +917,8 @@ public sealed class EggCollectorRobot : MonoBehaviour
     {
         PenExpansionManager manager = PenExpansionManager.Instance;
         // Crosshatching consumes two chickens and produces one. Keep routing
-        // common eggs into the incubator until the pen has both a protected
-        // 80% flock and the two surplus parents needed for a new cycle.
+        // common eggs into the incubator until the previous cycle's net loss
+        // has been replaced and the pen is full again.
         return manager != null
             && manager.IsInitialized
             && targetPenIndex >= 0

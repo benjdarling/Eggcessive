@@ -189,13 +189,25 @@ public sealed class EggContainer : MonoBehaviour
         int value = CalculateSaleValueCents(
             valueCents,
             weightKilograms);
-        TotalDepositedCents = value > long.MaxValue - TotalDepositedCents
-            ? long.MaxValue
-            : TotalDepositedCents + value;
         PenExpansionManager penManager = PenExpansionManager.Instance;
         int penIndex = penManager != null
             ? penManager.GetPenIndex(this)
             : -1;
+        if (penIndex >= 0 && ProgressionSystem.Instance != null)
+        {
+            value = (int)Math.Min(
+                int.MaxValue,
+                Math.Max(
+                    1d,
+                    Math.Round(
+                        value * (double)ProgressionSystem.Instance
+                            .GetPenBonusMultiplier(penIndex),
+                        MidpointRounding.AwayFromZero)));
+        }
+
+        TotalDepositedCents = value > long.MaxValue - TotalDepositedCents
+            ? long.MaxValue
+            : TotalDepositedCents + value;
         bool isCurrentLocalPen = penIndex >= 0
             ? penIndex == penManager.FocusedPenIndex
             : isFocused;

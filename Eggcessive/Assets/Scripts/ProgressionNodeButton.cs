@@ -455,6 +455,8 @@ public sealed class ProgressionNodeButton : MonoBehaviour
                 $"EGG VALUE\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.TruckBonus =>
                 $"TRUCK BONUS\nTIER {targetLevel}",
+            ProgressionSystem.UpgradeId.PenBonus =>
+                $"PEN BONUS\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
                 $"CAPACITY\nTIER {targetLevel}",
             ProgressionSystem.UpgradeId.IncubatorSpeed =>

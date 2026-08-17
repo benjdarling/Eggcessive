@@ -3,7 +3,12 @@ guid: a7177af2bf371d74cbfdbf01423f35e1
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_atlas_opaque
+    second: {fileID: 2100000, guid: 639374d8fe1d2cd42bb1b1241b854e9f, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

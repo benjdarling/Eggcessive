@@ -19,12 +19,14 @@ public static class WorldHandCursorSetup
     private const float AuthoredVisualScale = 0.51213443f;
     private const string FingertipBoneName = "DEF-f_index.03.R";
     private const string PointStateName = "Point";
+    private const string PointPressStateName = "Point Press";
     private const string EggHoldStateName = "Egg Hold";
     private const string EggReadyStateName = "Egg Ready To Grab";
     private const string ChickenHoldStateName = "Chicken Hold";
     private const string ChickenReadyStateName =
         "Chicken Ready To Grab";
     private const string PointClipName = "point";
+    private const string PointPressClipName = "point_press";
     private const string EggHoldClipName = "eggHold";
     private const string EggReadyClipName = "eggReadyToGrab";
     private const string ChickenHoldClipName = "chickenHold";
@@ -91,6 +93,8 @@ public static class WorldHandCursorSetup
             AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
         AnimationClip pointClip = FindAnimationClip(PointClipName)
             ?? FindStateClip(animatorController, PointStateName);
+        AnimationClip pointPressClip = FindAnimationClip(PointPressClipName)
+            ?? FindStateClip(animatorController, PointPressStateName);
         AnimationClip eggHoldClip = FindAnimationClip(EggHoldClipName)
             ?? FindStateClip(animatorController, EggHoldStateName);
         AnimationClip eggReadyClip =
@@ -111,6 +115,7 @@ public static class WorldHandCursorSetup
 
         if (model == null
             || pointClip == null
+            || pointPressClip == null
             || eggHoldClip == null
             || eggReadyClip == null
             || chickenHoldClip == null
@@ -125,6 +130,7 @@ public static class WorldHandCursorSetup
                         model,
                         avatar,
                         pointClip,
+                        pointPressClip,
                         eggHoldClip,
                         eggReadyClip,
                         chickenHoldClip,
@@ -146,6 +152,10 @@ public static class WorldHandCursorSetup
             stateMachine,
             PointStateName,
             pointClip);
+        ConfigureAnimationState(
+            stateMachine,
+            PointPressStateName,
+            pointPressClip);
         ConfigureAnimationState(
             stateMachine,
             EggHoldStateName,
@@ -196,6 +206,7 @@ public static class WorldHandCursorSetup
         animator.runtimeAnimatorController = animatorController;
         animator.avatar = avatar;
         animator.applyRootMotion = false;
+        animator.updateMode = AnimatorUpdateMode.UnscaledTime;
         visual.transform.localScale =
             Vector3.one * AuthoredVisualScale;
         visual.transform.localRotation = Quaternion.Euler(0f, -30f, 0f);
@@ -363,6 +374,7 @@ public static class WorldHandCursorSetup
         GameObject model,
         Avatar avatar,
         AnimationClip pointClip,
+        AnimationClip pointPressClip,
         AnimationClip eggHoldClip,
         AnimationClip eggReadyClip,
         AnimationClip chickenHoldClip,
@@ -381,6 +393,11 @@ public static class WorldHandCursorSetup
         if (pointClip == null)
         {
             yield return PointClipName;
+        }
+
+        if (pointPressClip == null)
+        {
+            yield return PointPressClipName;
         }
 
         if (eggHoldClip == null)
@@ -443,6 +460,7 @@ public static class WorldHandCursorSetup
         string[] requiredClipNames =
         {
             PointClipName,
+            PointPressClipName,
             EggHoldClipName,
             EggReadyClipName,
             ChickenHoldClipName,
@@ -546,6 +564,7 @@ public static class WorldHandCursorSetup
             .Select(child => child.state)
             .ToArray();
         return HasStateMotion(states, PointStateName)
+            && HasStateMotion(states, PointPressStateName)
             && HasStateMotion(states, EggHoldStateName)
             && HasStateMotion(states, EggReadyStateName)
             && HasStateMotion(states, ChickenHoldStateName)

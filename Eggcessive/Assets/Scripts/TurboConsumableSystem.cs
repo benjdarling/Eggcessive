@@ -26,41 +26,30 @@ public static class TurboConsumableSystem
         5f, 10f, 15f, 20f, 25f, 30f
     };
 
-    private static readonly long[,] PurchaseCostsByTier =
+    private static readonly long[] PurchaseCostsByTier =
     {
-        {
-            2000L, 10000L, 50000L,
-            250000L, 1250000L, 6000000L
-        },
-        {
-            4000L, 20000L, 100000L,
-            500000L, 2500000L, 12000000L
-        },
-        {
-            8000L, 40000L, 200000L,
-            1000000L, 5000000L, 25000000L
-        }
+        2000L, 10000L, 50000L,
+        250000L, 1250000L, 6000000L
     };
 
-    private static readonly long[,] PowerUpgradeCosts =
+    private static readonly long[] PowerUpgradeCosts =
     {
-        { 1000000L, 7500000L, 60000000L, 500000000L, 5000000000L },
-        { 2500000L, 20000000L, 150000000L, 1200000000L, 12000000000L },
-        { 5000000L, 40000000L, 300000000L, 2500000000L, 25000000000L }
+        1000000L, 7500000L, 60000000L, 500000000L, 5000000000L
     };
 
-    private static readonly long[,] DurationUpgradeCosts =
+    private static readonly long[] DurationUpgradeCosts =
     {
-        { 800000L, 6000000L, 50000000L, 400000000L, 4000000000L },
-        { 2000000L, 15000000L, 120000000L, 1000000000L, 10000000000L },
-        { 4000000L, 30000000L, 250000000L, 2000000000L, 20000000000L }
+        800000L, 6000000L, 50000000L, 400000000L, 4000000000L
     };
 
-    private static readonly int[] Inventory = new int[3];
-    private static readonly int[] TotalPurchased = new int[3];
-    private static readonly int[] PowerLevels = new int[3];
-    private static readonly int[] DurationLevels = new int[3];
-    private static readonly double[] ActiveUntil = new double[3];
+    // TurboType remains in the public API so existing machine call sites and
+    // serialized upgrade ids stay compatible. All types now share one stock,
+    // upgrade track, and active timer.
+    private static int inventory;
+    private static int totalPurchased;
+    private static int powerLevel;
+    private static int durationLevel;
+    private static double activeUntil;
 
     public const int MaximumPowerLevel = 5;
     public const int MaximumDurationLevel = 5;
@@ -70,20 +59,18 @@ public static class TurboConsumableSystem
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
     {
-        Array.Clear(Inventory, 0, Inventory.Length);
-        Array.Clear(TotalPurchased, 0, TotalPurchased.Length);
-        Array.Clear(PowerLevels, 0, PowerLevels.Length);
-        Array.Clear(DurationLevels, 0, DurationLevels.Length);
-        Array.Clear(ActiveUntil, 0, ActiveUntil.Length);
+        inventory = 0;
+        totalPurchased = 0;
+        powerLevel = 0;
+        durationLevel = 0;
+        activeUntil = 0d;
         Changed = null;
     }
 
-    public static int GetInventory(TurboType type) => Inventory[(int)type];
-    public static int GetTotalPurchased(TurboType type) =>
-        TotalPurchased[(int)type];
-    public static int GetPowerLevel(TurboType type) => PowerLevels[(int)type];
-    public static int GetDurationLevel(TurboType type) =>
-        DurationLevels[(int)type];
+    public static int GetInventory(TurboType type) => inventory;
+    public static int GetTotalPurchased(TurboType type) => totalPurchased;
+    public static int GetPowerLevel(TurboType type) => powerLevel;
+    public static int GetDurationLevel(TurboType type) => durationLevel;
     public static float GetBoostPercent(TurboType type) =>
         BoostPercentByLevel[Mathf.Clamp(
             GetPowerLevel(type),
@@ -95,7 +82,7 @@ public static class TurboConsumableSystem
             0,
             MaximumDurationLevel)];
     public static float GetRemainingSeconds(TurboType type) =>
-        Mathf.Max(0f, (float)(ActiveUntil[(int)type]
+        Mathf.Max(0f, (float)(activeUntil
             - Time.realtimeSinceStartupAsDouble));
     public static bool IsActive(TurboType type) =>
         GetRemainingSeconds(type) > 0f;
@@ -105,7 +92,6 @@ public static class TurboConsumableSystem
         Mathf.Max(GetPowerLevel(type), GetDurationLevel(type));
     public static long GetPurchaseCost(TurboType type) =>
         PurchaseCostsByTier[
-            (int)type,
             Mathf.Clamp(GetConsumableTier(type), 0, MaximumPowerLevel)];
 
     public static long GetUpgradeCost(
@@ -122,15 +108,14 @@ public static class TurboConsumableSystem
         }
 
         return kind == UpgradeKind.Power
-            ? PowerUpgradeCosts[(int)type, currentLevel]
-            : DurationUpgradeCosts[(int)type, currentLevel];
+            ? PowerUpgradeCosts[currentLevel]
+            : DurationUpgradeCosts[currentLevel];
     }
 
     public static void AddConsumable(TurboType type)
     {
-        int index = (int)type;
-        Inventory[index]++;
-        TotalPurchased[index]++;
+        inventory++;
+        totalPurchased++;
         Changed?.Invoke();
     }
 
@@ -139,23 +124,27 @@ public static class TurboConsumableSystem
         UpgradeKind kind,
         out string message)
     {
-        int index = (int)type;
-        int[] levels = kind == UpgradeKind.Power
-            ? PowerLevels
-            : DurationLevels;
         int maximum = kind == UpgradeKind.Power
             ? MaximumPowerLevel
             : MaximumDurationLevel;
-        if (levels[index] >= maximum)
+        int level = kind == UpgradeKind.Power ? powerLevel : durationLevel;
+        if (level >= maximum)
         {
             message = $"{GetDisplayName(type)} turbo {kind.ToString().ToLowerInvariant()} is maxed";
             return false;
         }
 
-        levels[index]++;
+        if (kind == UpgradeKind.Power)
+        {
+            powerLevel++;
+        }
+        else
+        {
+            durationLevel++;
+        }
         message = kind == UpgradeKind.Power
-            ? $"{GetDisplayName(type)} turbo now boosts productivity by {GetBoostPercent(type):0}%"
-            : $"{GetDisplayName(type)} turbo now lasts {GetDurationSeconds(type):0} seconds";
+            ? $"Turbo now boosts all machines by {GetBoostPercent(type):0}%"
+            : $"Turbo now lasts {GetDurationSeconds(type):0} seconds";
         Changed?.Invoke();
         return true;
     }
@@ -171,60 +160,41 @@ public static class TurboConsumableSystem
 
         if (!HasApplicableMachine(type))
         {
-            message = $"Install a {GetDisplayName(type).ToLowerInvariant()} first";
+            message = "Install a machine first";
             return false;
         }
 
-        int index = (int)type;
-        if (Inventory[index] <= 0)
+        if (inventory <= 0)
         {
-            message = $"Buy a {GetDisplayName(type)} Turbo in the supplies shop";
+            message = "Buy a Turbo in the supplies shop";
             return false;
         }
 
-        Inventory[index]--;
+        inventory--;
         double now = Time.realtimeSinceStartupAsDouble;
-        ActiveUntil[index] = Math.Max(now, ActiveUntil[index])
+        activeUntil = Math.Max(now, activeUntil)
             + GetDurationSeconds(type);
-        message = $"{GetDisplayName(type)} Turbo: +{GetBoostPercent(type):0}% for {GetRemainingSeconds(type):0}s";
+        message = $"Turbo: all machines +{GetBoostPercent(type):0}% for {GetRemainingSeconds(type):0}s";
         Changed?.Invoke();
         return true;
     }
 
     public static bool HasApplicableMachine(TurboType type)
     {
-        return type switch
-        {
-            TurboType.Incubator =>
-                UnityEngine.Object.FindAnyObjectByType<IncubatorController>()
-                    != null,
-            TurboType.Crosshatcher =>
-                UnityEngine.Object.FindAnyObjectByType<CrosshatcherController>()
-                    != null,
-            TurboType.Robot => EggCollectorRobot.ActiveInstances.Count > 0,
-            _ => false
-        };
+        return UnityEngine.Object.FindAnyObjectByType<IncubatorController>()
+                != null
+            || UnityEngine.Object.FindAnyObjectByType<CrosshatcherController>()
+                != null
+            || EggCollectorRobot.ActiveInstances.Count > 0;
     }
 
     public static string GetDisplayName(TurboType type)
     {
-        return type switch
-        {
-            TurboType.Incubator => "Incubator",
-            TurboType.Crosshatcher => "Crosshatcher",
-            TurboType.Robot => "Robot",
-            _ => "Machine"
-        };
+        return "Universal";
     }
 
     public static string GetResourcePath(TurboType type)
     {
-        return type switch
-        {
-            TurboType.Incubator => "UI/TurboIcons/TurboIncubator",
-            TurboType.Crosshatcher => "UI/TurboIcons/TurboCrosshatcher",
-            TurboType.Robot => "UI/TurboIcons/TurboRobot",
-            _ => string.Empty
-        };
+        return "UI/TurboIcons/TurboIncubator";
     }
 }

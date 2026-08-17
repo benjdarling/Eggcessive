@@ -58,13 +58,12 @@ public sealed class CrosshatcherController : MonoBehaviour
     private int reservedChickenSlots;
 
     public const int MaximumLevel = 10;
-    private const float AutomaticCrosshatchProtectedPopulationRatio = 0.8f;
-    public static int MinimumFlockSizeForNewCycle => Mathf.Clamp(
-        Mathf.CeilToInt(
-            ChickenController.MaximumChickenCount
-                * AutomaticCrosshatchProtectedPopulationRatio) + 2,
-        4,
-        ChickenController.MaximumChickenCount);
+    // Automatic crosshatching is population-neutral only when the incubator
+    // replaces the chicken consumed by the previous cycle. Requiring a full
+    // flock before the robot starts another cycle keeps both machines in
+    // balance without slowing the player's purchased crosshatcher upgrades.
+    public static int MinimumFlockSizeForNewCycle =>
+        ChickenController.MaximumChickenCount;
     public int SpeedLevel => speedLevel;
     public int QualityLevel => qualityLevel;
     public float ProcessingTime => GetProcessingTime(speedLevel);
@@ -99,6 +98,41 @@ public sealed class CrosshatcherController : MonoBehaviour
                     : transform.position;
             return socketCenter - transform.forward * 0.65f;
         }
+    }
+
+    public int GetAvailableCarriedChickenTargets(Transform[] targets)
+    {
+        ClearStaleReservation();
+        if (targets == null
+            || targets.Length == 0
+            || !isActiveAndEnabled
+            || state == MachineState.Processing
+            || state == MachineState.ReadyToRelease)
+        {
+            return 0;
+        }
+
+        int availableCount = Mathf.Clamp(
+            2 - OccupiedSlots - reservedChickenSlots,
+            0,
+            targets.Length);
+        int resultCount = 0;
+
+        if (resultCount < availableCount
+            && chickenOne == null
+            && chickenStartOne != null)
+        {
+            targets[resultCount++] = chickenStartOne;
+        }
+
+        if (resultCount < availableCount
+            && chickenTwo == null
+            && chickenStartTwo != null)
+        {
+            targets[resultCount++] = chickenStartTwo;
+        }
+
+        return resultCount;
     }
 
     public bool TryGetLoadedBreed(

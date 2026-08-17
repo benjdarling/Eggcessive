@@ -75,6 +75,9 @@ public sealed class IncubatorController : MonoBehaviour
         + (CurrentLevel - 1) * nextTierHatchChancePerLevel);
     public Vector3 DepositPosition =>
         eggStart != null ? eggStart.position : transform.position;
+    public Transform EggDepositTarget => eggStart != null ? eggStart : transform;
+    public bool CanAcceptCarriedEgg =>
+        isActiveAndEnabled && AvailableCapacity > 0;
 
     private void Awake()
     {

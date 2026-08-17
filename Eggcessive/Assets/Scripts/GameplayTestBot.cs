@@ -433,24 +433,18 @@ public sealed class GameplayTestBot : MonoBehaviour
             && RoundSystem.Instance.TimeRemaining > 5f)
         {
             nextTurboUseTime = Time.unscaledTime + 0.6f;
-            for (int index = 0; index < 3; index++)
+            TurboConsumableSystem.TurboType type =
+                TurboConsumableSystem.TurboType.Incubator;
+            if (TurboConsumableSystem.GetInventory(type) > 0
+                && !TurboConsumableSystem.IsActive(type)
+                && TurboConsumableSystem.HasApplicableMachine(type))
             {
-                TurboConsumableSystem.TurboType type =
-                    (TurboConsumableSystem.TurboType)index;
-                if (TurboConsumableSystem.GetInventory(type) <= 0
-                    || TurboConsumableSystem.IsActive(type)
-                    || !TurboConsumableSystem.HasApplicableMachine(type))
-                {
-                    continue;
-                }
-
-                Button turboButton = FindNamedButton(
-                    $"{TurboConsumableSystem.GetDisplayName(type)} Turbo Button");
+                Button turboButton = FindNamedButton("Turbo Button");
                 if (IsUsable(turboButton))
                 {
                     yield return ClickButton(
                         turboButton,
-                        $"ROUND  .  USING {TurboConsumableSystem.GetDisplayName(type).ToUpperInvariant()} TURBO");
+                        "ROUND  .  USING TURBO");
                     yield break;
                 }
             }
@@ -1830,44 +1824,33 @@ public sealed class GameplayTestBot : MonoBehaviour
         int desiredTurboReserve = consecutiveFailedRounds > 0 ? 2 : 1;
         if (shopPurchaseCount < GetShopPurchaseLimit())
         {
-            ProgressionSystem.UpgradeId[] turboRoots =
+            TurboConsumableSystem.TurboType type =
+                TurboConsumableSystem.TurboType.Incubator;
+            if (TurboConsumableSystem.GetInventory(type)
+                    < desiredTurboReserve
+                && TurboConsumableSystem.HasApplicableMachine(type)
+                && !wantsAnotherPen)
             {
-                ProgressionSystem.UpgradeId.IncubatorTurbo,
-                ProgressionSystem.UpgradeId.CrosshatcherTurbo,
-                ProgressionSystem.UpgradeId.RobotTurbo
-            };
-            for (int index = 0; index < turboRoots.Length; index++)
-            {
-                TurboConsumableSystem.TurboType type =
-                    (TurboConsumableSystem.TurboType)index;
-                if (TurboConsumableSystem.GetInventory(type)
-                        >= desiredTurboReserve
-                    || !TurboConsumableSystem.HasApplicableMachine(type)
-                    || wantsAnotherPen)
-                {
-                    continue;
-                }
-
                 ProgressionNodeButton turboNode =
-                    FindAffordableProgressionNode(nodes, turboRoots[index]);
-                if (turboNode == null
-                    || !CanPurchaseWithoutUsingRecoveryReserve(turboNode)
-                    || !CanSpendPremiumTurboBudget(turboNode))
+                    FindAffordableProgressionNode(
+                        nodes,
+                        ProgressionSystem.UpgradeId.IncubatorTurbo);
+                if (turboNode != null
+                    && CanPurchaseWithoutUsingRecoveryReserve(turboNode)
+                    && CanSpendPremiumTurboBudget(turboNode))
                 {
-                    continue;
-                }
-
-                yield return ClickButton(
-                    turboNode.GetComponent<Button>(),
-                    $"SHOP  .  SELECTING {TurboConsumableSystem.GetDisplayName(type).ToUpperInvariant()} TURBO");
-                Button previewBuy = FindShopPreviewBuyButton();
-                if (IsUsable(previewBuy))
-                {
-                    shopPurchaseCount++;
                     yield return ClickButton(
-                        previewBuy,
-                        $"SHOP  .  BUYING {TurboConsumableSystem.GetDisplayName(type).ToUpperInvariant()} TURBO");
-                    yield break;
+                        turboNode.GetComponent<Button>(),
+                        "SHOP  .  SELECTING TURBO");
+                    Button previewBuy = FindShopPreviewBuyButton();
+                    if (IsUsable(previewBuy))
+                    {
+                        shopPurchaseCount++;
+                        yield return ClickButton(
+                            previewBuy,
+                            "SHOP  .  BUYING TURBO");
+                        yield break;
+                    }
                 }
             }
         }
@@ -2488,6 +2471,7 @@ public sealed class GameplayTestBot : MonoBehaviour
                 ProgressionSystem.UpgradeId.RobotSpeed => 850,
                 ProgressionSystem.UpgradeId.RobotSmartness => 825,
                 ProgressionSystem.UpgradeId.EggValue => 800,
+                ProgressionSystem.UpgradeId.PenBonus => 790,
                 ProgressionSystem.UpgradeId.TruckBonus => 775,
                 ProgressionSystem.UpgradeId.ChickenPerks => 765,
                 ProgressionSystem.UpgradeId.RareEggChance => 750,
@@ -2507,6 +2491,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         return upgradeId switch
         {
             ProgressionSystem.UpgradeId.EggValue => 1200,
+            ProgressionSystem.UpgradeId.PenBonus => 1180,
             ProgressionSystem.UpgradeId.FeedSpeed => 1175,
             ProgressionSystem.UpgradeId.EggWeight => 1125,
             ProgressionSystem.UpgradeId.TruckBonus => 1050,
@@ -5948,6 +5933,7 @@ public sealed class GameplayTestBot : MonoBehaviour
             case ProgressionSystem.UpgradeId.ChickenPerks:
             case ProgressionSystem.UpgradeId.EggWeight:
             case ProgressionSystem.UpgradeId.EggValue:
+            case ProgressionSystem.UpgradeId.PenBonus:
                 tabName = "FOOD Branch";
                 groupName = "Food Tree Group";
                 return true;

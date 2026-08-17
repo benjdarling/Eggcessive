@@ -262,6 +262,12 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                 continue;
             }
 
+            if (IsRetiredTurboId(source.UpgradeId))
+            {
+                RetireAuthoredNode(source);
+                continue;
+            }
+
             NodeKey key = new NodeKey(source.UpgradeId, source.TargetLevel);
             if (nodes.ContainsKey(key))
             {
@@ -316,8 +322,56 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             RetireAuthoredNode(source);
         }
 
+        BuildGeneratedPenBonusNodes(nodePrefab, iconAtlas);
+
         HideLegacyLayout();
         BuildStartNode(nodePrefab, iconAtlas);
+    }
+
+    private void BuildGeneratedPenBonusNodes(
+        GameObject nodePrefab,
+        Texture2D iconAtlas)
+    {
+        if (nodePrefab == null)
+        {
+            return;
+        }
+
+        Color color = GetBranchColor(ProgressionSystem.UpgradeId.PenBonus);
+        for (int tier = 1;
+             tier <= ProgressionSystem.MaximumPenBonusLevel;
+             tier++)
+        {
+            NodeKey key = new NodeKey(
+                ProgressionSystem.UpgradeId.PenBonus,
+                tier);
+            if (nodes.ContainsKey(key))
+            {
+                continue;
+            }
+
+            GameObject instance = Instantiate(nodePrefab, content, false);
+            instance.name = $"Graph Node PenBonus {tier}";
+            ProgressionNodeButton node =
+                instance.GetComponent<ProgressionNodeButton>();
+            if (node == null)
+            {
+                Destroy(instance);
+                continue;
+            }
+
+            node.SetUpgrade(ProgressionSystem.UpgradeId.PenBonus, tier);
+            node.SetVisualColor(color);
+            RectTransform rect = instance.transform as RectTransform;
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = GetNodePosition(
+                ProgressionSystem.UpgradeId.PenBonus,
+                tier);
+            rect.sizeDelta = new Vector2(64f, 64f);
+            ApplyCompactVisual(node, iconAtlas, color);
+            nodes.Add(key, node);
+        }
     }
 
     private static void RetireAuthoredNode(ProgressionNodeButton source)
@@ -441,14 +495,6 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             ProgressionSystem.UpgradeId.IncubatorTurboPower,
             ProgressionSystem.UpgradeId.IncubatorTurboDuration,
             made);
-        ConnectTurboUpgradeRails(
-            ProgressionSystem.UpgradeId.CrosshatcherTurboPower,
-            ProgressionSystem.UpgradeId.CrosshatcherTurboDuration,
-            made);
-        ConnectTurboUpgradeRails(
-            ProgressionSystem.UpgradeId.RobotTurboPower,
-            ProgressionSystem.UpgradeId.RobotTurboDuration,
-            made);
     }
 
     private void ConnectTurboUpgradeRails(
@@ -564,6 +610,8 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                 FindTierOrLast(ProgressionSystem.UpgradeId.RareEggChance, 8),
             ProgressionSystem.UpgradeId.TruckBonus =>
                 FindTierOrLast(ProgressionSystem.UpgradeId.EggValue, 2),
+            ProgressionSystem.UpgradeId.PenBonus =>
+                FindLast(ProgressionSystem.UpgradeId.EggValue),
             ProgressionSystem.UpgradeId.BasketReach =>
                 FindFirst(ProgressionSystem.UpgradeId.BasketCapacity),
             ProgressionSystem.UpgradeId.VacuumUnlock =>
@@ -574,12 +622,6 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             ProgressionSystem.UpgradeId.IncubatorTurboPower
                 or ProgressionSystem.UpgradeId.IncubatorTurboDuration =>
                 FindFirst(ProgressionSystem.UpgradeId.IncubatorTurbo),
-            ProgressionSystem.UpgradeId.CrosshatcherTurboPower
-                or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration =>
-                FindFirst(ProgressionSystem.UpgradeId.CrosshatcherTurbo),
-            ProgressionSystem.UpgradeId.RobotTurboPower
-                or ProgressionSystem.UpgradeId.RobotTurboDuration =>
-                FindFirst(ProgressionSystem.UpgradeId.RobotTurbo),
             _ => null
         };
     }
@@ -851,10 +893,17 @@ public sealed class SupplyShopGraphController : MonoBehaviour
 
     private static bool IsSidebarId(ProgressionSystem.UpgradeId id)
     {
-        return id is ProgressionSystem.UpgradeId.FoodBag
-            or ProgressionSystem.UpgradeId.IncubatorTurbo
-            or ProgressionSystem.UpgradeId.CrosshatcherTurbo
-            or ProgressionSystem.UpgradeId.RobotTurbo;
+        return id == ProgressionSystem.UpgradeId.FoodBag;
+    }
+
+    private static bool IsRetiredTurboId(ProgressionSystem.UpgradeId id)
+    {
+        return id is ProgressionSystem.UpgradeId.CrosshatcherTurbo
+            or ProgressionSystem.UpgradeId.CrosshatcherTurboPower
+            or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration
+            or ProgressionSystem.UpgradeId.RobotTurbo
+            or ProgressionSystem.UpgradeId.RobotTurboPower
+            or ProgressionSystem.UpgradeId.RobotTurboDuration;
     }
 
     private static int GetSidebarIndex(ProgressionSystem.UpgradeId id)
@@ -862,10 +911,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         return id switch
         {
             ProgressionSystem.UpgradeId.FoodBag => 0,
-            ProgressionSystem.UpgradeId.IncubatorTurbo => 1,
-            ProgressionSystem.UpgradeId.CrosshatcherTurbo => 2,
-            ProgressionSystem.UpgradeId.RobotTurbo => 3,
-            _ => 4
+            _ => 1
         };
     }
 
@@ -925,10 +971,14 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                     (-1f - Mathf.Max(0, tier - 2)) * s),
             ProgressionSystem.UpgradeId.TruckBonus =>
                 new Vector2((3f + step) * s, -5f * s),
+            ProgressionSystem.UpgradeId.PenBonus =>
+                new Vector2((18f + step) * s, -5f * s),
+            ProgressionSystem.UpgradeId.IncubatorTurbo =>
+                new Vector2(s, 3f * s),
             ProgressionSystem.UpgradeId.IncubatorTurboPower =>
-                new Vector2((-4f + step) * s, 6f * s),
+                new Vector2((2f + step) * s, 4f * s),
             ProgressionSystem.UpgradeId.IncubatorTurboDuration =>
-                new Vector2((-4f + step) * s, 5f * s),
+                new Vector2((2f + step) * s, 3f * s),
             ProgressionSystem.UpgradeId.CrosshatcherTurboPower =>
                 new Vector2((1f + step) * s, 6f * s),
             ProgressionSystem.UpgradeId.CrosshatcherTurboDuration =>
@@ -956,6 +1006,8 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                 new Color(0.82f, 0.65f, 0.16f, 1f),
             ProgressionSystem.UpgradeId.EggValue =>
                 new Color(0.24f, 0.67f, 0.34f, 1f),
+            ProgressionSystem.UpgradeId.PenBonus =>
+                new Color(0.1f, 0.74f, 0.62f, 1f),
             ProgressionSystem.UpgradeId.IncubatorTurbo
                 or ProgressionSystem.UpgradeId.IncubatorTurboPower
                 or ProgressionSystem.UpgradeId.IncubatorTurboDuration =>
@@ -982,7 +1034,8 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             ProgressionSystem.UpgradeId.RareEggChance
                 or ProgressionSystem.UpgradeId.ChickenPerks => 2,
             ProgressionSystem.UpgradeId.EggWeight
-                or ProgressionSystem.UpgradeId.EggValue => 3,
+                or ProgressionSystem.UpgradeId.EggValue
+                or ProgressionSystem.UpgradeId.PenBonus => 3,
             ProgressionSystem.UpgradeId.IncubatorTurbo
                 or ProgressionSystem.UpgradeId.IncubatorTurboPower
                 or ProgressionSystem.UpgradeId.IncubatorTurboDuration => 4,

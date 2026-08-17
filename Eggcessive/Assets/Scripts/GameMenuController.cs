@@ -35,7 +35,7 @@ public sealed class GameMenuController : MonoBehaviour
     private static readonly string[] GameplayTutorialTips =
     {
         "TIP: KEEP CHICKENS FED TO SPEED UP EGG PRODUCTION.",
-        "TIP: COLLECT EGGS AND LOAD THEM BEFORE THE ROUND ENDS.",
+        "TIP: WITH THE COLLECTION TOOL SELECTED, CLICK EGGS TO LOAD THE CONTAINER, THEN CLICK YOUR PEN'S EGG CONTAINER TO SELL THEM.",
         "TIP: FILLING A TRUCK EARNS A CASH BONUS AND SENDS A NEW ONE.",
         "TIP: USE INTERMISSIONS TO BUY UPGRADES AND SCALE THE FARM."
     };
@@ -930,6 +930,17 @@ public sealed class GameMenuController : MonoBehaviour
         eggcessiveButton.interactable = unlocked;
         eggcessiveButtonText.text = "EGGCESSIVE";
         eggcessiveLockText?.gameObject.SetActive(!unlocked);
+
+        if (unlocked)
+        {
+            // The authored locked layout raises the main label to make room
+            // for the lock note (Top = -20). Once unlocked, fill the button
+            // like the labels on the other main-menu buttons.
+            RectTransform labelRect = eggcessiveButtonText.rectTransform;
+            Vector2 offsetMax = labelRect.offsetMax;
+            offsetMax.y = 0f;
+            labelRect.offsetMax = offsetMax;
+        }
     }
 
     private void RefreshMainMenuSlogan()

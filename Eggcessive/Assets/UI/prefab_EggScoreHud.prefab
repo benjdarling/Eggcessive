@@ -148,20 +148,12 @@ MonoBehaviour:
   foodToolIcon: {fileID: 1406186621681476884}
   turboButtons:
   - {fileID: 4504256785915859920}
-  - {fileID: 1374684056898462387}
-  - {fileID: 4840401795361385227}
   turboButtonImages:
   - {fileID: 3534927140955577517}
-  - {fileID: 1942738536036393684}
-  - {fileID: 552114017503057104}
   turboCountTexts:
   - {fileID: 550322212964665110}
-  - {fileID: 931417456878335375}
-  - {fileID: 5688342453075513036}
   turboTimerTexts:
   - {fileID: 5432784586640225850}
-  - {fileID: 227205632742800394}
-  - {fileID: 8367016422789844304}
   foodPrefab: {fileID: 8383212348683401130, guid: 400e39df21e7cb344987172193139315, type: 3}
   foodCostCents: 200
   placementCamera: {fileID: 0}
@@ -774,7 +766,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &7151558428415126145
 RectTransform:
   m_ObjectHideFlags: 0
@@ -7585,7 +7577,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &6099385894481738287
 RectTransform:
   m_ObjectHideFlags: 0
@@ -15420,7 +15412,7 @@ GameObject:
   - component: {fileID: 6939898015192989417}
   - component: {fileID: 7604095709961700593}
   m_Layer: 5
-  m_Name: Incubator Turbo Button
+  m_Name: Turbo Button
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

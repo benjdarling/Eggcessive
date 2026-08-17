@@ -503,11 +503,11 @@ public sealed class ProgressionTreePreview : MonoBehaviour
             ProgressionSystem.UpgradeId.IncubatorTurbo
                 or ProgressionSystem.UpgradeId.CrosshatcherTurbo
                 or ProgressionSystem.UpgradeId.RobotTurbo =>
-                "Adds one instant-use machine turbo to your HUD inventory. Pressing it boosts every installed machine of that type.",
+                "Adds one instant-use turbo to your HUD inventory. Pressing it boosts every installed machine.",
             ProgressionSystem.UpgradeId.IncubatorTurboPower
                 or ProgressionSystem.UpgradeId.CrosshatcherTurboPower
                 or ProgressionSystem.UpgradeId.RobotTurboPower =>
-                "Raises the temporary productivity percentage supplied by this turbo.",
+                "Raises the temporary productivity boost supplied to every machine.",
             ProgressionSystem.UpgradeId.IncubatorTurboDuration
                 or ProgressionSystem.UpgradeId.CrosshatcherTurboDuration
                 or ProgressionSystem.UpgradeId.RobotTurboDuration =>
@@ -526,6 +526,8 @@ public sealed class ProgressionTreePreview : MonoBehaviour
                 "Multiplies the sale value of every egg type.",
             ProgressionSystem.UpgradeId.TruckBonus =>
                 "Increases the cash bonus paid whenever a truck is filled.",
+            ProgressionSystem.UpgradeId.PenBonus =>
+                "Boosts each pen's egg value from its own maxed local upgrades. Each additional maxed upgrade contributes more than the previous one.",
             ProgressionSystem.UpgradeId.IncubatorInstall =>
                 "Installs the incubator so deposited eggs can hatch new chickens.",
             ProgressionSystem.UpgradeId.IncubatorCapacity =>
