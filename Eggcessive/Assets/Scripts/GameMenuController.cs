@@ -21,6 +21,8 @@ public sealed class GameMenuController : MonoBehaviour
     private const string MainMenuBackgroundResource = "UI/menu_logo_bg";
     private const string MainMenuChickenResource = "UI/menu_logo_chicken";
     private const string MainMenuPrefabResource = "UI/prefab_MainMenu";
+    private const string RetirementPopupPrefabResource =
+        "UI/prefab_EggcessiveUnlocked";
     private const string MainMenuTitleResource = "UI/menu_logo_title";
     private const string MainMenuSlogansResource = "MenuSlogans";
     private const int EggcessiveUnlockRound = 100;
@@ -32,6 +34,8 @@ public sealed class GameMenuController : MonoBehaviour
     private static readonly Color MenuBackground = Color.black;
     private static readonly Color PauseBackground =
         new Color(0.025f, 0.02f, 0.018f, 0.9f);
+    private static readonly Color RetirementBackground =
+        new Color(0.025f, 0.02f, 0.018f, 0.58f);
     private static readonly string[] GameplayTutorialTips =
     {
         "TIP: KEEP CHICKENS FED TO SPEED UP EGG PRODUCTION.",
@@ -50,6 +54,8 @@ public sealed class GameMenuController : MonoBehaviour
     private GameObject pausePanel;
     private GameObject confirmationPanel;
     private GameObject retirementPanel;
+    private AudioSource retirementVictoryAudio;
+    private EggcessiveUnlockedPopupEffects retirementPopupEffects;
     private GameObject currentPanel;
     private GameObject optionsReturnPanel;
     private GameObject confirmationReturnPanel;
@@ -73,6 +79,11 @@ public sealed class GameMenuController : MonoBehaviour
     private bool retirementPromptShown;
     private bool showTutorialTips = true;
     private Coroutine gameplayTipsCoroutine;
+    private Coroutine mainMenuEntranceCoroutine;
+    private CanvasGroup mainMenuCanvasGroup;
+    private float mainMenuCanvasAlpha = 1f;
+    private bool mainMenuCanvasInteractable = true;
+    private bool mainMenuCanvasBlocksRaycasts = true;
     private RoundSystem pausedRoundSystem;
     private string[] mainMenuSlogans = Array.Empty<string>();
     private string currentMainMenuSlogan;
@@ -155,7 +166,22 @@ public sealed class GameMenuController : MonoBehaviour
         ApplyPauseToCurrentRoundSystem();
 
         Keyboard keyboard = Keyboard.current;
-        if (keyboard == null || !keyboard.escapeKey.wasPressedThisFrame)
+        if (keyboard == null)
+        {
+            return;
+        }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        if (keyboard.f10Key.wasPressedThisFrame
+            && RoundSystem.Instance != null
+            && currentPanel == null)
+        {
+            ShowRetirementPopup();
+            return;
+        }
+#endif
+
+        if (!keyboard.escapeKey.wasPressedThisFrame)
         {
             return;
         }
@@ -166,6 +192,7 @@ public sealed class GameMenuController : MonoBehaviour
             // is active. The placement controller consumes it this frame.
             if (!FoodShopController.IsPlacementActive)
             {
+                UiSoundController.PlayBack();
                 ShowPauseMenu();
             }
 
@@ -428,8 +455,7 @@ public sealed class GameMenuController : MonoBehaviour
             GetShowTipsToggleLabel(),
             35f,
             ToggleTutorialTips,
-            30f,
-            false);
+            30f);
         showTipsToggle.name = "SHOW TIPS Toggle";
         showTipsToggleText = showTipsToggle
             .GetComponentInChildren<TMP_Text>(true);
@@ -549,6 +575,69 @@ public sealed class GameMenuController : MonoBehaviour
 
     private GameObject BuildRetirementPanel()
     {
+        GameObject prefab = Resources.Load<GameObject>(
+            RetirementPopupPrefabResource);
+        if (prefab != null)
+        {
+            bool ownsCanvas = prefab.GetComponent<Canvas>() != null;
+            GameObject prefabPanel = Instantiate(
+                prefab,
+                ownsCanvas ? transform : overlayRoot.transform,
+                false);
+            prefabPanel.name = "Eggcessive Unlocked";
+            prefabPanel.SetActive(false);
+
+            if (!ownsCanvas)
+            {
+                StretchToParent(prefabPanel.GetComponent<RectTransform>());
+            }
+
+            if (TryBindRetirementPanelPrefab(prefabPanel))
+            {
+                return prefabPanel;
+            }
+
+            Debug.LogError(
+                "The editable Eggcessive-unlocked popup prefab is missing "
+                + "its RETIRE/CONTINUE buttons or victory AudioSource. "
+                + "Using the generated fallback popup instead.");
+            Destroy(prefabPanel);
+        }
+
+        return BuildGeneratedRetirementPanel();
+    }
+
+    private bool TryBindRetirementPanelPrefab(GameObject panel)
+    {
+        Button retireButton = FindMainMenuButton(
+            panel.transform,
+            "RETIRE Button");
+        Button continueButton = FindMainMenuButton(
+            panel.transform,
+            "CONTINUE Button");
+        retirementVictoryAudio = panel.GetComponent<AudioSource>();
+        retirementPopupEffects =
+            panel.GetComponent<EggcessiveUnlockedPopupEffects>();
+
+        if (retireButton == null
+            || continueButton == null
+            || retirementVictoryAudio == null
+            || retirementVictoryAudio.clip == null
+            || retirementPopupEffects == null
+            || !retirementPopupEffects.IsConfigured)
+        {
+            retirementVictoryAudio = null;
+            retirementPopupEffects = null;
+            return false;
+        }
+
+        BindMainMenuButton(retireButton, ReturnToMainMenu);
+        BindMainMenuButton(continueButton, ContinueAfterUnlock);
+        return true;
+    }
+
+    private GameObject BuildGeneratedRetirementPanel()
+    {
         GameObject panel = CreatePanel("Eggcessive Unlocked");
         CreateHeading(panel.transform, "EGGCESSIVE UNLOCKED", 76f, 285f);
         TMP_Text body = CreateText(
@@ -572,13 +661,14 @@ public sealed class GameMenuController : MonoBehaviour
     {
         GameObject badge = CreateUiObject("Eggcessive Mode Badge", parent);
         RectTransform rect = badge.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(1f, 1f);
-        rect.anchorMax = new Vector2(1f, 1f);
-        rect.pivot = new Vector2(1f, 1f);
-        rect.anchoredPosition = new Vector2(-26f, -24f);
-        rect.sizeDelta = new Vector2(360f, 52f);
+        rect.anchorMin = new Vector2(0.5f, 1f);
+        rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = new Vector2(0f, -24f);
+        rect.sizeDelta = new Vector2(320f, 52f);
         Image background = badge.AddComponent<Image>();
         background.color = new Color(0.12f, 0.055f, 0.02f, 0.88f);
+        background.raycastTarget = false;
         TMP_Text label = CreateText(
             "Label",
             badge.transform,
@@ -689,6 +779,99 @@ public sealed class GameMenuController : MonoBehaviour
         RefreshMainMenuSlogan();
         eggcessiveModeBadge?.SetActive(false);
         ShowPanel(mainPanel, false);
+        BeginMainMenuEntrance();
+    }
+
+    private void BeginMainMenuEntrance()
+    {
+        StopMainMenuEntrance();
+        if (mainPanel == null || !mainPanel.activeInHierarchy)
+        {
+            return;
+        }
+
+        mainMenuEntranceCoroutine = StartCoroutine(AnimateMainMenuEntrance());
+    }
+
+    private IEnumerator AnimateMainMenuEntrance()
+    {
+        mainMenuCanvasGroup = mainPanel.GetComponent<CanvasGroup>();
+        if (mainMenuCanvasGroup == null)
+        {
+            mainMenuCanvasGroup = mainPanel.AddComponent<CanvasGroup>();
+        }
+
+        mainMenuCanvasAlpha = mainMenuCanvasGroup.alpha;
+        mainMenuCanvasInteractable = mainMenuCanvasGroup.interactable;
+        mainMenuCanvasBlocksRaycasts = mainMenuCanvasGroup.blocksRaycasts;
+        mainMenuCanvasGroup.alpha = 0f;
+        mainMenuCanvasGroup.interactable = false;
+        mainMenuCanvasGroup.blocksRaycasts = false;
+
+        const float fadeDuration = 0.2f;
+        PlayMainMenuButtonEntrance(fadeDuration);
+
+        // Guarantee that the fully black starting pose reaches the renderer.
+        yield return null;
+
+        float elapsed = 0f;
+        while (elapsed < fadeDuration)
+        {
+            elapsed += Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+            float progress = Mathf.Clamp01(elapsed / fadeDuration);
+            mainMenuCanvasGroup.alpha = mainMenuCanvasAlpha
+                * Mathf.SmoothStep(0f, 1f, progress);
+            yield return null;
+        }
+
+        RestoreMainMenuCanvasGroup();
+        mainMenuEntranceCoroutine = null;
+    }
+
+    private void PlayMainMenuButtonEntrance(float initialDelay = 0f)
+    {
+        if (mainPanel == null || !mainPanel.activeInHierarchy)
+        {
+            return;
+        }
+
+        Canvas.ForceUpdateCanvases();
+        SpringMenuButton[] buttons =
+            mainPanel.GetComponentsInChildren<SpringMenuButton>(false);
+        Array.Sort(
+            buttons,
+            (left, right) => right.transform.position.y.CompareTo(
+                left.transform.position.y));
+        for (int index = 0; index < buttons.Length; index++)
+        {
+            float direction = (index & 1) == 0 ? -1f : 1f;
+            buttons[index].PlayEntrance(
+                initialDelay + index * 0.085f,
+                direction);
+        }
+    }
+
+    private void StopMainMenuEntrance()
+    {
+        if (mainMenuEntranceCoroutine != null)
+        {
+            StopCoroutine(mainMenuEntranceCoroutine);
+            mainMenuEntranceCoroutine = null;
+        }
+
+        RestoreMainMenuCanvasGroup();
+    }
+
+    private void RestoreMainMenuCanvasGroup()
+    {
+        if (mainMenuCanvasGroup == null)
+        {
+            return;
+        }
+
+        mainMenuCanvasGroup.alpha = mainMenuCanvasAlpha;
+        mainMenuCanvasGroup.interactable = mainMenuCanvasInteractable;
+        mainMenuCanvasGroup.blocksRaycasts = mainMenuCanvasBlocksRaycasts;
     }
 
     private void ShowPauseMenu()
@@ -719,6 +902,11 @@ public sealed class GameMenuController : MonoBehaviour
             return;
         }
 
+        if (panel != mainPanel)
+        {
+            StopMainMenuEntrance();
+        }
+
         overlayRoot.SetActive(true);
         overlayBackground.color = pauseStyle ? PauseBackground : MenuBackground;
         gameplayTipBanner?.SetActive(false);
@@ -739,11 +927,13 @@ public sealed class GameMenuController : MonoBehaviour
     {
         IsEggcessiveMode = eggcessiveMode && IsEggcessiveUnlocked;
         retirementPromptShown = IsEggcessiveUnlocked;
+        RoundSystem.Instance?.SetEggcessiveHudLayout(IsEggcessiveMode);
         mainPanel?.SetActive(false);
         overlayRoot.SetActive(false);
         currentPanel = null;
         eggcessiveModeBadge.SetActive(IsEggcessiveMode);
         SetGameplaySuspended(false);
+        RoundSystem.Instance?.ReplayActivePopupIntro();
         StartGameplayTips();
     }
 
@@ -759,19 +949,23 @@ public sealed class GameMenuController : MonoBehaviour
     {
         if (currentPanel == pausePanel)
         {
+            UiSoundController.PlayBack();
             ResumeGameplay();
         }
         else if (currentPanel == optionsPanel)
         {
+            UiSoundController.PlayBack();
             ReturnFromOptions();
         }
         else if (currentPanel == leaderboardsPanel
             || currentPanel == playChoicePanel)
         {
+            UiSoundController.PlayBack();
             ShowMainMenu();
         }
         else if (currentPanel == confirmationPanel)
         {
+            UiSoundController.PlayBack();
             CancelConfirmation();
         }
     }
@@ -849,6 +1043,7 @@ public sealed class GameMenuController : MonoBehaviour
     private void ContinueAfterUnlock()
     {
         mainPanel?.SetActive(false);
+        retirementPanel?.SetActive(false);
         overlayRoot.SetActive(false);
         currentPanel = null;
         SetGameplaySuspended(false);
@@ -916,8 +1111,49 @@ public sealed class GameMenuController : MonoBehaviour
         PlayerPrefs.SetInt(EggcessiveUnlockedKey, 1);
         PlayerPrefs.Save();
         RefreshEggcessiveButton();
-        ShowPanel(retirementPanel, true);
+        ShowRetirementPopup();
     }
+
+    private void ShowRetirementPopup(
+        EggcessiveUnlockedPopupEffects previewSettings = null)
+    {
+        ShowPanel(retirementPanel, true);
+        overlayBackground.color = RetirementBackground;
+        if (retirementVictoryAudio != null)
+        {
+            retirementVictoryAudio.ignoreListenerPause = true;
+            retirementVictoryAudio.Stop();
+            retirementVictoryAudio.Play();
+        }
+
+        if (previewSettings != null)
+        {
+            retirementPopupEffects?.PlayConfetti(previewSettings);
+        }
+        else
+        {
+            retirementPopupEffects?.PlayConfetti();
+        }
+    }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+    public void DebugPreviewRetirementPopup(
+        EggcessiveUnlockedPopupEffects previewSettings)
+    {
+        ShowRetirementPopup(previewSettings);
+    }
+
+    public void DebugReplayRetirementConfetti(
+        EggcessiveUnlockedPopupEffects previewSettings)
+    {
+        retirementPopupEffects?.PlayConfetti(previewSettings);
+    }
+
+    public void DebugStopRetirementConfetti()
+    {
+        retirementPopupEffects?.StopConfetti();
+    }
+#endif
 
     private void RefreshEggcessiveButton()
     {
@@ -930,6 +1166,22 @@ public sealed class GameMenuController : MonoBehaviour
         eggcessiveButton.interactable = unlocked;
         eggcessiveButtonText.text = "EGGCESSIVE";
         eggcessiveLockText?.gameObject.SetActive(!unlocked);
+
+        FontStyles restingStyle = FontStyles.Bold;
+        if (!unlocked)
+        {
+            restingStyle |= FontStyles.Strikethrough;
+        }
+
+        if (eggcessiveButton.TryGetComponent(
+                out SpringMenuButton springButton))
+        {
+            springButton.SetRestingFontStyle(restingStyle);
+        }
+        else
+        {
+            eggcessiveButtonText.fontStyle = restingStyle;
+        }
 
         if (unlocked)
         {
@@ -1057,9 +1309,16 @@ public sealed class GameMenuController : MonoBehaviour
     {
         GameObject buttonObject = CreateUiObject(label + " Button", parent);
         RectTransform rect = buttonObject.GetComponent<RectTransform>();
-        SetCenteredRect(rect, new Vector2(0f, y), new Vector2(900f, 76f));
+        float buttonWidth = Mathf.Clamp(
+            label.Length * fontSize * 0.62f + 96f,
+            240f,
+            700f);
+        SetCenteredRect(
+            rect,
+            new Vector2(0f, y),
+            new Vector2(buttonWidth, 76f));
         Image image = buttonObject.AddComponent<Image>();
-        image.color = new Color(0.22f, 0.14f, 0.055f, 0.001f);
+        image.color = EggYellow;
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
         button.navigation = new Navigation { mode = Navigation.Mode.Automatic };
@@ -1078,7 +1337,7 @@ public sealed class GameMenuController : MonoBehaviour
             fontSize,
             Vector2.zero,
             rect.sizeDelta,
-            EggYellow,
+            new Color(0.055f, 0.04f, 0.012f, 1f),
             FontStyles.Bold);
         StretchToParent(text.rectTransform);
         if (useSpringAnimation)
@@ -1240,19 +1499,53 @@ internal sealed class SpringMenuButton : MonoBehaviour,
     private const float PressDampingRatio = 0.82f;
     private const float PressHoldDuration = 0.085f;
     private const float PressReleaseDuration = 0.035f;
+    private const float EntranceDuration = 0.48f;
+    private const float MinimumHoverRotation = 1.1f;
+    private const float MaximumHoverRotation = 2.8f;
 
-    private static readonly Color IdleColor =
+    private static readonly Color DefaultIdleBackgroundColor =
         new Color(1f, 0.78f, 0.2f, 1f);
-    private static readonly Color DisabledColor =
-        new Color(0.47f, 0.43f, 0.38f, 1f);
+    private static readonly Color DefaultHoverBackgroundColor =
+        new Color(1f, 0.86f, 0.31f, 1f);
+    private static readonly Color DefaultPressedBackgroundColor =
+        new Color(0.88f, 0.62f, 0.1f, 1f);
+    private static readonly Color DefaultDisabledBackgroundColor =
+        new Color(0.45f, 0.38f, 0.22f, 0.82f);
+    private static readonly Color DefaultIdleTextColor =
+        new Color(0.055f, 0.04f, 0.012f, 1f);
+    private static readonly Color DefaultHoverTextColor =
+        new Color(0.32f, 0.21f, 0.015f, 1f);
+    private static readonly Color DefaultDisabledTextColor =
+        new Color(0.16f, 0.14f, 0.1f, 1f);
 
     private Button button;
     private TMP_Text label;
+    private Image background;
     private UnityEngine.Events.UnityAction action;
     private SpringUtils.FloatSpring scaleSpring =
         new SpringUtils.FloatSpring(RestScale);
+    private SpringUtils.FloatSpring rotationSpring =
+        new SpringUtils.FloatSpring(0f);
+    private Quaternion restingLocalRotation;
+    private float hoverRotation;
+    private Color idleBackgroundColor = DefaultIdleBackgroundColor;
+    private Color hoverBackgroundColor = DefaultHoverBackgroundColor;
+    private Color pressedBackgroundColor = DefaultPressedBackgroundColor;
+    private Color disabledBackgroundColor = DefaultDisabledBackgroundColor;
+    private Color idleTextColor = DefaultIdleTextColor;
+    private Color hoverTextColor = DefaultHoverTextColor;
+    private Color disabledTextColor = DefaultDisabledTextColor;
     private FontStyles restingFontStyle = FontStyles.Bold;
     private Coroutine pressSequence;
+    private CanvasGroup entranceCanvasGroup;
+    private float entranceDelayRemaining;
+    private float entranceElapsed;
+    private float entranceDirection = 1f;
+    private int entranceHoldFrames;
+    private float entranceOriginalAlpha = 1f;
+    private bool entranceOriginalInteractable = true;
+    private bool entranceOriginalBlocksRaycasts = true;
+    private bool entranceAnimating;
     private bool isHovered;
     private bool isSelected;
     private bool selectedByPointer;
@@ -1260,33 +1553,130 @@ internal sealed class SpringMenuButton : MonoBehaviour,
     private bool isPressAnimating;
     private bool previousInteractable;
 
+    private void Awake()
+    {
+        restingLocalRotation = transform.localRotation;
+    }
+
     public void Initialize(
         Button targetButton,
         TMP_Text targetLabel,
-        UnityEngine.Events.UnityAction clickAction)
+        UnityEngine.Events.UnityAction clickAction,
+        bool fitWidthToLabel = true)
     {
         button = targetButton;
         label = targetLabel;
+        background = button != null
+            ? button.targetGraphic as Image
+                ?? button.GetComponent<Image>()
+            : null;
         action = clickAction;
         restingFontStyle = label != null
             ? label.fontStyle
             : FontStyles.Bold;
         previousInteractable = button != null && button.interactable;
-        button?.onClick.AddListener(HandleClicked);
-        RefreshTextStyle();
+        if (button != null)
+        {
+            button.transition = Selectable.Transition.None;
+            ResetBackgroundTint();
+        }
+
+        if (fitWidthToLabel
+            && label != null
+            && button != null
+            && button.TryGetComponent(out RectTransform fittedRect))
+        {
+            float fittedWidth = Mathf.Clamp(
+                label.text.Length * label.fontSize * 0.62f + 96f,
+                240f,
+                700f);
+            fittedRect.SetSizeWithCurrentAnchors(
+                RectTransform.Axis.Horizontal,
+                fittedWidth);
+        }
+
+        if (action != null)
+        {
+            button?.onClick.AddListener(HandleClicked);
+        }
+
+        RefreshVisualStyle();
+    }
+
+    public void PlayEntrance(float delay, float rotationDirection)
+    {
+        CancelEntrance();
+        if (!isActiveAndEnabled)
+        {
+            return;
+        }
+
+        entranceCanvasGroup = GetComponent<CanvasGroup>();
+        if (entranceCanvasGroup == null)
+        {
+            entranceCanvasGroup = gameObject.AddComponent<CanvasGroup>();
+        }
+
+        entranceOriginalAlpha = entranceCanvasGroup.alpha;
+        entranceOriginalInteractable = entranceCanvasGroup.interactable;
+        entranceOriginalBlocksRaycasts = entranceCanvasGroup.blocksRaycasts;
+        entranceCanvasGroup.alpha = 0f;
+        entranceCanvasGroup.interactable = false;
+        entranceCanvasGroup.blocksRaycasts = false;
+        entranceDelayRemaining = Mathf.Max(0f, delay);
+        entranceElapsed = 0f;
+        entranceHoldFrames = 1;
+        entranceDirection = Mathf.Sign(rotationDirection);
+        if (Mathf.Approximately(entranceDirection, 0f))
+        {
+            entranceDirection = 1f;
+        }
+
+        entranceAnimating = true;
+        scaleSpring.Reset(RestScale);
+        rotationSpring.Reset(0f);
+        ApplyEntrancePose(0f, out _, out _);
+    }
+
+    public void SetColorPalette(
+        Color idleBackground,
+        Color hoverBackground,
+        Color pressedBackground,
+        Color disabledBackground,
+        Color idleText,
+        Color hoverText,
+        Color disabledText)
+    {
+        idleBackgroundColor = idleBackground;
+        hoverBackgroundColor = hoverBackground;
+        pressedBackgroundColor = pressedBackground;
+        disabledBackgroundColor = disabledBackground;
+        idleTextColor = idleText;
+        hoverTextColor = hoverText;
+        disabledTextColor = disabledText;
+        RefreshVisualStyle();
+    }
+
+    public void SetRestingFontStyle(FontStyles fontStyle)
+    {
+        restingFontStyle = fontStyle;
+        RefreshVisualStyle();
     }
 
     private void OnEnable()
     {
         scaleSpring.Reset(RestScale);
+        rotationSpring.Reset(0f);
         transform.localScale = Vector3.one;
+        transform.localRotation = restingLocalRotation;
+        hoverRotation = 0f;
         isHovered = false;
         isSelected = false;
         selectedByPointer = false;
         isPointerDown = false;
         isPressAnimating = false;
         previousInteractable = button != null && button.interactable;
-        RefreshTextStyle();
+        RefreshVisualStyle();
     }
 
     private void OnDisable()
@@ -1297,19 +1687,27 @@ internal sealed class SpringMenuButton : MonoBehaviour,
             pressSequence = null;
         }
 
+        CancelEntrance();
+
         scaleSpring.Reset(RestScale);
+        rotationSpring.Reset(0f);
         transform.localScale = Vector3.one;
+        transform.localRotation = restingLocalRotation;
+        hoverRotation = 0f;
         isHovered = false;
         isSelected = false;
         selectedByPointer = false;
         isPointerDown = false;
         isPressAnimating = false;
-        RefreshTextStyle();
+        RefreshVisualStyle();
     }
 
     private void OnDestroy()
     {
-        button?.onClick.RemoveListener(HandleClicked);
+        if (action != null)
+        {
+            button?.onClick.RemoveListener(HandleClicked);
+        }
     }
 
     private void LateUpdate()
@@ -1318,7 +1716,7 @@ internal sealed class SpringMenuButton : MonoBehaviour,
         if (interactable != previousInteractable)
         {
             previousInteractable = interactable;
-            RefreshTextStyle();
+            RefreshVisualStyle();
         }
 
         bool pressing = interactable
@@ -1340,7 +1738,112 @@ internal sealed class SpringMenuButton : MonoBehaviour,
             damping);
         scaleSpring.Update(target, 0f, deltaTime, motion);
         scaleSpring.ClampValue(0.8f, 1.24f);
-        transform.localScale = Vector3.one * scaleSpring.Value;
+
+        float rotationTarget = interactable && isHovered
+            ? hoverRotation
+            : 0f;
+        rotationSpring.Update(rotationTarget, 0f, deltaTime, motion);
+        rotationSpring.ClampValue(-4f, 4f);
+        UpdateEntrancePose(
+            Time.unscaledDeltaTime,
+            out float entranceScale,
+            out float entranceRotation);
+        transform.localScale = Vector3.one
+            * (scaleSpring.Value * entranceScale);
+        transform.localRotation = restingLocalRotation
+            * Quaternion.Euler(
+                0f,
+                0f,
+                rotationSpring.Value + entranceRotation);
+        RefreshVisualStyle();
+    }
+
+    private void UpdateEntrancePose(
+        float deltaTime,
+        out float scale,
+        out float rotation)
+    {
+        if (!entranceAnimating)
+        {
+            scale = 1f;
+            rotation = 0f;
+            return;
+        }
+
+        if (entranceHoldFrames > 0)
+        {
+            entranceHoldFrames--;
+            ApplyEntrancePose(0f, out scale, out rotation);
+            return;
+        }
+
+        // Editor startup and scene activation can produce a very large first
+        // unscaled delta. Do not let that skip an entrance before it renders.
+        deltaTime = Mathf.Min(deltaTime, 1f / 30f);
+
+        if (entranceDelayRemaining > 0f)
+        {
+            entranceDelayRemaining -= deltaTime;
+            ApplyEntrancePose(0f, out scale, out rotation);
+            return;
+        }
+
+        entranceElapsed += deltaTime;
+        float progress = Mathf.Clamp01(entranceElapsed / EntranceDuration);
+        ApplyEntrancePose(progress, out scale, out rotation);
+        if (progress >= 1f)
+        {
+            FinishEntrance();
+            scale = 1f;
+            rotation = 0f;
+        }
+    }
+
+    private void ApplyEntrancePose(
+        float progress,
+        out float scale,
+        out float rotation)
+    {
+        float decay = Mathf.Exp(-6.8f * progress);
+        scale = 1f - 0.38f * decay * Mathf.Cos(progress * 13f);
+        rotation = entranceDirection
+            * 9f
+            * decay
+            * Mathf.Cos(progress * 15f);
+        if (entranceCanvasGroup != null)
+        {
+            entranceCanvasGroup.alpha = entranceOriginalAlpha
+                * Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(progress / 0.38f));
+        }
+    }
+
+    private void FinishEntrance()
+    {
+        entranceAnimating = false;
+        entranceDelayRemaining = 0f;
+        entranceElapsed = 0f;
+        entranceHoldFrames = 0;
+        if (entranceCanvasGroup != null)
+        {
+            entranceCanvasGroup.alpha = entranceOriginalAlpha;
+            entranceCanvasGroup.interactable = entranceOriginalInteractable;
+            entranceCanvasGroup.blocksRaycasts = entranceOriginalBlocksRaycasts;
+        }
+    }
+
+    private void CancelEntrance()
+    {
+        if (!entranceAnimating)
+        {
+            return;
+        }
+
+        FinishEntrance();
+        transform.localScale = Vector3.one;
+        transform.localRotation = restingLocalRotation;
     }
 
     public void OnPointerEnter(PointerEventData _)
@@ -1351,16 +1854,22 @@ internal sealed class SpringMenuButton : MonoBehaviour,
         }
 
         isHovered = true;
+        float direction = UnityEngine.Random.value < 0.5f ? -1f : 1f;
+        hoverRotation = direction * UnityEngine.Random.Range(
+            MinimumHoverRotation,
+            MaximumHoverRotation);
         scaleSpring.AddImpulse(0.55f);
-        RefreshTextStyle();
+        rotationSpring.AddImpulse(direction * 5f);
+        RefreshVisualStyle();
     }
 
     public void OnPointerExit(PointerEventData _)
     {
         isHovered = false;
+        hoverRotation = 0f;
         isPointerDown = false;
         ClearPointerSelection();
-        RefreshTextStyle();
+        RefreshVisualStyle();
     }
 
     public void OnPointerDown(PointerEventData _)
@@ -1369,6 +1878,7 @@ internal sealed class SpringMenuButton : MonoBehaviour,
         {
             selectedByPointer = true;
             isPointerDown = true;
+            RefreshVisualStyle();
         }
     }
 
@@ -1380,20 +1890,21 @@ internal sealed class SpringMenuButton : MonoBehaviour,
             ClearPointerSelection();
         }
 
-        RefreshTextStyle();
+        RefreshVisualStyle();
     }
 
     public void OnSelect(BaseEventData _)
     {
         isSelected = true;
-        RefreshTextStyle();
+        RefreshVisualStyle();
     }
 
     public void OnDeselect(BaseEventData _)
     {
         isSelected = false;
         selectedByPointer = false;
-        RefreshTextStyle();
+        hoverRotation = 0f;
+        RefreshVisualStyle();
     }
 
     private void HandleClicked()
@@ -1431,20 +1942,46 @@ internal sealed class SpringMenuButton : MonoBehaviour,
         action?.Invoke();
     }
 
-    private void RefreshTextStyle()
+    private void RefreshVisualStyle()
     {
-        if (label == null)
+        if (label == null && background == null)
         {
             return;
         }
 
+        ResetBackgroundTint();
+
         bool interactable = button != null && button.interactable;
         bool highlighted = interactable && (isHovered || isSelected);
-        label.color = interactable
-            ? highlighted ? Color.white : IdleColor
-            : DisabledColor;
-        label.fontStyle = highlighted
-            ? restingFontStyle | FontStyles.Underline
-            : restingFontStyle;
+        bool pressed = interactable && (isPointerDown || isPressAnimating);
+
+        if (background != null)
+        {
+            background.color = !interactable
+                ? disabledBackgroundColor
+                : pressed
+                    ? pressedBackgroundColor
+                    : highlighted
+                        ? hoverBackgroundColor
+                        : idleBackgroundColor;
+        }
+
+        if (label != null)
+        {
+            label.color = !interactable
+                ? disabledTextColor
+                : highlighted
+                    ? hoverTextColor
+                    : idleTextColor;
+            label.fontStyle = restingFontStyle;
+        }
+    }
+
+    private void ResetBackgroundTint()
+    {
+        if (background != null)
+        {
+            background.canvasRenderer.SetColor(Color.white);
+        }
     }
 }

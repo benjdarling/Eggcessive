@@ -27,6 +27,8 @@ public sealed class WorldHandCursorController : MonoBehaviour
         Animator.StringToHash("Base Layer.Egg Hold");
     private static readonly int EggReadyPoseState =
         Animator.StringToHash("Base Layer.Egg Ready To Grab");
+    private static readonly int EggReleasePoseState =
+        Animator.StringToHash("Base Layer.Egg Release");
     private static readonly int ChickenHoldPoseState =
         Animator.StringToHash("Base Layer.Chicken Hold");
     private static readonly int ChickenReadyPoseState =
@@ -154,6 +156,7 @@ public sealed class WorldHandCursorController : MonoBehaviour
     private bool worldDepthSortingActive;
     private bool menuCursorDepthLocked;
     private float menuCursorCameraDepth;
+    private float eggReleaseEndTime;
 
 #if UNITY_EDITOR
     private bool editorSceneInspectionActive;
@@ -177,6 +180,11 @@ public sealed class WorldHandCursorController : MonoBehaviour
 
         position = instance.heldItemAttachPoint.position;
         return true;
+    }
+
+    public static void PlayEggReleaseAnimation()
+    {
+        instance?.BeginEggReleaseAnimation();
     }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -1228,6 +1236,12 @@ public sealed class WorldHandCursorController : MonoBehaviour
 
     private void UpdateHandPose()
     {
+        if (Time.unscaledTime < eggReleaseEndTime)
+        {
+            SetHandPose(EggReleasePoseState, false);
+            return;
+        }
+
         EggCarryController carryController =
             EggCarryController.Instance;
         int desiredPose = PointPoseState;
@@ -1262,6 +1276,39 @@ public sealed class WorldHandCursorController : MonoBehaviour
         }
 
         SetHandPose(desiredPose, false);
+    }
+
+    private void BeginEggReleaseAnimation()
+    {
+        if (handAnimator == null
+            || !handAnimator.HasState(0, EggReleasePoseState))
+        {
+            return;
+        }
+
+        eggReleaseEndTime = Time.unscaledTime + GetEggReleaseDuration();
+        SetHandPose(EggReleasePoseState, true);
+    }
+
+    private float GetEggReleaseDuration()
+    {
+        if (handAnimator != null
+            && handAnimator.runtimeAnimatorController != null)
+        {
+            AnimationClip[] clips =
+                handAnimator.runtimeAnimatorController.animationClips;
+
+            for (int index = 0; index < clips.Length; index++)
+            {
+                AnimationClip clip = clips[index];
+                if (clip != null && clip.name.EndsWith("eggRelease"))
+                {
+                    return Mathf.Max(0.01f, clip.length);
+                }
+            }
+        }
+
+        return 0.17f;
     }
 
     private void SetHandPose(int stateHash, bool immediate)

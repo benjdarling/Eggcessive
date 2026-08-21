@@ -22,6 +22,7 @@ public static class WorldHandCursorSetup
     private const string PointPressStateName = "Point Press";
     private const string EggHoldStateName = "Egg Hold";
     private const string EggReadyStateName = "Egg Ready To Grab";
+    private const string EggReleaseStateName = "Egg Release";
     private const string ChickenHoldStateName = "Chicken Hold";
     private const string ChickenReadyStateName =
         "Chicken Ready To Grab";
@@ -29,6 +30,7 @@ public static class WorldHandCursorSetup
     private const string PointPressClipName = "point_press";
     private const string EggHoldClipName = "eggHold";
     private const string EggReadyClipName = "eggReadyToGrab";
+    private const string EggReleaseClipName = "eggRelease";
     private const string ChickenHoldClipName = "chickenHold";
     private const string ChickenReadyClipName =
         "chickenReadyToGrab";
@@ -100,6 +102,9 @@ public static class WorldHandCursorSetup
         AnimationClip eggReadyClip =
             FindAnimationClip(EggReadyClipName)
             ?? FindStateClip(animatorController, EggReadyStateName);
+        AnimationClip eggReleaseClip =
+            FindAnimationClip(EggReleaseClipName)
+            ?? FindStateClip(animatorController, EggReleaseStateName);
         AnimationClip chickenHoldClip =
             FindAnimationClip(ChickenHoldClipName)
             ?? FindStateClip(animatorController, ChickenHoldStateName);
@@ -118,6 +123,7 @@ public static class WorldHandCursorSetup
             || pointPressClip == null
             || eggHoldClip == null
             || eggReadyClip == null
+            || eggReleaseClip == null
             || chickenHoldClip == null
             || chickenReadyClip == null
             || avatar == null)
@@ -133,6 +139,7 @@ public static class WorldHandCursorSetup
                         pointPressClip,
                         eggHoldClip,
                         eggReadyClip,
+                        eggReleaseClip,
                         chickenHoldClip,
                         chickenReadyClip))
                 + ".");
@@ -164,6 +171,10 @@ public static class WorldHandCursorSetup
             stateMachine,
             EggReadyStateName,
             eggReadyClip);
+        ConfigureAnimationState(
+            stateMachine,
+            EggReleaseStateName,
+            eggReleaseClip);
         ConfigureAnimationState(
             stateMachine,
             ChickenHoldStateName,
@@ -377,6 +388,7 @@ public static class WorldHandCursorSetup
         AnimationClip pointPressClip,
         AnimationClip eggHoldClip,
         AnimationClip eggReadyClip,
+        AnimationClip eggReleaseClip,
         AnimationClip chickenHoldClip,
         AnimationClip chickenReadyClip)
     {
@@ -408,6 +420,11 @@ public static class WorldHandCursorSetup
         if (eggReadyClip == null)
         {
             yield return EggReadyClipName;
+        }
+
+        if (eggReleaseClip == null)
+        {
+            yield return EggReleaseClipName;
         }
 
         if (chickenHoldClip == null)
@@ -463,6 +480,7 @@ public static class WorldHandCursorSetup
             PointPressClipName,
             EggHoldClipName,
             EggReadyClipName,
+            EggReleaseClipName,
             ChickenHoldClipName,
             ChickenReadyClipName
         };
@@ -498,7 +516,9 @@ public static class WorldHandCursorSetup
                 || clip.loopTime
                 || clip.wrapMode != WrapMode.ClampForever)
             {
-                clip.lastFrame = requiredLastFrame;
+                clip.lastFrame = Mathf.Max(
+                    clip.lastFrame,
+                    requiredLastFrame);
                 clip.loopTime = false;
                 clip.wrapMode = WrapMode.ClampForever;
                 clips[clipIndex] = clip;
@@ -567,6 +587,7 @@ public static class WorldHandCursorSetup
             && HasStateMotion(states, PointPressStateName)
             && HasStateMotion(states, EggHoldStateName)
             && HasStateMotion(states, EggReadyStateName)
+            && HasStateMotion(states, EggReleaseStateName)
             && HasStateMotion(states, ChickenHoldStateName)
             && HasStateMotion(states, ChickenReadyStateName);
     }

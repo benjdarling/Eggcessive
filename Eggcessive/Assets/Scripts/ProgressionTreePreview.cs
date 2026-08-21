@@ -35,6 +35,7 @@ public sealed class ProgressionTreePreview : MonoBehaviour
     public bool IsOpen => previewPanel != null
         && previewPanel.activeSelf
         && !popupAnimatingOut;
+    public ProgressionNodeButton SelectedNode => selectedNode;
 
     public bool ContainsScreenPoint(Vector2 screenPoint)
     {

@@ -20,6 +20,8 @@ public static class MainMenuPrefabSetup
 
     private static readonly Color EggYellow =
         new Color(1f, 0.78f, 0.2f, 1f);
+    private static readonly Color ButtonTextColor =
+        new Color(0.055f, 0.04f, 0.012f, 1f);
 
     static MainMenuPrefabSetup()
     {
@@ -67,7 +69,10 @@ public static class MainMenuPrefabSetup
         if (AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath) == null)
         {
             BuildPrefab();
+            return;
         }
+
+        UpgradeButtonStyleIfNeeded();
     }
 
     private static void BuildPrefab()
@@ -181,10 +186,13 @@ public static class MainMenuPrefabSetup
     {
         GameObject buttonObject = CreateUiObject(label + " Button", parent);
         RectTransform rect = buttonObject.GetComponent<RectTransform>();
-        SetCenteredRect(rect, new Vector2(0f, y), new Vector2(900f, 76f));
+        SetCenteredRect(
+            rect,
+            new Vector2(0f, y),
+            new Vector2(GetButtonWidth(label, 48f), 76f));
 
         Image image = buttonObject.AddComponent<Image>();
-        image.color = new Color(0.22f, 0.14f, 0.055f, 0.001f);
+        image.color = EggYellow;
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
         button.navigation = new Navigation
@@ -206,10 +214,62 @@ public static class MainMenuPrefabSetup
             48f,
             Vector2.zero,
             rect.sizeDelta,
-            EggYellow,
+            ButtonTextColor,
             FontStyles.Bold,
             font);
         StretchToParent(text.rectTransform);
+    }
+
+    private static void UpgradeButtonStyleIfNeeded()
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(PrefabPath);
+        bool changed = false;
+        try
+        {
+            foreach (Button button in root.GetComponentsInChildren<Button>(true))
+            {
+                Image image = button.targetGraphic as Image
+                    ?? button.GetComponent<Image>();
+                TMP_Text label = button.GetComponentInChildren<TMP_Text>(true);
+                if (image == null || image.color.a >= 0.01f)
+                {
+                    continue;
+                }
+
+                image.color = EggYellow;
+                if (label != null)
+                {
+                    label.color = ButtonTextColor;
+                    RectTransform rect = button.GetComponent<RectTransform>();
+                    rect.SetSizeWithCurrentAnchors(
+                        RectTransform.Axis.Horizontal,
+                        GetButtonWidth(label.text, label.fontSize));
+                }
+
+                changed = true;
+            }
+
+            if (changed)
+            {
+                PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
+                AssetDatabase.SaveAssets();
+                Debug.Log(
+                    "Updated the editable main-menu buttons to the solid "
+                    + "yellow label style.");
+            }
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    private static float GetButtonWidth(string label, float fontSize)
+    {
+        return Mathf.Clamp(
+            label.Length * fontSize * 0.62f + 96f,
+            240f,
+            700f);
     }
 
     private static TMP_Text CreateText(

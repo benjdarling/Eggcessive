@@ -87,6 +87,21 @@ public sealed class ChickenController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float acceleration = 2f;
     [SerializeField, Min(0f)] private float angularSpeed = 360f;
 
+    [Header("Incubator Exit")]
+    [Tooltip("Multiplier applied only while a newly hatched chicken travels from the incubator to its exit point.")]
+    [SerializeField, Min(0.01f)] private float incubatorExitSpeedMultiplier = 4f;
+    [Tooltip("Scale multiplier used as the chicken shoots out of the incubator.")]
+    [SerializeField] private Vector3 incubatorLaunchScale =
+        new Vector3(0.7f, 1.2f, 0.7f);
+    [Tooltip("Impact squash applied when the chicken reaches the exit point.")]
+    [SerializeField] private Vector3 incubatorLandingScale =
+        new Vector3(1.18f, 0.72f, 1.18f);
+    [Tooltip("Initial rebound velocity after the landing squash, in scale units per second.")]
+    [SerializeField] private Vector3 incubatorLandingScaleImpulse =
+        new Vector3(-1.2f, 2.4f, -1.2f);
+    [SerializeField, Min(0.01f)] private float incubatorScaleSpringFrequency = 7.5f;
+    [SerializeField, Range(0.05f, 2f)] private float incubatorScaleSpringDamping = 0.48f;
+
     [Header("Food")]
     [SerializeField, Min(0.01f)] private float maximumFoodScore = 100f;
     [SerializeField, Min(0f)] private float startingFoodScore = 45f;
@@ -336,6 +351,13 @@ public sealed class ChickenController : MonoBehaviour
     private bool hasIncubatorExitDestination;
     private bool isTraversingIncubatorExit;
     private Vector3 incubatorExitDestination;
+    private Vector3 incubatorExitStartPosition;
+    private float incubatorExitStartTime;
+    private float incubatorExitDuration;
+    private Vector3 incubatorBaseLocalScale;
+    private SpringUtils.Vector3Spring incubatorScaleSpring;
+    private bool incubatorScaleSpringActive;
+    private int incubatorScaleSpringResetFrame = -1;
     private int eggCollisionMask;
     private bool isMachineControlled;
     private bool isHeldByHand;
@@ -587,6 +609,7 @@ public sealed class ChickenController : MonoBehaviour
             1f - scaleVariation,
             1f + scaleVariation);
         transform.localScale *= randomScale;
+        incubatorBaseLocalScale = transform.localScale;
         CacheSecondaryMotionLod();
 
         path = new NavMeshPath();
@@ -734,6 +757,11 @@ public sealed class ChickenController : MonoBehaviour
     private void OnDisable()
     {
         ActiveChickens.Remove(this);
+        if (incubatorScaleSpringActive)
+        {
+            transform.localScale = incubatorBaseLocalScale;
+            incubatorScaleSpringActive = false;
+        }
         SetEatingAnimation(false);
         if (animator != null)
         {
@@ -787,6 +815,11 @@ public sealed class ChickenController : MonoBehaviour
         if (isTraversingIncubatorExit)
         {
             UpdateIncubatorExit();
+        }
+
+        if (incubatorScaleSpringActive)
+        {
+            UpdateIncubatorScaleSpring();
         }
 
     }
@@ -1447,8 +1480,8 @@ public sealed class ChickenController : MonoBehaviour
 
     private void UpdateIncubatorExit()
     {
-        Vector3 offset = incubatorExitDestination - transform.position;
-        Vector3 planarDirection = offset;
+        Vector3 planarDirection = incubatorExitDestination
+            - incubatorExitStartPosition;
         planarDirection.y = 0f;
 
         if (planarDirection.sqrMagnitude > 0.0001f)
@@ -1457,16 +1490,22 @@ public sealed class ChickenController : MonoBehaviour
             transform.rotation = Quaternion.RotateTowards(
                 transform.rotation,
                 targetRotation,
-                angularSpeed * Time.deltaTime);
+                angularSpeed
+                    * incubatorExitSpeedMultiplier
+                    * Time.deltaTime);
         }
 
-        transform.position = Vector3.MoveTowards(
-            transform.position,
+        float progress = Mathf.Clamp01(
+            (Time.time - incubatorExitStartTime)
+            / Mathf.Max(0.0001f, incubatorExitDuration));
+        float remaining = 1f - progress;
+        float easedProgress = 1f - remaining * remaining * remaining;
+        transform.position = Vector3.LerpUnclamped(
+            incubatorExitStartPosition,
             incubatorExitDestination,
-            moveSpeed * Time.deltaTime);
+            easedProgress);
 
-        if ((transform.position - incubatorExitDestination).sqrMagnitude <= 0.0001f
-            || Time.time >= stateEndTime)
+        if (progress >= 1f || Time.time >= stateEndTime)
         {
             FinishIncubatorExit();
         }
@@ -1476,6 +1515,10 @@ public sealed class ChickenController : MonoBehaviour
     {
         incubatorExitDestination = destination;
         hasIncubatorExitDestination = true;
+        incubatorScaleSpring.Reset(incubatorLaunchScale);
+        incubatorScaleSpringActive = true;
+        incubatorScaleSpringResetFrame = Time.frameCount;
+        ApplyIncubatorScale(incubatorScaleSpring.Value);
 
         if (navigationReady)
         {
@@ -1906,10 +1949,18 @@ public sealed class ChickenController : MonoBehaviour
         navigationRetryStartedAt = Time.time;
         isTraversingIncubatorExit = true;
         state = ChickenState.LeavingIncubator;
-        stateEndTime = Time.time
-            + Mathf.Max(
-                2f,
-                Vector3.Distance(transform.position, incubatorExitDestination) / moveSpeed + 2f);
+        incubatorExitStartPosition = transform.position;
+        incubatorExitStartTime = Time.time;
+        float exitSpeed = Mathf.Max(
+            0.01f,
+            moveSpeed * incubatorExitSpeedMultiplier);
+        incubatorExitDuration = Mathf.Max(
+            0.05f,
+            Vector3.Distance(
+                incubatorExitStartPosition,
+                incubatorExitDestination)
+                / exitSpeed);
+        stateEndTime = incubatorExitStartTime + incubatorExitDuration + 0.25f;
         return true;
     }
 
@@ -1918,6 +1969,11 @@ public sealed class ChickenController : MonoBehaviour
         transform.position = incubatorExitDestination;
         hasIncubatorExitDestination = false;
         isTraversingIncubatorExit = false;
+        incubatorScaleSpring.Reset(incubatorLandingScale);
+        incubatorScaleSpring.AddImpulse(incubatorLandingScaleImpulse);
+        incubatorScaleSpringActive = true;
+        incubatorScaleSpringResetFrame = Time.frameCount;
+        ApplyIncubatorScale(incubatorScaleSpring.Value);
 
         if (!agent.enabled)
         {
@@ -1926,6 +1982,51 @@ public sealed class ChickenController : MonoBehaviour
 
         TryInitializeNavigation();
         BeginIdle();
+    }
+
+    private void UpdateIncubatorScaleSpring()
+    {
+        if (Time.frameCount == incubatorScaleSpringResetFrame)
+        {
+            return;
+        }
+
+        float deltaTime = Time.deltaTime;
+        if (deltaTime <= 0f)
+        {
+            return;
+        }
+
+        SpringUtils.MotionParams motion = SpringUtils.CalculateMotionParams(
+            deltaTime,
+            incubatorScaleSpringFrequency,
+            incubatorScaleSpringDamping);
+        incubatorScaleSpring.Update(
+            Vector3.one,
+            Vector3.zero,
+            deltaTime,
+            motion);
+        incubatorScaleSpring.ClampValue(
+            new Vector3(0.5f, 0.5f, 0.5f),
+            new Vector3(1.4f, 1.4f, 1.4f));
+        ApplyIncubatorScale(incubatorScaleSpring.Value);
+
+        if (!isTraversingIncubatorExit
+            && (incubatorScaleSpring.Value - Vector3.one).sqrMagnitude
+                <= 0.000025f
+            && incubatorScaleSpring.Velocity.sqrMagnitude <= 0.0025f)
+        {
+            transform.localScale = incubatorBaseLocalScale;
+            incubatorScaleSpring.Reset(Vector3.one);
+            incubatorScaleSpringActive = false;
+        }
+    }
+
+    private void ApplyIncubatorScale(Vector3 scaleMultiplier)
+    {
+        transform.localScale = Vector3.Scale(
+            incubatorBaseLocalScale,
+            scaleMultiplier);
     }
 
     private void UpdateSeekingFood()
@@ -3650,6 +3751,22 @@ public sealed class ChickenController : MonoBehaviour
         moveSpeed = Mathf.Max(0.01f, moveSpeed);
         acceleration = Mathf.Max(0.01f, acceleration);
         angularSpeed = Mathf.Max(0f, angularSpeed);
+        incubatorExitSpeedMultiplier = Mathf.Max(
+            0.01f,
+            incubatorExitSpeedMultiplier);
+        incubatorLaunchScale = Vector3.Max(
+            Vector3.one * 0.01f,
+            incubatorLaunchScale);
+        incubatorLandingScale = Vector3.Max(
+            Vector3.one * 0.01f,
+            incubatorLandingScale);
+        incubatorScaleSpringFrequency = Mathf.Max(
+            0.01f,
+            incubatorScaleSpringFrequency);
+        incubatorScaleSpringDamping = Mathf.Clamp(
+            incubatorScaleSpringDamping,
+            0.05f,
+            2f);
         minBlinkInterval = Mathf.Max(0.01f, minBlinkInterval);
         maxBlinkInterval = Mathf.Max(minBlinkInterval, maxBlinkInterval);
         blinkSpeedVariation = Mathf.Clamp(blinkSpeedVariation, 0f, 0.5f);

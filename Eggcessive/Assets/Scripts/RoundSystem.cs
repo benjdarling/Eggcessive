@@ -28,6 +28,7 @@ public sealed class RoundSystem : MonoBehaviour
     private const int MaximumUsefulRewardParticlesPerBurst = 1200;
     private const float MaximumCashBlend = 0.85f;
     private const float MaximumCashNoteRandomRotationDegrees = 30f;
+    private const float EggcessiveHudVerticalOffset = 64f;
 
     public enum RoundPhase
     {
@@ -213,7 +214,6 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private GameObject floatingRewardPrefab = null;
 
     [Header("UI Audio")]
-    [SerializeField] private AudioClip buttonClickSfx = null;
     [SerializeField] private AudioClip cashRegisterSfx = null;
     [SerializeField] private AudioClip countdownTickSfx = null;
     [SerializeField] private AudioClip resultsTickSfx = null;
@@ -325,8 +325,11 @@ public sealed class RoundSystem : MonoBehaviour
     private bool roundPassed;
     private bool retryCurrentRound;
     private bool configured;
-    private readonly List<Button> uiClickButtons = new List<Button>();
-    private AudioSource buttonClickAudioSource;
+    private bool gameplayHudLayoutInitialized;
+    private RectTransform timerDisplayRect;
+    private RectTransform quotaDisplayRect;
+    private Vector2 standardTimerPosition;
+    private Vector2 standardQuotaPosition;
     private AudioSource cashRegisterAudioSource;
     private AudioSource roundCueAudioSource;
     private AudioSource resultsTickAudioSource;
@@ -509,7 +512,7 @@ public sealed class RoundSystem : MonoBehaviour
         coinEffectLayer.SetAsLastSibling();
         InitializeRewardParticleSystems();
         SupplyShopGraphController.Install(suppliesShopScreen);
-        BindButtonClickSfx();
+        InitializePopupAnimations();
         BindUiEvents();
         EggScoreHud gameplayHud = FindFirstObjectByType<EggScoreHud>(
             FindObjectsInactive.Include);
@@ -521,6 +524,7 @@ public sealed class RoundSystem : MonoBehaviour
             : null;
         ResolveResultsPresentationReferences();
         InitializeQuotaHud();
+        SetEggcessiveHudLayout(GameMenuController.IsEggcessiveMode);
         EggContainer.EggCollectedWithWeightFromContainer += HandleEggCollected;
         EggContainer.FocusedContainerChanged += HandleFocusedContainerChanged;
         ChickenController.EggLaid += HandleEggLaid;
@@ -533,7 +537,6 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void InitializeUiAudio()
     {
-        buttonClickAudioSource = Create2dAudioSource();
         cashRegisterAudioSource = Create2dAudioSource();
         roundCueAudioSource = Create2dAudioSource();
         resultsTickAudioSource = Create2dAudioSource();
@@ -557,6 +560,57 @@ public sealed class RoundSystem : MonoBehaviour
         truckExitAudioSource = Create2dAudioSource();
         truckBonusHornAudioSource = Create2dAudioSource();
         StartFarmAmbience();
+    }
+
+    private void InitializePopupAnimations()
+    {
+        UiPopupSpringAnimator.Install(intermissionScreen, "Intermission Card");
+        UiPopupSpringAnimator.Install(resultsScreen, "Results Card");
+        UiPopupSpringAnimator.Install(
+            additionalPenMilestoneScreen,
+            "Results Card");
+    }
+
+    public void ReplayActivePopupIntro()
+    {
+        GameObject activePopup = null;
+        if (additionalPenMilestoneScreen != null
+            && additionalPenMilestoneScreen.activeInHierarchy)
+        {
+            activePopup = additionalPenMilestoneScreen;
+        }
+        else if (resultsScreen != null && resultsScreen.activeInHierarchy)
+        {
+            activePopup = resultsScreen;
+        }
+        else if (intermissionScreen != null
+            && intermissionScreen.activeInHierarchy)
+        {
+            activePopup = intermissionScreen;
+        }
+
+        activePopup
+            ?.GetComponent<UiPopupSpringAnimator>()
+            ?.ReplayIntro();
+    }
+
+    private static IEnumerator HidePopup(GameObject screen)
+    {
+        if (screen == null || !screen.activeSelf)
+        {
+            yield break;
+        }
+
+        UiPopupSpringAnimator animator =
+            screen.GetComponent<UiPopupSpringAnimator>();
+        if (animator != null)
+        {
+            yield return animator.PlayOutAndHide();
+        }
+        else
+        {
+            screen.SetActive(false);
+        }
     }
 
     private AudioSource Create2dAudioSource()
@@ -596,31 +650,6 @@ public sealed class RoundSystem : MonoBehaviour
         farmAmbienceAudioSource.loop = true;
         farmAmbienceAudioSource.volume = farmAmbienceVolume;
         farmAmbienceAudioSource.Play();
-    }
-
-    private void BindButtonClickSfx()
-    {
-        Button[] buttons = FindObjectsByType<Button>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None);
-
-        for (int index = 0; index < buttons.Length; index++)
-        {
-            Button button = buttons[index];
-            button.onClick.AddListener(PlayButtonClickSfx);
-            uiClickButtons.Add(button);
-        }
-    }
-
-    private void PlayButtonClickSfx()
-    {
-        if (buttonClickAudioSource == null || buttonClickSfx == null)
-        {
-            return;
-        }
-
-        buttonClickAudioSource.pitch = 1f;
-        buttonClickAudioSource.PlayOneShot(buttonClickSfx, uiSfxVolume);
     }
 
     public void PlayCashRegisterSfx()
@@ -856,6 +885,7 @@ public sealed class RoundSystem : MonoBehaviour
     private void BindUiEvents()
     {
         readyButton.onClick.AddListener(HandleReadyClicked);
+        ConfigureReadyButtonSpring();
         intermissionShopButton.onClick.AddListener(HandleIntermissionShopClicked);
         resultsShopButton.onClick.AddListener(HandleResultsShopClicked);
         resultsContinueButton.onClick.AddListener(HandleResultsContinueClicked);
@@ -863,6 +893,28 @@ public sealed class RoundSystem : MonoBehaviour
             HandleAdditionalPenMilestoneClicked);
         doneShoppingButton.onClick.AddListener(ShowIntermission);
         BindSupplyShopTabs();
+    }
+
+    private void ConfigureReadyButtonSpring()
+    {
+        TMP_Text label = readyButton.GetComponentInChildren<TMP_Text>(true);
+        SpringMenuButton springButton =
+            readyButton.GetComponent<SpringMenuButton>();
+        if (springButton == null)
+        {
+            springButton = readyButton.gameObject.AddComponent<SpringMenuButton>();
+        }
+
+        springButton.Initialize(readyButton, label, null, false);
+        springButton.SetColorPalette(
+            new Color(0.82f, 0.025f, 0.012f, 1f),
+            new Color(1f, 0.08f, 0.035f, 1f),
+            new Color(0.58f, 0.012f, 0.008f, 1f),
+            new Color(0.34f, 0.08f, 0.065f, 0.82f),
+            Color.white,
+            Color.white,
+            new Color(0.72f, 0.72f, 0.72f, 1f));
+        UiSoundController.Attach(readyButton);
     }
 
     private void BindSupplyShopTabs()
@@ -1047,16 +1099,6 @@ public sealed class RoundSystem : MonoBehaviour
             vacuumSfxFade = null;
         }
 
-        for (int index = 0; index < uiClickButtons.Count; index++)
-        {
-            Button button = uiClickButtons[index];
-            if (button != null)
-            {
-                button.onClick.RemoveListener(PlayButtonClickSfx);
-            }
-        }
-        uiClickButtons.Clear();
-
         if (readyButton != null)
         {
             readyButton.onClick.RemoveListener(HandleReadyClicked);
@@ -1096,16 +1138,17 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
+        UiSoundController.PlayConfirmFeedback();
         readyButton.interactable = false;
         StartCoroutine(BeginRoundSequence());
     }
 
     private IEnumerator BeginRoundSequence()
     {
+        yield return HidePopup(intermissionScreen);
         ChickenEgg.ClearAllActive();
         FoodPile.ClearAllActive();
         SetPhase(RoundPhase.Countdown);
-        intermissionScreen.SetActive(false);
         resultsScreen.SetActive(false);
         suppliesShopScreen.SetActive(false);
         countdownDisplay.SetActive(true);
@@ -1387,11 +1430,24 @@ public sealed class RoundSystem : MonoBehaviour
                 : $"ROUND {roundNumber + 1}";
         SetButtonText(
             readyButton,
-            retryCurrentRound ? "RETRY ROUND" : "READY");
+            roundNumber <= 0
+                ? "READY"
+                : retryCurrentRound
+                    ? "RETRY ROUND"
+                    : "NEXT ROUND");
         readyButton.interactable = true;
         RectTransform readyRect = readyButton.GetComponent<RectTransform>();
+        RectTransform shopRect =
+            intermissionShopButton.GetComponent<RectTransform>();
         bool canReturnToShop = roundNumber > 0;
-        readyRect.anchoredPosition = new Vector2(canReturnToShop ? -120f : 0f, -92f);
+        readyRect.anchoredPosition = new Vector2(
+            canReturnToShop ? 140f : 0f,
+            -92f);
+        readyRect.sizeDelta = new Vector2(250f, 52f);
+        shopRect.anchoredPosition = new Vector2(-140f, -92f);
+        shopRect.sizeDelta = new Vector2(250f, 52f);
+        readyButton.interactable = true;
+        intermissionShopButton.interactable = true;
         intermissionShopButton.gameObject.SetActive(canReturnToShop);
         intermissionScreen.SetActive(true);
         countdownDisplay.SetActive(false);
@@ -1428,6 +1484,8 @@ public sealed class RoundSystem : MonoBehaviour
         intermissionScreen.SetActive(false);
         suppliesShopScreen.SetActive(false);
         resultsScreen.SetActive(true);
+        resultsShopButton.interactable = true;
+        resultsContinueButton.interactable = true;
         resultsShopButton.gameObject.SetActive(false);
         resultsContinueButton.gameObject.SetActive(false);
         skipResultsAnimation = false;
@@ -1580,6 +1638,17 @@ public sealed class RoundSystem : MonoBehaviour
 
     private void ShowSuppliesShop()
     {
+        StartCoroutine(ShowSuppliesShopSequence());
+    }
+
+    private IEnumerator ShowSuppliesShopSequence()
+    {
+        GameObject outgoingPopup = resultsScreen != null && resultsScreen.activeSelf
+            ? resultsScreen
+            : intermissionScreen != null && intermissionScreen.activeSelf
+                ? intermissionScreen
+                : null;
+        yield return HidePopup(outgoingPopup);
         SetPhase(RoundPhase.SuppliesShop);
         resultsScreen.SetActive(false);
         intermissionScreen.SetActive(false);
@@ -1587,12 +1656,23 @@ public sealed class RoundSystem : MonoBehaviour
         shopStatusText.text = string.Empty;
         SetShopBalanceImmediate(EggScoreHud.CurrentCents);
         RefreshShopUi();
+        SupplyShopGraphController graph =
+            suppliesShopScreen.GetComponentInChildren<SupplyShopGraphController>(true);
+        graph?.PlayOpenAnimation();
+    }
+
+    private IEnumerator ShowIntermissionAfterPopup(GameObject outgoingPopup)
+    {
+        yield return HidePopup(outgoingPopup);
+        ShowIntermission();
     }
 
     private void HandleIntermissionShopClicked()
     {
         if (Phase == RoundPhase.Intermission && roundNumber > 0)
         {
+            intermissionShopButton.interactable = false;
+            readyButton.interactable = false;
             ShowSuppliesShop();
         }
     }
@@ -1601,9 +1681,11 @@ public sealed class RoundSystem : MonoBehaviour
     {
         if (Phase == RoundPhase.Results)
         {
+            resultsShopButton.interactable = false;
+            resultsContinueButton.interactable = false;
             if (!TryShowAdditionalPenMilestone(false))
             {
-                ShowIntermission();
+                StartCoroutine(ShowIntermissionAfterPopup(resultsScreen));
             }
         }
     }
@@ -1612,6 +1694,8 @@ public sealed class RoundSystem : MonoBehaviour
     {
         if (Phase == RoundPhase.Results)
         {
+            resultsShopButton.interactable = false;
+            resultsContinueButton.interactable = false;
             if (!TryShowAdditionalPenMilestone(true))
             {
                 ShowSuppliesShop();
@@ -1633,10 +1717,15 @@ public sealed class RoundSystem : MonoBehaviour
 
         milestoneReturnsToShop = returnToShop;
         manager.UnlockAdditionalPens();
-        resultsScreen.SetActive(false);
+        StartCoroutine(ShowAdditionalPenMilestone());
+        return true;
+    }
+
+    private IEnumerator ShowAdditionalPenMilestone()
+    {
+        yield return HidePopup(resultsScreen);
         additionalPenMilestoneScreen.SetActive(true);
         additionalPenMilestoneScreen.transform.SetAsLastSibling();
-        return true;
     }
 
     private void HandleAdditionalPenMilestoneClicked()
@@ -1647,7 +1736,14 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        additionalPenMilestoneScreen.SetActive(false);
+        additionalPenMilestoneButton.interactable = false;
+        StartCoroutine(HideAdditionalPenMilestone());
+    }
+
+    private IEnumerator HideAdditionalPenMilestone()
+    {
+        yield return HidePopup(additionalPenMilestoneScreen);
+        additionalPenMilestoneButton.interactable = true;
         if (milestoneReturnsToShop)
         {
             ShowSuppliesShop();
@@ -2028,7 +2124,7 @@ public sealed class RoundSystem : MonoBehaviour
         panelRect.anchorMin = panelRect.anchorMax = new Vector2(0f, 1f);
         panelRect.pivot = new Vector2(0f, 1f);
         panelRect.anchoredPosition = new Vector2(26f, -26f);
-        panelRect.sizeDelta = new Vector2(500f, 430f);
+        panelRect.sizeDelta = new Vector2(500f, 300f);
 
         if (resultsTipsTitleText != null)
         {
@@ -2078,12 +2174,12 @@ public sealed class RoundSystem : MonoBehaviour
 
         resultsTipsBodyText.text =
             "<b><color=#B8EF7D>INCUBATOR</color></b>\n"
-            + "Drop eggs into open slots to hatch new chickens. Capacity handles more eggs at once; Hatch Rate finishes each egg sooner.\n\n"
+            + "Capacity holds more eggs. Hatch Rate works faster.\n\n"
             + "<b><color=#76DDB0>CROSSHATCHER</color></b>\n"
-            + "Load two chickens. A matching pair always makes the next breed. A mixed pair keeps the stronger breed, while Breed Quality adds a chance to advance; Speed reduces processing time.\n\n"
+            + "Matching breeds advance. Quality helps mixed pairs.\n\n"
             + "<b><color=#81C9FF>COLLECTOR ROBOT</color></b>\n"
-            + "Collects eggs automatically. Speed, Capacity and Vacuum improve collection. Logic unlocks incubator routing, rarity priority and eventually paired chicken delivery.\n\n"
-            + "<size=13><color=#B8B8AA>Machines and upgrades are purchased separately for each pen in LOCAL PEN TECH.</color></size>";
+            + "Speed, Capacity, Vacuum and Logic boost automation.\n\n"
+            + "<size=13><color=#B8B8AA>Upgrades are per pen.</color></size>";
     }
 
     private void InitializeQuotaHud()
@@ -2112,6 +2208,34 @@ public sealed class RoundSystem : MonoBehaviour
         timerDisplay.SetActive(false);
         SetQuotaContributionFills();
         quotaDisplay.SetActive(false);
+    }
+
+    public void SetEggcessiveHudLayout(bool eggcessiveMode)
+    {
+        if (timerDisplay == null || quotaDisplay == null)
+        {
+            return;
+        }
+
+        if (!gameplayHudLayoutInitialized)
+        {
+            timerDisplayRect = timerDisplay.GetComponent<RectTransform>();
+            quotaDisplayRect = quotaDisplay.GetComponent<RectTransform>();
+            if (timerDisplayRect == null || quotaDisplayRect == null)
+            {
+                return;
+            }
+
+            standardTimerPosition = timerDisplayRect.anchoredPosition;
+            standardQuotaPosition = quotaDisplayRect.anchoredPosition;
+            gameplayHudLayoutInitialized = true;
+        }
+
+        Vector2 offset = eggcessiveMode
+            ? Vector2.down * EggcessiveHudVerticalOffset
+            : Vector2.zero;
+        timerDisplayRect.anchoredPosition = standardTimerPosition + offset;
+        quotaDisplayRect.anchoredPosition = standardQuotaPosition + offset;
     }
 
     private void RefreshQuotaHud()
@@ -4499,13 +4623,13 @@ public sealed class RoundSystem : MonoBehaviour
         RectTransform buttonRect = CreateUiObject("Ready Button", card);
         SetRect(buttonRect, new Vector2(0f, -92f), new Vector2(210f, 54f));
         Image buttonImage = buttonRect.gameObject.AddComponent<Image>();
-        buttonImage.color = new Color(0.93f, 0.28f, 0.12f);
+        buttonImage.color = new Color(0.82f, 0.025f, 0.012f);
         readyButton = buttonRect.gameObject.AddComponent<Button>();
         readyButton.targetGraphic = buttonImage;
         readyButton.navigation = new Navigation { mode = Navigation.Mode.None };
         ColorBlock buttonColors = readyButton.colors;
-        buttonColors.highlightedColor = new Color(1f, 0.4f, 0.19f);
-        buttonColors.pressedColor = new Color(0.72f, 0.15f, 0.06f);
+        buttonColors.highlightedColor = new Color(1f, 0.08f, 0.035f);
+        buttonColors.pressedColor = new Color(0.58f, 0.012f, 0.008f);
         readyButton.colors = buttonColors;
 
         TMP_Text buttonLabel = CreateText(
@@ -8345,5 +8469,233 @@ public sealed class RoundSystem : MonoBehaviour
         flyingCashMaximumSpinDegreesPerSecond = Mathf.Max(
             flyingCashMinimumSpinDegreesPerSecond,
             flyingCashMaximumSpinDegreesPerSecond);
+    }
+}
+
+[DisallowMultipleComponent]
+internal sealed class UiPopupSpringAnimator : MonoBehaviour
+{
+    private const float IntroDuration = 0.38f;
+    private const float OutroDuration = 0.24f;
+
+    private Transform motionTarget;
+    private CanvasGroup canvasGroup;
+    private Vector3 restingScale = Vector3.one;
+    private Quaternion restingRotation = Quaternion.identity;
+    private float restingAlpha = 1f;
+    private bool restingInteractable = true;
+    private bool restingBlocksRaycasts = true;
+    private float rotationDirection = 1f;
+    private Coroutine introAnimation;
+    private bool configured;
+    private bool playingOut;
+
+    public static UiPopupSpringAnimator Install(
+        GameObject screen,
+        string motionTargetName)
+    {
+        if (screen == null)
+        {
+            return null;
+        }
+
+        UiPopupSpringAnimator animator =
+            screen.GetComponent<UiPopupSpringAnimator>();
+        if (animator == null)
+        {
+            animator = screen.AddComponent<UiPopupSpringAnimator>();
+        }
+
+        Transform target = FindDescendant(screen.transform, motionTargetName)
+            ?? screen.transform;
+        animator.Configure(target);
+        return animator;
+    }
+
+    private static Transform FindDescendant(Transform root, string targetName)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        for (int index = 0; index < root.childCount; index++)
+        {
+            Transform child = root.GetChild(index);
+            if (child.name == targetName)
+            {
+                return child;
+            }
+
+            Transform nested = FindDescendant(child, targetName);
+            if (nested != null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private void Configure(Transform target)
+    {
+        motionTarget = target;
+        canvasGroup = GetComponent<CanvasGroup>();
+        if (canvasGroup == null)
+        {
+            canvasGroup = gameObject.AddComponent<CanvasGroup>();
+        }
+
+        restingScale = motionTarget.localScale;
+        restingRotation = motionTarget.localRotation;
+        restingAlpha = canvasGroup.alpha;
+        restingInteractable = canvasGroup.interactable;
+        restingBlocksRaycasts = canvasGroup.blocksRaycasts;
+        rotationDirection = (GetInstanceID() & 1) == 0 ? -1f : 1f;
+        configured = true;
+        if (isActiveAndEnabled)
+        {
+            PlayIntro();
+        }
+    }
+
+    private void OnEnable()
+    {
+        if (configured)
+        {
+            PlayIntro();
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (introAnimation != null)
+        {
+            StopCoroutine(introAnimation);
+            introAnimation = null;
+        }
+
+        playingOut = false;
+        RestoreState();
+    }
+
+    public void ReplayIntro()
+    {
+        PlayIntro();
+    }
+
+    private void PlayIntro()
+    {
+        if (!configured || playingOut)
+        {
+            return;
+        }
+
+        if (introAnimation != null)
+        {
+            StopCoroutine(introAnimation);
+        }
+
+        introAnimation = StartCoroutine(AnimateIntro());
+    }
+
+    private IEnumerator AnimateIntro()
+    {
+        canvasGroup.alpha = 0f;
+        canvasGroup.interactable = false;
+        canvasGroup.blocksRaycasts = false;
+        ApplyMotion(0.68f, rotationDirection * 8f);
+
+        // Ensure the fully hidden pose is rendered even during scene startup.
+        yield return null;
+
+        float elapsed = 0f;
+        while (elapsed < IntroDuration)
+        {
+            elapsed += Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+            float progress = Mathf.Clamp01(elapsed / IntroDuration);
+            float decay = Mathf.Exp(-6.6f * progress);
+            float scale = 1f
+                - 0.32f * decay * Mathf.Cos(progress * 13.5f);
+            float rotation = rotationDirection
+                * 8f
+                * decay
+                * Mathf.Cos(progress * 15f);
+            canvasGroup.alpha = restingAlpha
+                * Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(progress / 0.42f));
+            ApplyMotion(scale, rotation);
+            yield return null;
+        }
+
+        RestoreState();
+        introAnimation = null;
+    }
+
+    public IEnumerator PlayOutAndHide()
+    {
+        if (!gameObject.activeSelf || playingOut)
+        {
+            yield break;
+        }
+
+        playingOut = true;
+        if (introAnimation != null)
+        {
+            StopCoroutine(introAnimation);
+            introAnimation = null;
+        }
+
+        canvasGroup.interactable = false;
+        canvasGroup.blocksRaycasts = false;
+        float startAlpha = canvasGroup.alpha;
+        float elapsed = 0f;
+        while (elapsed < OutroDuration)
+        {
+            elapsed += Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+            float progress = Mathf.Clamp01(elapsed / OutroDuration);
+            float eased = Mathf.SmoothStep(0f, 1f, progress);
+            float kick = Mathf.Sin(progress * Mathf.PI) * 0.07f;
+            float scale = Mathf.Lerp(1f, 0.76f, eased) + kick;
+            float rotation = rotationDirection
+                * Mathf.Lerp(0f, -7f, eased);
+            canvasGroup.alpha = Mathf.Lerp(startAlpha, 0f, eased);
+            ApplyMotion(scale, rotation);
+            yield return null;
+        }
+
+        gameObject.SetActive(false);
+    }
+
+    private void ApplyMotion(float scale, float rotation)
+    {
+        if (motionTarget == null)
+        {
+            return;
+        }
+
+        motionTarget.localScale = Vector3.Scale(
+            restingScale,
+            Vector3.one * scale);
+        motionTarget.localRotation = restingRotation
+            * Quaternion.Euler(0f, 0f, rotation);
+    }
+
+    private void RestoreState()
+    {
+        if (motionTarget != null)
+        {
+            motionTarget.localScale = restingScale;
+            motionTarget.localRotation = restingRotation;
+        }
+
+        if (canvasGroup != null)
+        {
+            canvasGroup.alpha = restingAlpha;
+            canvasGroup.interactable = restingInteractable;
+            canvasGroup.blocksRaycasts = restingBlocksRaycasts;
+        }
     }
 }

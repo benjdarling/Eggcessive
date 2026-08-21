@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -7,6 +8,20 @@ using UnityEngine.UI;
 [DisallowMultipleComponent]
 public sealed class SupplyShopGraphController : MonoBehaviour
 {
+    private sealed class EntranceElement
+    {
+        public RectTransform Rect;
+        public CanvasGroup CanvasGroup;
+        public Vector2 AnchoredPosition;
+        public Vector3 Scale;
+        public Quaternion Rotation;
+        public float Alpha;
+        public bool Interactable;
+        public bool BlocksRaycasts;
+        public float Delay;
+        public float RotationSign;
+    }
+
     private readonly struct NodeKey : IEquatable<NodeKey>
     {
         public readonly ProgressionSystem.UpgradeId Id;
@@ -31,7 +46,10 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         "SupplyShop/prefab_SupplyShopConnectorPlaceholder";
     private const string DotsTexturePath = "SupplyShop/t_supply_shop_grid_dots";
     private const string VignetteTexturePath = "SupplyShop/t_supply_shop_vignette";
-    private const float GridSpacing = 120f;
+    private const float GridSpacing = 104f;
+    private const float GraphNodeSize = 56f;
+    private const float ConsumablesBarHeight = 104f;
+    private const float DotTextureUvOrigin = 0.125f;
     private static readonly Vector2 StartPosition = Vector2.zero;
 
     private readonly Dictionary<NodeKey, ProgressionNodeButton> nodes = new();
@@ -42,7 +60,16 @@ public sealed class SupplyShopGraphController : MonoBehaviour
     private ScrollRect scrollRect;
     private ProgressionTreePreview preview;
     private RectTransform startNode;
-    private RectTransform sidebar;
+    private RectTransform consumablesBar;
+    private readonly List<EntranceElement> entranceElements = new();
+    private Coroutine entranceAnimation;
+    private Image entranceScreenBackground;
+    private Image entranceCardBackground;
+    private Color entranceScreenColor;
+    private Color entranceCardColor;
+    private Vector3 entranceCardScale;
+    private Quaternion entranceCardRotation;
+    private bool entrancePrepared;
     private bool initialized;
 
     public static SupplyShopGraphController Install(GameObject shopScreen)
@@ -89,7 +116,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
 
         initialized = true;
         ConfigureCanvas();
-        BuildSidebar();
+        BuildConsumablesBar();
         InstallBackdrop();
         BuildNodes();
         BuildConnectors();
@@ -104,6 +131,254 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         ProgressionSystem.Changed -= RefreshAll;
     }
 
+    private void OnDisable()
+    {
+        RestoreEntranceState();
+    }
+
+    public void PlayOpenAnimation()
+    {
+        if (!initialized || card == null || !gameObject.activeInHierarchy)
+        {
+            return;
+        }
+
+        RestoreEntranceState();
+        entranceAnimation = StartCoroutine(AnimateShopOpen());
+    }
+
+    private IEnumerator AnimateShopOpen()
+    {
+        PrepareEntranceState();
+
+        const float backgroundDuration = 0.18f;
+        float elapsed = 0f;
+        while (elapsed < backgroundDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float progress = Mathf.Clamp01(elapsed / backgroundDuration);
+            float eased = 1f - Mathf.Pow(1f - progress, 3f);
+            SetImageAlpha(
+                entranceScreenBackground,
+                entranceScreenColor,
+                eased);
+            SetImageAlpha(
+                entranceCardBackground,
+                entranceCardColor,
+                eased);
+            float cardScale = Mathf.LerpUnclamped(
+                0.965f,
+                1f,
+                eased + Mathf.Sin(progress * Mathf.PI) * 0.08f);
+            card.localScale = Vector3.Scale(
+                entranceCardScale,
+                Vector3.one * cardScale);
+            card.localRotation = entranceCardRotation
+                * Quaternion.Euler(0f, 0f, Mathf.Lerp(-0.7f, 0f, eased));
+            yield return null;
+        }
+
+        SetImageAlpha(entranceScreenBackground, entranceScreenColor, 1f);
+        SetImageAlpha(entranceCardBackground, entranceCardColor, 1f);
+        card.localScale = entranceCardScale;
+        card.localRotation = entranceCardRotation;
+
+        const float elementDuration = 0.34f;
+        float totalDuration = entranceElements.Count > 0
+            ? entranceElements[entranceElements.Count - 1].Delay + elementDuration
+            : 0f;
+        elapsed = 0f;
+        while (elapsed < totalDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            for (int index = 0; index < entranceElements.Count; index++)
+            {
+                EntranceElement element = entranceElements[index];
+                float progress = Mathf.Clamp01(
+                    (elapsed - element.Delay) / elementDuration);
+                if (progress <= 0f)
+                {
+                    continue;
+                }
+
+                element.CanvasGroup.alpha = element.Alpha
+                    * Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        Mathf.Clamp01(progress / 0.42f));
+                float decay = Mathf.Exp(-7.2f * progress);
+                float scale = 1f
+                    - 0.18f * decay * Mathf.Cos(progress * 13.5f);
+                float rotation = element.RotationSign
+                    * 5.5f
+                    * decay
+                    * Mathf.Cos(progress * 15f);
+                float verticalOffset = -16f
+                    * decay
+                    * Mathf.Cos(progress * 11f);
+                element.Rect.localScale = Vector3.Scale(
+                    element.Scale,
+                    Vector3.one * scale);
+                element.Rect.localRotation = element.Rotation
+                    * Quaternion.Euler(0f, 0f, rotation);
+                element.Rect.anchoredPosition = element.AnchoredPosition
+                    + Vector2.up * verticalOffset;
+            }
+
+            yield return null;
+        }
+
+        FinishEntranceState();
+    }
+
+    private void PrepareEntranceState()
+    {
+        entrancePrepared = true;
+        entranceScreenBackground = card.parent != null
+            ? card.parent.GetComponent<Image>()
+            : null;
+        entranceCardBackground = card.GetComponent<Image>();
+        entranceScreenColor = entranceScreenBackground != null
+            ? entranceScreenBackground.color
+            : Color.white;
+        entranceCardColor = entranceCardBackground != null
+            ? entranceCardBackground.color
+            : Color.white;
+        entranceCardScale = card.localScale;
+        entranceCardRotation = card.localRotation;
+        SetImageAlpha(entranceScreenBackground, entranceScreenColor, 0f);
+        SetImageAlpha(entranceCardBackground, entranceCardColor, 0f);
+
+        entranceElements.Clear();
+        string[] entranceOrder =
+        {
+            "Shop Title Frame",
+            "Shop Title",
+            "Cash Banner Frame",
+            "Balance Coin",
+            "Available Cash",
+            "Done Shopping",
+            "Progression Scroll View",
+            "Persistent Consumables Bar",
+            "Graph Pan Hint",
+            "Shop Status"
+        };
+        HashSet<RectTransform> included = new();
+        for (int index = 0; index < entranceOrder.Length; index++)
+        {
+            RectTransform rect = card.Find(entranceOrder[index]) as RectTransform;
+            if (rect != null && rect.gameObject.activeSelf && included.Add(rect))
+            {
+                AddEntranceElement(rect, entranceElements.Count);
+            }
+        }
+
+        for (int index = 0; index < card.childCount; index++)
+        {
+            RectTransform rect = card.GetChild(index) as RectTransform;
+            if (rect != null && rect.gameObject.activeSelf && included.Add(rect))
+            {
+                AddEntranceElement(rect, entranceElements.Count);
+            }
+        }
+    }
+
+    private void AddEntranceElement(RectTransform rect, int sequenceIndex)
+    {
+        CanvasGroup group = rect.GetComponent<CanvasGroup>();
+        if (group == null)
+        {
+            group = rect.gameObject.AddComponent<CanvasGroup>();
+        }
+
+        EntranceElement element = new EntranceElement
+        {
+            Rect = rect,
+            CanvasGroup = group,
+            AnchoredPosition = rect.anchoredPosition,
+            Scale = rect.localScale,
+            Rotation = rect.localRotation,
+            Alpha = group.alpha,
+            Interactable = group.interactable,
+            BlocksRaycasts = group.blocksRaycasts,
+            Delay = sequenceIndex * 0.045f,
+            RotationSign = (sequenceIndex & 1) == 0 ? -1f : 1f
+        };
+        entranceElements.Add(element);
+        group.alpha = 0f;
+        group.interactable = false;
+        group.blocksRaycasts = false;
+        rect.localScale = Vector3.Scale(element.Scale, Vector3.one * 0.82f);
+        rect.localRotation = element.Rotation
+            * Quaternion.Euler(0f, 0f, element.RotationSign * 5.5f);
+        rect.anchoredPosition = element.AnchoredPosition + Vector2.down * 16f;
+    }
+
+    private void FinishEntranceState()
+    {
+        RestoreEntranceValues();
+        entranceElements.Clear();
+        entranceAnimation = null;
+        entrancePrepared = false;
+    }
+
+    private void RestoreEntranceState()
+    {
+        if (entranceAnimation != null)
+        {
+            StopCoroutine(entranceAnimation);
+            entranceAnimation = null;
+        }
+
+        if (!entrancePrepared)
+        {
+            return;
+        }
+
+        RestoreEntranceValues();
+        entranceElements.Clear();
+        entrancePrepared = false;
+    }
+
+    private void RestoreEntranceValues()
+    {
+        SetImageAlpha(entranceScreenBackground, entranceScreenColor, 1f);
+        SetImageAlpha(entranceCardBackground, entranceCardColor, 1f);
+        if (card != null)
+        {
+            card.localScale = entranceCardScale;
+            card.localRotation = entranceCardRotation;
+        }
+
+        for (int index = 0; index < entranceElements.Count; index++)
+        {
+            EntranceElement element = entranceElements[index];
+            if (element.Rect == null || element.CanvasGroup == null)
+            {
+                continue;
+            }
+
+            element.Rect.anchoredPosition = element.AnchoredPosition;
+            element.Rect.localScale = element.Scale;
+            element.Rect.localRotation = element.Rotation;
+            element.CanvasGroup.alpha = element.Alpha;
+            element.CanvasGroup.interactable = element.Interactable;
+            element.CanvasGroup.blocksRaycasts = element.BlocksRaycasts;
+        }
+    }
+
+    private static void SetImageAlpha(Image image, Color baseColor, float alpha)
+    {
+        if (image == null)
+        {
+            return;
+        }
+
+        Color color = baseColor;
+        color.a *= Mathf.Clamp01(alpha);
+        image.color = color;
+    }
+
     public void RefreshAll()
     {
         foreach (ProgressionNodeButton node in nodes.Values)
@@ -114,7 +389,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             }
 
             ProgressionSystem.NodeState state = node.GetNodeState();
-            bool visible = IsSidebarId(node.UpgradeId)
+            bool visible = IsConsumableId(node.UpgradeId)
                 || state.IsMaxed
                 || (state.Visible && state.PrerequisiteMet);
             node.SetGraphVisible(visible);
@@ -144,8 +419,8 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         RectTransform scrollRoot = transform as RectTransform;
         scrollRoot.anchorMin = scrollRoot.anchorMax = new Vector2(0.5f, 0.5f);
         scrollRoot.pivot = new Vector2(0.5f, 0.5f);
-        scrollRoot.anchoredPosition = new Vector2(170f, -28f);
-        scrollRoot.sizeDelta = new Vector2(1470f, 800f);
+        scrollRoot.anchoredPosition = new Vector2(0f, 30f);
+        scrollRoot.sizeDelta = new Vector2(1830f, 640f);
 
         Image viewportImage = viewport.GetComponent<Image>();
         if (viewportImage != null)
@@ -163,27 +438,28 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         pan.SetInitialFocus(StartPosition);
     }
 
-    private void BuildSidebar()
+    private void BuildConsumablesBar()
     {
-        Transform existing = card.Find("Persistent Supplies Sidebar");
+        Transform existing = card.Find("Persistent Consumables Bar");
         if (existing != null)
         {
-            sidebar = existing as RectTransform;
+            consumablesBar = existing as RectTransform;
             return;
         }
 
         GameObject panel = new GameObject(
-            "Persistent Supplies Sidebar",
+            "Persistent Consumables Bar",
             typeof(RectTransform),
             typeof(CanvasRenderer),
             typeof(Image),
             typeof(Outline));
         panel.transform.SetParent(card, false);
-        sidebar = panel.transform as RectTransform;
-        sidebar.anchorMin = sidebar.anchorMax = new Vector2(0.5f, 0.5f);
-        sidebar.pivot = new Vector2(0.5f, 0.5f);
-        sidebar.anchoredPosition = new Vector2(-760f, -28f);
-        sidebar.sizeDelta = new Vector2(300f, 800f);
+        consumablesBar = panel.transform as RectTransform;
+        consumablesBar.anchorMin = consumablesBar.anchorMax =
+            new Vector2(0.5f, 0f);
+        consumablesBar.pivot = new Vector2(0.5f, 0f);
+        consumablesBar.anchoredPosition = new Vector2(0f, 18f);
+        consumablesBar.sizeDelta = new Vector2(1830f, ConsumablesBarHeight);
         Image background = panel.GetComponent<Image>();
         background.color = new Color(0.055f, 0.065f, 0.06f, 0.98f);
         Outline outline = panel.GetComponent<Outline>();
@@ -191,30 +467,30 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         outline.effectDistance = new Vector2(2f, -2f);
 
         TMP_Text title = CreateRuntimeText(
-            "Sidebar Title",
-            sidebar,
-            22f,
+            "Consumables Title",
+            consumablesBar,
+            20f,
             TextAlignmentOptions.Center);
         title.text = "CONSUMABLES";
         title.fontStyle = FontStyles.Bold;
         title.color = new Color(1f, 0.83f, 0.38f, 1f);
         title.rectTransform.anchorMin = title.rectTransform.anchorMax =
-            new Vector2(0.5f, 1f);
-        title.rectTransform.pivot = new Vector2(0.5f, 1f);
-        title.rectTransform.anchoredPosition = new Vector2(0f, -22f);
+            new Vector2(0.5f, 0.5f);
+        title.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        title.rectTransform.anchoredPosition = new Vector2(-755f, 15f);
         title.rectTransform.sizeDelta = new Vector2(260f, 34f);
 
         TMP_Text caption = CreateRuntimeText(
-            "Sidebar Caption",
-            sidebar,
+            "Consumables Caption",
+            consumablesBar,
             11f,
             TextAlignmentOptions.Center);
         caption.text = "RESTOCK ANY TIME";
         caption.color = new Color(0.62f, 0.68f, 0.64f, 1f);
         caption.rectTransform.anchorMin = caption.rectTransform.anchorMax =
-            new Vector2(0.5f, 1f);
-        caption.rectTransform.pivot = new Vector2(0.5f, 1f);
-        caption.rectTransform.anchoredPosition = new Vector2(0f, -58f);
+            new Vector2(0.5f, 0.5f);
+        caption.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        caption.rectTransform.anchoredPosition = new Vector2(-755f, -17f);
         caption.rectTransform.sizeDelta = new Vector2(260f, 24f);
     }
 
@@ -227,11 +503,15 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         RawImage dotsImage = dots.GetComponent<RawImage>();
         dotsImage.texture = Resources.Load<Texture2D>(DotsTexturePath)
             ?? Resources.Load<Texture2D>("SupplyShop/t_supply_shop_dots");
+        float horizontalTiles = content.sizeDelta.x / GridSpacing;
+        float verticalTiles = content.sizeDelta.y / GridSpacing;
+        // Phase the repeating texture from the graph origin instead of the
+        // content edge, so every GridSpacing multiple lands on a pinhole.
         dotsImage.uvRect = new Rect(
-            0.125f,
-            0.125f,
-            content.sizeDelta.x / GridSpacing,
-            content.sizeDelta.y / GridSpacing);
+            DotTextureUvOrigin - horizontalTiles * 0.5f,
+            DotTextureUvOrigin - verticalTiles * 0.5f,
+            horizontalTiles,
+            verticalTiles);
         dotsImage.color = new Color(1f, 1f, 1f, 0.66f);
         dotsImage.raycastTarget = false;
         dots.SetAsFirstSibling();
@@ -275,15 +555,15 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                 continue;
             }
 
-            bool sidebarButton = IsSidebarId(source.UpgradeId);
-            Transform parent = sidebarButton ? sidebar : content;
+            bool consumableButton = IsConsumableId(source.UpgradeId);
+            Transform parent = consumableButton ? consumablesBar : content;
             GameObject instance = nodePrefab != null
                 ? Instantiate(nodePrefab, parent, false)
                 : Instantiate(source.gameObject, parent, false);
             // Repeatable purchase sources are intentionally inactive in the
-            // authored map. Only their generated fixed-sidebar copies render.
+            // authored map. Only their generated fixed-bar copies render.
             instance.SetActive(true);
-            instance.name = sidebarButton
+            instance.name = consumableButton
                 ? $"Supply Button {source.UpgradeId}"
                 : $"Graph Node {source.UpgradeId} {source.TargetLevel}";
             ProgressionNodeButton node = instance.GetComponent<ProgressionNodeButton>();
@@ -298,15 +578,17 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             node.SetVisualColor(color);
             RectTransform rect = instance.transform as RectTransform;
             rect.SetParent(parent, false);
-            if (sidebarButton)
+            if (consumableButton)
             {
-                rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
-                rect.pivot = new Vector2(0.5f, 1f);
+                int consumableIndex = GetConsumableIndex(source.UpgradeId);
+                rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+                rect.pivot = new Vector2(0.5f, 0.5f);
                 rect.anchoredPosition = new Vector2(
-                    0f,
-                    -105f - GetSidebarIndex(source.UpgradeId) * 126f);
-                rect.sizeDelta = new Vector2(250f, 104f);
-                ApplySidebarVisual(node, iconAtlas, color);
+                    -250f + consumableIndex * 540f,
+                    0f);
+                rect.sizeDelta = new Vector2(500f, 76f);
+                ApplyConsumableVisual(node, iconAtlas, color);
+                node.SetRevealDelay(0.02f + consumableIndex * 0.045f);
             }
             else
             {
@@ -315,8 +597,9 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                 rect.anchoredPosition = GetNodePosition(
                     source.UpgradeId,
                     source.TargetLevel);
-                rect.sizeDelta = new Vector2(64f, 64f);
+                rect.sizeDelta = new Vector2(GraphNodeSize, GraphNodeSize);
                 ApplyCompactVisual(node, iconAtlas, color);
+                node.SetRevealDelay(GetRevealDelay(rect.anchoredPosition));
             }
             nodes.Add(key, node);
             RetireAuthoredNode(source);
@@ -368,8 +651,9 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             rect.anchoredPosition = GetNodePosition(
                 ProgressionSystem.UpgradeId.PenBonus,
                 tier);
-            rect.sizeDelta = new Vector2(64f, 64f);
+            rect.sizeDelta = new Vector2(GraphNodeSize, GraphNodeSize);
             ApplyCompactVisual(node, iconAtlas, color);
+            node.SetRevealDelay(GetRevealDelay(rect.anchoredPosition));
             nodes.Add(key, node);
         }
     }
@@ -420,7 +704,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         startNode.anchorMin = startNode.anchorMax = new Vector2(0.5f, 0.5f);
         startNode.pivot = new Vector2(0.5f, 0.5f);
         startNode.anchoredPosition = StartPosition;
-        startNode.sizeDelta = new Vector2(82f, 82f);
+        startNode.sizeDelta = new Vector2(68f, 68f);
         Image background = instance.GetComponent<Image>();
         if (background != null)
         {
@@ -454,7 +738,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         foreach (KeyValuePair<NodeKey, ProgressionNodeButton> pair in nodes)
         {
             NodeKey key = pair.Key;
-            if (IsSidebarId(key.Id))
+            if (IsConsumableId(key.Id))
             {
                 continue;
             }
@@ -467,7 +751,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             }
 
             ProgressionNodeButton parent = FindCustomParent(key.Id);
-            if (parent != null && IsSidebarId(parent.UpgradeId))
+            if (parent != null && IsConsumableId(parent.UpgradeId))
             {
                 continue;
             }
@@ -517,7 +801,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
                 continue;
             }
 
-            // The repeatable turbo purchase lives in the fixed sidebar, so it
+            // The repeatable turbo purchase lives in the fixed bar, so it
             // cannot supply a stable scrolling-map connector. Vertical rungs
             // join the power and duration upgrade rails instead, including the
             // first visible tier that was previously left floating.
@@ -747,7 +1031,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         RectTransform rect = hintObject.transform as RectTransform;
         rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0f);
         rect.pivot = new Vector2(0.5f, 0f);
-        rect.anchoredPosition = new Vector2(0f, 14f);
+        rect.anchoredPosition = new Vector2(0f, 126f);
         rect.sizeDelta = new Vector2(1050f, 24f);
         TMP_Text hint = hintObject.GetComponent<TMP_Text>();
         hint.text = "HOVER FOR DETAILS  .  CLICK TO PIN  .  CLICK AWAY TO CLOSE  .  "
@@ -816,7 +1100,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             RectTransform iconRect = EnsureRawImage("Type Icon", transform);
             iconRect.anchorMin = iconRect.anchorMax = new Vector2(0.5f, 0.5f);
             iconRect.anchoredPosition = new Vector2(0f, 5f);
-            iconRect.sizeDelta = new Vector2(48f, 48f);
+            iconRect.sizeDelta = new Vector2(40f, 40f);
             icon = iconRect.GetComponent<RawImage>();
         }
         Texture2D standaloneIcon = GetStandaloneIcon(node.UpgradeId);
@@ -833,15 +1117,15 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         icon.color = Color.white;
         icon.raycastTarget = false;
         icon.rectTransform.anchoredPosition = new Vector2(0f, 4f);
-        icon.rectTransform.sizeDelta = new Vector2(40f, 40f);
+        icon.rectTransform.sizeDelta = new Vector2(34f, 34f);
 
         TMP_Text tier = transform.Find("Tier")?.GetComponent<TMP_Text>();
         if (tier != null)
         {
             tier.text = node.TargetLevel > 0 ? node.TargetLevel.ToString() : string.Empty;
             tier.color = new Color(1f, 0.91f, 0.65f, 1f);
-            tier.fontSize = 10f;
-            tier.rectTransform.anchoredPosition = new Vector2(0f, -24f);
+            tier.fontSize = 9f;
+            tier.rectTransform.anchoredPosition = new Vector2(0f, -20f);
         }
 
         Outline outline = node.GetComponent<Outline>();
@@ -852,7 +1136,7 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         }
     }
 
-    private static void ApplySidebarVisual(
+    private static void ApplyConsumableVisual(
         ProgressionNodeButton node,
         Texture2D iconAtlas,
         Color color)
@@ -862,8 +1146,8 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         RawImage icon = transform.Find("Type Icon")?.GetComponent<RawImage>();
         if (icon != null)
         {
-            icon.rectTransform.anchoredPosition = new Vector2(-82f, 4f);
-            icon.rectTransform.sizeDelta = new Vector2(62f, 62f);
+            icon.rectTransform.anchoredPosition = new Vector2(-205f, 0f);
+            icon.rectTransform.sizeDelta = new Vector2(50f, 50f);
         }
 
         TMP_Text tier = transform.Find("Tier")?.GetComponent<TMP_Text>();
@@ -873,9 +1157,9 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         }
 
         TMP_Text label = CreateRuntimeText(
-            "Sidebar Label",
+            "Consumable Label",
             transform,
-            15f,
+            14f,
             TextAlignmentOptions.Left);
         ProgressionSystem.NodeState state = node.GetNodeState();
         string title = string.IsNullOrWhiteSpace(state.Title)
@@ -887,13 +1171,14 @@ public sealed class SupplyShopGraphController : MonoBehaviour
         label.rectTransform.anchorMin = label.rectTransform.anchorMax =
             new Vector2(0.5f, 0.5f);
         label.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-        label.rectTransform.anchoredPosition = new Vector2(38f, 0f);
-        label.rectTransform.sizeDelta = new Vector2(150f, 62f);
+        label.rectTransform.anchoredPosition = new Vector2(35f, 0f);
+        label.rectTransform.sizeDelta = new Vector2(390f, 56f);
     }
 
-    private static bool IsSidebarId(ProgressionSystem.UpgradeId id)
+    private static bool IsConsumableId(ProgressionSystem.UpgradeId id)
     {
-        return id == ProgressionSystem.UpgradeId.FoodBag;
+        return id is ProgressionSystem.UpgradeId.FoodBag
+            or ProgressionSystem.UpgradeId.IncubatorTurbo;
     }
 
     private static bool IsRetiredTurboId(ProgressionSystem.UpgradeId id)
@@ -906,13 +1191,20 @@ public sealed class SupplyShopGraphController : MonoBehaviour
             or ProgressionSystem.UpgradeId.RobotTurboDuration;
     }
 
-    private static int GetSidebarIndex(ProgressionSystem.UpgradeId id)
+    private static int GetConsumableIndex(ProgressionSystem.UpgradeId id)
     {
         return id switch
         {
             ProgressionSystem.UpgradeId.FoodBag => 0,
             _ => 1
         };
+    }
+
+    private static float GetRevealDelay(Vector2 position)
+    {
+        float gridDistance = (Mathf.Abs(position.x) + Mathf.Abs(position.y))
+            / GridSpacing;
+        return Mathf.Min(0.22f, gridDistance * 0.011f);
     }
 
     private static TMP_Text CreateRuntimeText(

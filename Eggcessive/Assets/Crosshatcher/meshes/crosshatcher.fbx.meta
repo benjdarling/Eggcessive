@@ -3,7 +3,22 @@ guid: 97d77aa87a09f3e489fe418d77361f45
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_atlas_glass
+    second: {fileID: 2100000, guid: 6e32c72f5168c1c48bbbcb8cb964803d, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_atlas_opaque
+    second: {fileID: 2100000, guid: 639374d8fe1d2cd42bb1b1241b854e9f, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_crosshatcher_energy
+    second: {fileID: 2100000, guid: 94cc45d251461f04697ba13f8f37852d, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

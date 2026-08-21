@@ -1532,6 +1532,11 @@ public sealed class EggCarryController : MonoBehaviour
             return;
         }
 
+        if (heldEgg != null)
+        {
+            WorldHandCursorController.PlayEggReleaseAnimation();
+        }
+
         ReleaseEgg();
     }
 

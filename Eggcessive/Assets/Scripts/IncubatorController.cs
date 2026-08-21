@@ -7,6 +7,15 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class IncubatorController : MonoBehaviour
 {
+    private static readonly int IdleAnimationState =
+        Animator.StringToHash("Base Layer.Idle");
+    private static readonly int PlaceEggAnimationState =
+        Animator.StringToHash("Base Layer.Place Egg");
+    private static readonly int WorkingAnimationState =
+        Animator.StringToHash("Base Layer.Working");
+    private static readonly int FinishAnimationState =
+        Animator.StringToHash("Base Layer.Finish");
+
     private static readonly int[] LevelCapacities =
     {
         1, 3, 5
@@ -45,6 +54,12 @@ public sealed class IncubatorController : MonoBehaviour
     [SerializeField, Range(0f, 0.5f)]
     private float nextTierHatchChancePerLevel = 0.1f;
 
+    [Header("Animation")]
+    [SerializeField] private RuntimeAnimatorController animatorController = null;
+
+    [Header("VFX")]
+    [SerializeField] private ParticleSystem workingSmoke = null;
+
     [Header("Audio")]
     [SerializeField] private AudioClip processingLoopSfx = null;
     [SerializeField] private AudioClip hatchDoneSfx = null;
@@ -56,6 +71,10 @@ public sealed class IncubatorController : MonoBehaviour
     private float processingTimeRemaining;
     private AudioSource processingAudioSource;
     private AudioSource hatchDoneAudioSource;
+    private Animator animator;
+    private bool placeEggAnimationPlaying;
+    private bool finishAnimationPlaying;
+    private bool chickenSpawnedForFinish;
 
     public const int MaximumLevel = 3;
     public static event Action ChickenHatched;
@@ -84,12 +103,16 @@ public sealed class IncubatorController : MonoBehaviour
         currentLevel = Mathf.Clamp(currentLevel, 1, MaximumLevel);
         capacityLevel = Mathf.Clamp(capacityLevel, 1, MaximumLevel);
         speedLevel = Mathf.Clamp(speedLevel, 1, MaximumLevel);
+        InitializeAnimator();
+        InitializeWorkingVfx();
         InitializeAudio();
         RefreshDisplays();
     }
 
     private void Update()
     {
+        UpdateAnimatorState();
+        UpdateWorkingVfx();
         UpdateProcessingAudio();
 
         if (RoundSystem.Instance != null && !RoundSystem.Instance.IsRoundInProgress)
@@ -116,9 +139,10 @@ public sealed class IncubatorController : MonoBehaviour
             * TurboConsumableSystem.GetProductivityMultiplier(
                 TurboConsumableSystem.TurboType.Incubator);
 
-        if (processingTimeRemaining <= 0f)
+        if (processingTimeRemaining <= 0f && !finishAnimationPlaying)
         {
-            HatchNextEgg();
+            BeginFinishAnimation();
+            UpdateWorkingVfx();
             UpdateProcessingAudio();
         }
 
@@ -169,7 +193,9 @@ public sealed class IncubatorController : MonoBehaviour
 
         QueueAcceptedEgg(egg.Type);
         PrepareAcceptedEgg(egg);
+        PlayPlaceEggAnimation();
         StartCoroutine(MoveEggIntoIncubator(egg.gameObject));
+        UpdateWorkingVfx();
         UpdateProcessingAudio();
         RefreshDisplays();
     }
@@ -182,6 +208,8 @@ public sealed class IncubatorController : MonoBehaviour
         }
 
         QueueAcceptedEgg(eggType);
+        PlayPlaceEggAnimation();
+        UpdateWorkingVfx();
         UpdateProcessingAudio();
         RefreshDisplays();
         return 1;
@@ -209,6 +237,8 @@ public sealed class IncubatorController : MonoBehaviour
         }
 
         EggsAccepted?.Invoke(accepted);
+        PlayPlaceEggAnimation();
+        UpdateWorkingVfx();
         UpdateProcessingAudio();
         RefreshDisplays();
         return accepted;
@@ -289,6 +319,38 @@ public sealed class IncubatorController : MonoBehaviour
         }
     }
 
+    private void BeginFinishAnimation()
+    {
+        processingTimeRemaining = 0f;
+        placeEggAnimationPlaying = false;
+        finishAnimationPlaying = true;
+        chickenSpawnedForFinish = false;
+
+        if (CanAnimate && animator.HasState(0, FinishAnimationState))
+        {
+            animator.Play(FinishAnimationState, 0, 0f);
+            return;
+        }
+
+        // Preserve hatching if an instance is missing its animation setup.
+        OnHatchFrame();
+        CompleteFinishAnimation();
+    }
+
+    /// <summary>
+    /// Called by the incubator_finish clip's animation event on frame 9.
+    /// </summary>
+    public void OnHatchFrame()
+    {
+        if (!finishAnimationPlaying || chickenSpawnedForFinish)
+        {
+            return;
+        }
+
+        chickenSpawnedForFinish = true;
+        HatchNextEgg();
+    }
+
     private void HatchNextEgg()
     {
         if (IsOffline)
@@ -330,6 +392,129 @@ public sealed class IncubatorController : MonoBehaviour
         processingTimeRemaining = storedEggs > 0 ? SecondsPerEgg : 0f;
     }
 
+    private bool CanAnimate =>
+        animator != null && animator.runtimeAnimatorController != null;
+
+    private bool IsActivelyProcessing =>
+        storedEggs > 0
+        && !IsOffline
+        && (RoundSystem.Instance == null
+            || RoundSystem.Instance.IsRoundInProgress);
+
+    private void InitializeAnimator()
+    {
+        animator = GetComponentInChildren<Animator>(true);
+
+        if (animator == null)
+        {
+            return;
+        }
+
+        if (animatorController != null)
+        {
+            animator.runtimeAnimatorController = animatorController;
+        }
+
+        animator.enabled = true;
+        animator.applyRootMotion = false;
+        animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        animator.Rebind();
+        animator.Update(0f);
+        IncubatorAnimationEvents eventRelay =
+            animator.GetComponent<IncubatorAnimationEvents>();
+
+        if (eventRelay == null)
+        {
+            eventRelay = animator.gameObject.AddComponent<IncubatorAnimationEvents>();
+        }
+
+        eventRelay.Initialize(this);
+
+        if (CanAnimate && animator.HasState(0, IdleAnimationState))
+        {
+            animator.Play(IdleAnimationState, 0, 0f);
+        }
+    }
+
+    private void PlayPlaceEggAnimation()
+    {
+        if (finishAnimationPlaying
+            || !CanAnimate
+            || !animator.HasState(0, PlaceEggAnimationState))
+        {
+            return;
+        }
+
+        placeEggAnimationPlaying = true;
+        animator.Play(PlaceEggAnimationState, 0, 0f);
+    }
+
+    private void UpdateAnimatorState()
+    {
+        if (!CanAnimate)
+        {
+            return;
+        }
+
+        AnimatorStateInfo state = animator.GetCurrentAnimatorStateInfo(0);
+
+        if (finishAnimationPlaying)
+        {
+            if (state.fullPathHash == FinishAnimationState
+                && state.normalizedTime >= 1f)
+            {
+                // The event is authoritative. This fallback prevents an old
+                // imported clip from permanently blocking the incubator.
+                OnHatchFrame();
+                CompleteFinishAnimation();
+            }
+
+            return;
+        }
+
+        if (placeEggAnimationPlaying)
+        {
+            // Animator.Play can take one animation evaluation to become the
+            // current state, so do not replace it with Working prematurely.
+            if (state.fullPathHash != PlaceEggAnimationState
+                || state.normalizedTime < 1f)
+            {
+                return;
+            }
+
+            placeEggAnimationPlaying = false;
+        }
+
+        int desiredState = IsActivelyProcessing
+            ? WorkingAnimationState
+            : IdleAnimationState;
+
+        if (state.fullPathHash != desiredState && animator.HasState(0, desiredState))
+        {
+            animator.Play(desiredState, 0, 0f);
+        }
+    }
+
+    private void CompleteFinishAnimation()
+    {
+        finishAnimationPlaying = false;
+        chickenSpawnedForFinish = false;
+
+        if (!CanAnimate)
+        {
+            return;
+        }
+
+        int nextState = IsActivelyProcessing
+            ? WorkingAnimationState
+            : IdleAnimationState;
+
+        if (animator.HasState(0, nextState))
+        {
+            animator.Play(nextState, 0, 0f);
+        }
+    }
+
     private ChickenController.ChickenBreed RollHatchedBreed(
         ChickenEgg.EggType eggType)
     {
@@ -350,6 +535,40 @@ public sealed class IncubatorController : MonoBehaviour
         processingAudioSource = CreateSpatialAudioSource(true);
         processingAudioSource.clip = processingLoopSfx;
         hatchDoneAudioSource = CreateSpatialAudioSource(false);
+    }
+
+    private void InitializeWorkingVfx()
+    {
+        if (workingSmoke == null)
+        {
+            return;
+        }
+
+        workingSmoke.Stop(
+            true,
+            ParticleSystemStopBehavior.StopEmitting);
+    }
+
+    private void UpdateWorkingVfx()
+    {
+        if (workingSmoke == null)
+        {
+            return;
+        }
+
+        if (IsActivelyProcessing)
+        {
+            if (!workingSmoke.isEmitting)
+            {
+                workingSmoke.Play(true);
+            }
+        }
+        else if (workingSmoke.isEmitting)
+        {
+            workingSmoke.Stop(
+                true,
+                ParticleSystemStopBehavior.StopEmitting);
+        }
     }
 
     private AudioSource CreateSpatialAudioSource(bool loop)
@@ -398,6 +617,13 @@ public sealed class IncubatorController : MonoBehaviour
 
     private void OnDisable()
     {
+        if (workingSmoke != null)
+        {
+            workingSmoke.Stop(
+                true,
+                ParticleSystemStopBehavior.StopEmitting);
+        }
+
         if (processingAudioSource != null)
         {
             processingAudioSource.Stop();

@@ -127,6 +127,9 @@ public sealed class GameplayTestBot : MonoBehaviour
     private bool resultsSkipSent;
     private int shopPurchaseCount;
     private int shopUpgradeCursor;
+    private int lastShopNodeSelectionId = -1;
+    private int repeatedShopNodeSelectionCount;
+    private long lastShopNodeSelectionBalance = -1;
     private int collectionActionCount;
     private int completedActions;
     private int desiredFeedPiles = 1;
@@ -152,6 +155,8 @@ public sealed class GameplayTestBot : MonoBehaviour
     private readonly HashSet<int> pendingRobotRecoveryPens =
         new HashSet<int>();
     private readonly HashSet<int> foodPlacementSpacingBlockedPens =
+        new HashSet<int>();
+    private readonly HashSet<int> rejectedShopNodeIds =
         new HashSet<int>();
     private readonly List<ChickenEgg> vacuumTargetCandidates =
         new List<ChickenEgg>();
@@ -258,6 +263,7 @@ public sealed class GameplayTestBot : MonoBehaviour
         plannedRobotRecoveryPens.Clear();
         pendingRobotRecoveryPens.Clear();
         foodPlacementSpacingBlockedPens.Clear();
+        rejectedShopNodeIds.Clear();
         roundLocalPurchaseCount = 0;
         automationDialogType = null;
         vacuumReturnPenIndex = -1;
@@ -400,10 +406,14 @@ public sealed class GameplayTestBot : MonoBehaviour
         {
             shopPurchaseCount = 0;
             shopUpgradeCursor = 0;
+            lastShopNodeSelectionId = -1;
+            repeatedShopNodeSelectionCount = 0;
+            lastShopNodeSelectionBalance = -1;
             collectionRecoveryPurchasedThisShop = false;
             collectionRecoveryPlannedThisShop = false;
             plannedCollectionRecoveryReserveCents = 0;
             plannedRobotRecoveryPens.Clear();
+            rejectedShopNodeIds.Clear();
         }
 
         if (phase == RoundSystem.RoundPhase.InProgress)
@@ -1405,6 +1415,13 @@ public sealed class GameplayTestBot : MonoBehaviour
             Object.FindFirstObjectByType<ProgressionTreePreview>();
         if (preview != null && preview.IsOpen)
         {
+            ProgressionNodeButton selectedNode = preview.SelectedNode;
+            if (selectedNode != null
+                && !CanPurchaseWithoutUsingRecoveryReserve(selectedNode))
+            {
+                rejectedShopNodeIds.Add(selectedNode.GetInstanceID());
+            }
+
             SetStatus("SHOP  .  CLOSING DETAILS");
             preview.Hide();
             yield return new WaitForSecondsRealtime(actionPause);
@@ -1526,12 +1543,12 @@ public sealed class GameplayTestBot : MonoBehaviour
                 FindVacuumPriorityNode(nodes);
             if (starterBasket != null)
             {
-                yield return EnsureShopTabVisible(starterBasket);
                 Button basketButton = starterBasket.GetComponent<Button>();
                 if (IsUsable(basketButton)
                     && CanPurchaseWithoutUsingRecoveryReserve(
                         starterBasket))
                 {
+                    yield return EnsureShopTabVisible(starterBasket);
                     yield return ClickButton(
                         basketButton,
                         "SHOP  .  FLOCK GROWTH  .  PRIORITISING STARTER BASKET");
@@ -1602,12 +1619,12 @@ public sealed class GameplayTestBot : MonoBehaviour
                     0);
             if (recoveryUpgrade != null)
             {
-                yield return EnsureShopTabVisible(recoveryUpgrade);
                 Button recoveryButton = recoveryUpgrade.GetComponent<Button>();
                 if (IsUsable(recoveryButton)
                     && CanPurchaseWithoutUsingRecoveryReserve(
                         recoveryUpgrade))
                 {
+                    yield return EnsureShopTabVisible(recoveryUpgrade);
                     string bottleneck = lastFailureWasCollectionLimited
                         ? "COLLECTION"
                         : "EARNINGS";
@@ -1693,13 +1710,13 @@ public sealed class GameplayTestBot : MonoBehaviour
             && feedSpeedPriorityNode != null
             && shopPurchaseCount < GetShopPurchaseLimit())
         {
-            yield return EnsureShopTabVisible(feedSpeedPriorityNode);
             Button feedSpeedUpgrade =
                 feedSpeedPriorityNode.GetComponent<Button>();
             if (IsUsable(feedSpeedUpgrade)
                 && CanPurchaseWithoutUsingRecoveryReserve(
                     feedSpeedPriorityNode))
             {
+                yield return EnsureShopTabVisible(feedSpeedPriorityNode);
                 yield return ClickButton(
                     feedSpeedUpgrade,
                     $"SHOP  .  PRIORITISING FEED POWER {foodShop.UnlockedFeedTier + 1}/{desiredFeedTier}");
@@ -1723,12 +1740,12 @@ public sealed class GameplayTestBot : MonoBehaviour
         if (economyPriority != null
             && shopPurchaseCount < GetShopPurchaseLimit())
         {
-            yield return EnsureShopTabVisible(economyPriority);
             Button economyButton = economyPriority.GetComponent<Button>();
             if (IsUsable(economyButton)
                 && CanPurchaseWithoutUsingRecoveryReserve(
                     economyPriority))
             {
+                yield return EnsureShopTabVisible(economyPriority);
                 yield return ClickButton(
                     economyButton,
                     $"SHOP  .  PRIORITISING {economyButton.name.ToUpperInvariant()}");
@@ -1769,13 +1786,13 @@ public sealed class GameplayTestBot : MonoBehaviour
         if (collectionPriority != null
             && shopPurchaseCount < GetShopPurchaseLimit())
         {
-            yield return EnsureShopTabVisible(collectionPriority);
             Button collectionButton =
                 collectionPriority.GetComponent<Button>();
             if (IsUsable(collectionButton)
                 && CanPurchaseWithoutUsingRecoveryReserve(
                     collectionPriority))
             {
+                yield return EnsureShopTabVisible(collectionPriority);
                 string upgradeName = collectionPriority.GetNodeState().Title;
                 yield return ClickButton(
                     collectionButton,
@@ -2321,7 +2338,9 @@ public sealed class GameplayTestBot : MonoBehaviour
     private bool CanPurchaseWithoutUsingRecoveryReserve(
         ProgressionNodeButton node)
     {
-        if (!CanPurchaseProgressionNode(node))
+        if (node == null
+            || rejectedShopNodeIds.Contains(node.GetInstanceID())
+            || !CanPurchaseProgressionNode(node))
         {
             return false;
         }
@@ -5996,6 +6015,40 @@ public sealed class GameplayTestBot : MonoBehaviour
         ProgressionTreePreview preview = progressionNode != null
             ? button.GetComponentInParent<ProgressionTreePreview>(true)
             : null;
+        if (progressionNode != null)
+        {
+            int selectionId = progressionNode.GetInstanceID();
+            long selectionBalance = EggScoreHud.CurrentCents;
+            if (selectionId == lastShopNodeSelectionId
+                && selectionBalance == lastShopNodeSelectionBalance)
+            {
+                repeatedShopNodeSelectionCount++;
+            }
+            else
+            {
+                lastShopNodeSelectionId = selectionId;
+                lastShopNodeSelectionBalance = selectionBalance;
+                repeatedShopNodeSelectionCount = 1;
+            }
+
+            if (repeatedShopNodeSelectionCount >= 3)
+            {
+                rejectedShopNodeIds.Add(selectionId);
+            }
+        }
+
+        if (progressionNode != null
+            && (rejectedShopNodeIds.Contains(progressionNode.GetInstanceID())
+                || !CanPurchaseProgressionNode(progressionNode)))
+        {
+            rejectedShopNodeIds.Add(progressionNode.GetInstanceID());
+            preview?.Hide();
+            SetStatus(
+                $"SHOP  .  SKIPPING UNAVAILABLE {button.name.ToUpperInvariant()}");
+            yield return new WaitForSecondsRealtime(actionPause);
+            yield break;
+        }
+
         if (preview != null && preview.IsOpen)
         {
             preview.Hide();

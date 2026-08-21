@@ -15,6 +15,9 @@ public sealed class ProgressionNodeButton : MonoBehaviour
     private const float SelectedScale = 0.965f;
     private const float PressedScale = 0.88f;
     private const float HoverTilt = 2.25f;
+    private const float RevealDuration = 0.3f;
+    private const float RevealStartScale = 0.02f;
+    private const float RevealStartRotation = 12f;
 
     [SerializeField] private ProgressionSystem.UpgradeId upgradeId;
     [SerializeField] private TMP_Text iconText = null;
@@ -40,6 +43,13 @@ public sealed class ProgressionNodeButton : MonoBehaviour
     private bool isPointerDown;
     private bool wasPinned;
     private float hoverDirection = 1f;
+    private float revealDelay;
+    private float revealDelayRemaining;
+    private float revealElapsed;
+    private float revealAlpha = 1f;
+    private Color revealBaseColor = Color.white;
+    private bool revealPending;
+    private bool revealAnimating;
 
     public ProgressionSystem.UpgradeId UpgradeId => upgradeId;
     public int TargetLevel => targetLevel;
@@ -79,6 +89,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         button?.onClick.RemoveListener(Select);
         ProgressionSystem.Changed -= Refresh;
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
+        CancelReveal();
         ResetMotion();
     }
 
@@ -87,6 +98,27 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         if (!motionInitialized)
         {
             InitializeMotion();
+        }
+
+        float deltaTime = Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+        if (revealPending)
+        {
+            revealDelayRemaining -= Time.unscaledDeltaTime;
+            if (revealDelayRemaining > 0f)
+            {
+                ApplyRevealVisual(0f, 0f);
+                transform.localScale = Vector3.Scale(
+                    restingScale,
+                    Vector3.one * RevealStartScale);
+                transform.localRotation = restingRotation
+                    * Quaternion.Euler(
+                        0f,
+                        0f,
+                        hoverDirection * RevealStartRotation);
+                return;
+            }
+
+            BeginRevealMotion();
         }
 
         bool pinned = graphVisible
@@ -114,22 +146,53 @@ public sealed class ProgressionNodeButton : MonoBehaviour
             : hovered
                 ? hoverDirection * HoverTilt
                 : 0f;
-        float frequency = pressed ? 17f : 7.5f;
-        float damping = pressed ? 0.78f : 0.5f;
-        float deltaTime = Mathf.Min(Time.unscaledDeltaTime, 1f / 30f);
+        float frequency = revealAnimating
+            ? 8f
+            : pressed
+                ? 17f
+                : 7.5f;
+        float damping = revealAnimating
+            ? 0.34f
+            : pressed
+                ? 0.78f
+                : 0.5f;
         SpringUtils.MotionParams motion = SpringUtils.CalculateMotionParams(
             deltaTime,
             frequency,
             damping);
         scaleSpring.Update(targetScale, 0f, deltaTime, motion);
         rotationSpring.Update(targetRotation, 0f, deltaTime, motion);
-        scaleSpring.ClampValue(0.84f, 1.16f);
-        rotationSpring.ClampValue(-5f, 5f);
+        scaleSpring.ClampValue(
+            revealAnimating ? 0.01f : 0.84f,
+            revealAnimating ? 1.34f : 1.18f);
+        rotationSpring.ClampValue(
+            revealAnimating ? -15f : -5f,
+            revealAnimating ? 15f : 5f);
         transform.localScale = Vector3.Scale(
             restingScale,
             Vector3.one * scaleSpring.Value);
         transform.localRotation = restingRotation
             * Quaternion.Euler(0f, 0f, rotationSpring.Value);
+
+        if (revealAnimating)
+        {
+            revealElapsed += Time.unscaledDeltaTime;
+            float progress = Mathf.Clamp01(revealElapsed / RevealDuration);
+            revealAlpha = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.Clamp01(progress / 0.42f));
+            float whitePulse = Mathf.Pow(
+                Mathf.Sin(progress * Mathf.PI),
+                0.55f) * 1.45f;
+            ApplyRevealVisual(revealAlpha, whitePulse);
+            if (progress >= 1f)
+            {
+                revealAnimating = false;
+                revealAlpha = 1f;
+                ApplyRevealVisual(1f, 0f);
+            }
+        }
     }
 
     public void OnPointerEnter(PointerEventData eventData)
@@ -244,19 +307,37 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         Refresh();
     }
 
+    public void SetRevealDelay(float delay)
+    {
+        revealDelay = Mathf.Max(0f, delay);
+        if (revealPending)
+        {
+            revealDelayRemaining = revealDelay;
+        }
+    }
+
     public void SetGraphVisible(bool visible)
     {
+        bool becameVisible = visible && !graphVisible;
         graphVisible = visible;
-        if (graphCanvasGroup == null)
+        EnsureGraphCanvasGroup();
+
+        if (!visible)
         {
-            graphCanvasGroup = GetComponent<CanvasGroup>();
-            if (graphCanvasGroup == null)
-            {
-                graphCanvasGroup = gameObject.AddComponent<CanvasGroup>();
-            }
+            CancelReveal();
+            graphCanvasGroup.alpha = 0f;
+        }
+        else if (becameVisible)
+        {
+            QueueReveal();
+        }
+        else
+        {
+            graphCanvasGroup.alpha = revealPending || revealAnimating
+                ? revealAlpha
+                : 1f;
         }
 
-        graphCanvasGroup.alpha = visible ? 1f : 0f;
         graphCanvasGroup.interactable = visible;
         graphCanvasGroup.blocksRaycasts = visible;
     }
@@ -323,6 +404,7 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         if (background != null)
         {
             background.color = baseColor;
+            revealBaseColor = baseColor;
         }
 
         ColorBlock colors = button.colors;
@@ -430,6 +512,74 @@ public sealed class ProgressionNodeButton : MonoBehaviour
         treePreview?.Select(this);
         scaleSpring.AddImpulse(-0.72f);
         rotationSpring.AddImpulse(-hoverDirection * 24f);
+    }
+
+    private void QueueReveal()
+    {
+        if (!graphVisible)
+        {
+            return;
+        }
+
+        revealPending = true;
+        revealAnimating = false;
+        revealDelayRemaining = revealDelay;
+        revealElapsed = 0f;
+        revealAlpha = 0f;
+        scaleSpring.Reset(RevealStartScale);
+        rotationSpring.Reset(hoverDirection * RevealStartRotation);
+        ApplyRevealVisual(0f, 0f);
+    }
+
+    private void BeginRevealMotion()
+    {
+        revealPending = false;
+        revealAnimating = true;
+        revealElapsed = 0f;
+        scaleSpring.Reset(RevealStartScale);
+        scaleSpring.AddImpulse(5.5f);
+        rotationSpring.Reset(hoverDirection * RevealStartRotation);
+        rotationSpring.AddImpulse(-hoverDirection * 110f);
+    }
+
+    private void CancelReveal()
+    {
+        revealPending = false;
+        revealAnimating = false;
+        revealDelayRemaining = 0f;
+        revealElapsed = 0f;
+        revealAlpha = 1f;
+        ApplyRevealVisual(graphVisible ? 1f : 0f, 0f);
+    }
+
+    private void ApplyRevealVisual(float alpha, float whitePulse)
+    {
+        EnsureGraphCanvasGroup();
+        graphCanvasGroup.alpha = graphVisible ? alpha : 0f;
+        Image background = button != null
+            ? button.targetGraphic as Image
+            : null;
+        if (background != null)
+        {
+            background.color = Color.Lerp(
+                revealBaseColor,
+                Color.white,
+                Mathf.Clamp01(whitePulse));
+        }
+    }
+
+    private void EnsureGraphCanvasGroup()
+    {
+        if (graphCanvasGroup != null)
+        {
+            return;
+        }
+
+        graphCanvasGroup = GetComponent<CanvasGroup>();
+        if (graphCanvasGroup == null)
+        {
+            graphCanvasGroup = gameObject.AddComponent<CanvasGroup>();
+        }
     }
 
     private void HandleBalanceChanged(long _)

@@ -278,6 +278,12 @@ MonoBehaviour:
   moveSpeed: 0.6
   acceleration: 2
   angularSpeed: 360
+  incubatorExitSpeedMultiplier: 4
+  incubatorLaunchScale: {x: 0.7, y: 1.2, z: 0.7}
+  incubatorLandingScale: {x: 1.18, y: 0.72, z: 1.18}
+  incubatorLandingScaleImpulse: {x: -1.2, y: 2.4, z: -1.2}
+  incubatorScaleSpringFrequency: 7.5
+  incubatorScaleSpringDamping: 0.48
   maximumFoodScore: 100
   startingFoodScore: 45
   foodScoreDrainPerSecond: 0.75

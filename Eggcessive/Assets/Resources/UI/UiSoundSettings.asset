@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7d3c42e9f624be1af38bf46c44df8c2, type: 3}
+  m_Name: UiSoundSettings
+  m_EditorClassIdentifier: Assembly-CSharp::UiSoundSettings
+  buttonConfirm: {fileID: 8300000, guid: 4f187ca1265dbdd44afe085cd556faae, type: 3}
+  pointerTick: {fileID: 8300000, guid: 4620b35388bf5254b98fe54242ed40b9, type: 3}
+  slideOut: {fileID: 8300000, guid: 5090a8040c91f5d46a75230ac15786ab, type: 3}
+  buttonConfirmVolume: 1
+  pointerTickVolume: 1
+  slideOutVolume: 1

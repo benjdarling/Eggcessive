@@ -10,6 +10,8 @@ public static class IncubatorSystemSetup
 {
     private const string IncubatorModelPath = "Assets/Incubator/meshes/incubator.fbx";
     private const string IncubatorPrefabPath = "Assets/Incubator/prefabs/prefab_Incubator.prefab";
+    private const string IncubatorAnimatorPath =
+        "Assets/Incubator/animations/incubator.controller";
     private const string ChickenPrefabPath = "Assets/Chicken/prefabs/prefab_chicken.prefab";
     private const string HudPrefabPath = "Assets/UI/prefab_EggScoreHud.prefab";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
@@ -81,6 +83,7 @@ public static class IncubatorSystemSetup
 
         if (prefabController == null
             || intake == null
+            || incubatorPrefab.GetComponentInChildren<Animator>(true) == null
             || !intake.GetComponent<Collider>().isTrigger
             || clickTarget == null
             || !clickTarget.isTrigger
@@ -103,6 +106,7 @@ public static class IncubatorSystemSetup
         ValidateReference(serializedIncubator, "capacityText");
         ValidateReference(serializedIncubator, "timerText");
         ValidateReference(serializedIncubator, "chickenPrefab");
+        ValidateReference(serializedIncubator, "animatorController");
         ValidateReference(serializedIncubator, "processingLoopSfx");
         ValidateReference(serializedIncubator, "hatchDoneSfx");
         ValidateReference(new SerializedObject(intake), "incubator");
@@ -157,6 +161,9 @@ public static class IncubatorSystemSetup
     {
         GameObject modelAsset = AssetDatabase.LoadAssetAtPath<GameObject>(IncubatorModelPath);
         GameObject chickenPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(ChickenPrefabPath);
+        RuntimeAnimatorController animatorController =
+            AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(
+                IncubatorAnimatorPath);
         TMP_FontAsset font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(FontPath);
         AudioClip processingLoopSfx =
             AssetDatabase.LoadAssetAtPath<AudioClip>(ProcessingLoopSfxPath);
@@ -165,12 +172,13 @@ public static class IncubatorSystemSetup
 
         if (modelAsset == null
             || chickenPrefab == null
+            || animatorController == null
             || font == null
             || processingLoopSfx == null
             || hatchDoneSfx == null)
         {
             throw new InvalidOperationException(
-                "The incubator model, chicken prefab, TMP font, or audio is missing.");
+                "The incubator model, animator, chicken prefab, TMP font, or audio is missing.");
         }
 
         GameObject root = new GameObject("prefab_Incubator");
@@ -180,6 +188,16 @@ public static class IncubatorSystemSetup
             GameObject model = (GameObject)PrefabUtility.InstantiatePrefab(modelAsset);
             model.name = "Incubator Mesh";
             model.transform.SetParent(root.transform, false);
+            Animator modelAnimator = model.GetComponentInChildren<Animator>(true);
+
+            if (modelAnimator == null)
+            {
+                modelAnimator = model.AddComponent<Animator>();
+            }
+
+            modelAnimator.runtimeAnimatorController = animatorController;
+            modelAnimator.applyRootMotion = false;
+            modelAnimator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             ConfigureClickTarget(root, model);
 
             Transform eggStart = FindRequired(model.transform, "SOCKET_incubator_start");
@@ -225,6 +243,8 @@ public static class IncubatorSystemSetup
             serializedController.FindProperty("timerText").objectReferenceValue = timerText;
             serializedController.FindProperty("chickenPrefab").objectReferenceValue = chickenPrefab;
             serializedController.FindProperty("eggTravelDuration").floatValue = 0.65f;
+            serializedController.FindProperty("animatorController").objectReferenceValue =
+                animatorController;
             serializedController.FindProperty("processingLoopSfx").objectReferenceValue =
                 processingLoopSfx;
             serializedController.FindProperty("hatchDoneSfx").objectReferenceValue =
