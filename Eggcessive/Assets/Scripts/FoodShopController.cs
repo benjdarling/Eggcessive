@@ -730,11 +730,21 @@ public sealed class FoodShopController : MonoBehaviour
 
         if (affordabilityProgressFill != null)
         {
-            affordabilityProgressFill.fillAmount = Mathf.Clamp01(
+            SetProgressFill(
+                affordabilityProgressFill,
                 EggScoreHud.CurrentCents / (float)CurrentFeedBagCost);
         }
 
         RefreshToolButtons();
+    }
+
+    private static void SetProgressFill(Image fill, float amount)
+    {
+        RectTransform rect = fill.rectTransform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = new Vector2(Mathf.Clamp01(amount), 1f);
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
     }
 
 #if UNITY_EDITOR

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using DG.Tweening;
 using TMPro;
 using UnityEngine;
@@ -29,6 +30,7 @@ public sealed class EggScoreHud : MonoBehaviour
     private long targetCents;
     private Tweener countTween;
     private Tweener punchTween;
+    private Sequence entranceSequence;
 
     public static event Action<long> BalanceChanged;
     public static long CurrentCents => instance != null ? instance.targetCents : 0L;
@@ -63,6 +65,7 @@ public sealed class EggScoreHud : MonoBehaviour
     {
         countTween?.Kill();
         punchTween?.Kill();
+        entranceSequence?.Kill();
 
         if (instance == this)
         {
@@ -103,6 +106,34 @@ public sealed class EggScoreHud : MonoBehaviour
         BalanceChanged?.Invoke(instance.targetCents);
         instance.AnimateToTarget();
         return true;
+    }
+
+    public static void PlayRoundEntrance()
+    {
+        instance?.PlayEntrance();
+    }
+
+    public static bool PlayRoundOutro(Action onComplete)
+    {
+        return instance != null && instance.PlayOutro(onComplete);
+    }
+
+    private void PlayEntrance()
+    {
+        entranceSequence?.Kill();
+        entranceSequence = HudEntranceAnimation.CreateForDirectChildren(
+            transform,
+            this);
+    }
+
+    private bool PlayOutro(Action onComplete)
+    {
+        entranceSequence?.Kill();
+        entranceSequence = HudEntranceAnimation.CreateOutroForDirectChildren(
+            transform,
+            this,
+            onComplete);
+        return entranceSequence != null;
     }
 
     private void AnimateToTarget()
@@ -189,6 +220,235 @@ public sealed class EggScoreHud : MonoBehaviour
         punchStrength = Mathf.Max(0f, punchStrength);
         punchVibrato = Mathf.Max(1, punchVibrato);
         punchElasticity = Mathf.Clamp01(punchElasticity);
+    }
+}
+
+internal static class HudEntranceAnimation
+{
+    private const float Duration = 0.42f;
+    private const float Stagger = 0.035f;
+    private const float EdgePadding = 40f;
+    private const float Overshoot = 1.3f;
+
+    public static Sequence CreateForDirectChildren(
+        Transform root,
+        UnityEngine.Object tweenTarget)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        List<RectTransform> elements = new List<RectTransform>();
+        for (int index = 0; index < root.childCount; index++)
+        {
+            RectTransform rect = root.GetChild(index) as RectTransform;
+            if (IsEntranceElement(rect))
+            {
+                elements.Add(rect);
+            }
+        }
+
+        return Create(elements, tweenTarget);
+    }
+
+    public static Sequence CreateOutroForDirectChildren(
+        Transform root,
+        UnityEngine.Object tweenTarget,
+        Action onComplete)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        List<RectTransform> elements = new List<RectTransform>();
+        for (int index = 0; index < root.childCount; index++)
+        {
+            RectTransform rect = root.GetChild(index) as RectTransform;
+            if (IsEntranceElement(rect))
+            {
+                elements.Add(rect);
+            }
+        }
+
+        return CreateOutro(elements, tweenTarget, onComplete);
+    }
+
+    public static Sequence Create(
+        IReadOnlyList<RectTransform> elements,
+        UnityEngine.Object tweenTarget)
+    {
+        if (elements == null || elements.Count == 0)
+        {
+            return null;
+        }
+
+        List<RectTransform> activeElements = new List<RectTransform>(elements.Count);
+        for (int index = 0; index < elements.Count; index++)
+        {
+            RectTransform rect = elements[index];
+            if (IsEntranceElement(rect))
+            {
+                activeElements.Add(rect);
+            }
+        }
+
+        activeElements.Sort(CompareEntranceOrder);
+        if (activeElements.Count == 0)
+        {
+            return null;
+        }
+
+        List<Vector2> restingPositions = new List<Vector2>(activeElements.Count);
+        Sequence sequence = DOTween.Sequence()
+            .SetUpdate(true)
+            .SetTarget(tweenTarget);
+        for (int index = 0; index < activeElements.Count; index++)
+        {
+            RectTransform rect = activeElements[index];
+            Vector2 restingPosition = rect.anchoredPosition;
+            restingPositions.Add(restingPosition);
+            rect.anchoredPosition = restingPosition + GetOffscreenOffset(rect);
+            sequence.Insert(
+                index * Stagger,
+                rect.DOAnchorPos(restingPosition, Duration)
+                    .SetEase(Ease.OutBack, Overshoot));
+        }
+
+        sequence.OnKill(() => RestorePositions(activeElements, restingPositions));
+
+        return sequence;
+    }
+
+    public static Sequence CreateOutro(
+        IReadOnlyList<RectTransform> elements,
+        UnityEngine.Object tweenTarget,
+        Action onComplete)
+    {
+        if (elements == null || elements.Count == 0)
+        {
+            return null;
+        }
+
+        List<RectTransform> activeElements = new List<RectTransform>(elements.Count);
+        for (int index = 0; index < elements.Count; index++)
+        {
+            RectTransform rect = elements[index];
+            if (IsEntranceElement(rect))
+            {
+                activeElements.Add(rect);
+            }
+        }
+
+        activeElements.Sort(CompareEntranceOrder);
+        if (activeElements.Count == 0)
+        {
+            return null;
+        }
+
+        List<Vector2> restingPositions = new List<Vector2>(activeElements.Count);
+        Sequence sequence = DOTween.Sequence()
+            .SetUpdate(true)
+            .SetTarget(tweenTarget);
+        for (int index = 0; index < activeElements.Count; index++)
+        {
+            RectTransform rect = activeElements[index];
+            Vector2 restingPosition = rect.anchoredPosition;
+            restingPositions.Add(restingPosition);
+            sequence.Insert(
+                index * Stagger,
+                rect.DOAnchorPos(
+                        restingPosition + GetOffscreenOffset(rect),
+                        Duration)
+                    .SetEase(Ease.InBack, 1.15f));
+        }
+
+        sequence.OnComplete(() => onComplete?.Invoke());
+        sequence.OnKill(() => RestorePositions(activeElements, restingPositions));
+
+        return sequence;
+    }
+
+    private static void RestorePositions(
+        IReadOnlyList<RectTransform> elements,
+        IReadOnlyList<Vector2> restingPositions)
+    {
+        int count = Mathf.Min(elements.Count, restingPositions.Count);
+        for (int index = 0; index < count; index++)
+        {
+            if (elements[index] != null)
+            {
+                elements[index].anchoredPosition = restingPositions[index];
+            }
+        }
+    }
+
+    private static bool IsEntranceElement(RectTransform rect)
+    {
+        if (rect == null || !rect.gameObject.activeInHierarchy)
+        {
+            return false;
+        }
+
+        // Full-screen layers are modal backdrops/effect canvases rather than
+        // HUD cards. Moving them would expose the scene around their edges.
+        bool stretchesAcrossCanvas = rect.anchorMin == Vector2.zero
+            && rect.anchorMax == Vector2.one;
+        return !stretchesAcrossCanvas;
+    }
+
+    private static int CompareEntranceOrder(RectTransform left, RectTransform right)
+    {
+        int leftEdge = GetEntranceEdge(left);
+        int rightEdge = GetEntranceEdge(right);
+        int edgeComparison = leftEdge.CompareTo(rightEdge);
+        if (edgeComparison != 0)
+        {
+            return edgeComparison;
+        }
+
+        return left.position.x.CompareTo(right.position.x);
+    }
+
+    private static Vector2 GetOffscreenOffset(RectTransform rect)
+    {
+        Vector2 position = rect.anchoredPosition;
+        Rect bounds = rect.rect;
+        switch (GetEntranceEdge(rect))
+        {
+            case 0: // Left-side panels.
+                return Vector2.left
+                    * (bounds.width + Mathf.Abs(position.x) + EdgePadding);
+            case 1: // Top HUD cards.
+                return Vector2.up
+                    * (bounds.height + Mathf.Abs(position.y) + EdgePadding);
+            case 2: // Right-side panels.
+                return Vector2.right
+                    * (bounds.width + Mathf.Abs(position.x) + EdgePadding);
+            default: // Tool palettes and navigation along the bottom.
+                return Vector2.down
+                    * (bounds.height + Mathf.Abs(position.y) + EdgePadding);
+        }
+    }
+
+    private static int GetEntranceEdge(RectTransform rect)
+    {
+        Vector2 anchor = (rect.anchorMin + rect.anchorMax) * 0.5f;
+        if (anchor.y <= 0.25f)
+        {
+            return 3;
+        }
+        if (anchor.x <= 0.25f)
+        {
+            return 0;
+        }
+        if (anchor.x >= 0.75f && anchor.y < 0.75f)
+        {
+            return 2;
+        }
+
+        return 1;
     }
 }
 

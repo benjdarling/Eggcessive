@@ -14,6 +14,23 @@ public static class GameplayHudPrefabSetup
         "Assets/UI/prefab_EggScoreHud.prefab";
     private const string IconAtlasPath =
         "Assets/Resources/UI/HudIconAtlas.png";
+    private const string PanelSpritePath =
+        "Assets/UI/textures/t_ui_panel.psd";
+    private const float PanelPixelsPerUnitMultiplier = 1.5f;
+    private const string SubpanelSpritePath =
+        "Assets/UI/textures/t_ui_subpanel.psd";
+    private const float SubpanelPixelsPerUnitMultiplier = 1.5f;
+    private const string ProgressBarSpritePath =
+        "Assets/UI/textures/t_ui_progressBar.psd";
+    private const string ProgressBarFillSpritePath =
+        "Assets/UI/textures/t_ui_progressBar_fill.psd";
+    private const string ProgressBarMaterialPath =
+        "Assets/UI/materials/mat_ui_progress_bar.mat";
+    private static readonly Color ProgressBarBackgroundTint =
+        new Color(0.4f, 0.4f, 0.4f, 1f);
+    private static readonly Color ProgressBarFillColour =
+        new Color(1f, 192f / 255f, 0f, 1f);
+    private const float ProgressBarPixelsPerUnitMultiplier = 4f;
     private const int AuthoredPenButtonCount = 8;
 
     private static readonly string[] StatLabels =
@@ -44,6 +61,16 @@ public static class GameplayHudPrefabSetup
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
         Debug.Log("The eight pen buttons are now authored in the HUD prefab.");
+    }
+
+    [MenuItem("Tools/Eggcessive/Apply HUD Progress Bar Sprites")]
+    public static void ApplyHudProgressBarSprites()
+    {
+        ConfigureSavedPrefab(ToolHudPrefabPath, StyleProgressBars);
+        ConfigureSavedPrefab(RoundPrefabPath, StyleQuotaProgressBar);
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log("The HUD progress bars now use their background and fill sprites.");
     }
 
     public static void ConfigurePenHud(GameObject root)
@@ -99,18 +126,8 @@ public static class GameplayHudPrefabSetup
         statsRect.sizeDelta = new Vector2(260f, 198f);
 
         Image outer = stats.GetComponent<Image>();
-        outer.sprite = GetUiSprite();
-        outer.type = Image.Type.Sliced;
-        outer.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+        StyleHudPanel(outer);
         outer.raycastTarget = false;
-        ConfigureOutline(
-            stats.gameObject,
-            new Color(0.12f, 0.07f, 0.035f, 1f),
-            new Vector2(2f, -2f));
-        ConfigureShadow(
-            stats.gameObject,
-            new Color(0f, 0f, 0f, 0.5f),
-            new Vector2(3f, -4f));
 
         if (legacyLabels != null)
         {
@@ -127,6 +144,11 @@ public static class GameplayHudPrefabSetup
         SerializedProperty rowValues =
             serializedRound.FindProperty("liveStatRowValues");
         rowValues.arraySize = StatLabels.Length;
+        SerializedProperty rowHighlights =
+            serializedRound.FindProperty("liveStatRowHighlights");
+        rowHighlights.arraySize = StatLabels.Length;
+        serializedRound.FindProperty("liveStatHighlightSprite")
+            .objectReferenceValue = GetSubpanelSprite();
 
         for (int index = 0; index < StatLabels.Length; index++)
         {
@@ -135,9 +157,12 @@ public static class GameplayHudPrefabSetup
                 font,
                 atlas,
                 index,
-                StatLabels[index]);
+                StatLabels[index],
+                out Image highlight);
             rowValues.GetArrayElementAtIndex(index).objectReferenceValue =
                 value;
+            rowHighlights.GetArrayElementAtIndex(index).objectReferenceValue =
+                highlight;
         }
 
         RectTransform coinTarget = serializedRound
@@ -153,6 +178,7 @@ public static class GameplayHudPrefabSetup
 
         serializedRound.ApplyModifiedPropertiesWithoutUndo();
         EditorUtility.SetDirty(roundSystem);
+        StyleQuotaProgressBar(root);
     }
 
     public static void ConfigureToolHud(GameObject root)
@@ -351,6 +377,7 @@ public static class GameplayHudPrefabSetup
         serializedController.ApplyModifiedPropertiesWithoutUndo();
         EditorUtility.SetDirty(controller);
         EditorUtility.SetDirty(penHud);
+        StyleProgressBars(root);
     }
 
     private static void ConfigurePenNavigation(
@@ -464,17 +491,23 @@ public static class GameplayHudPrefabSetup
         progress.anchoredPosition = new Vector2(0f, 2f);
         progress.sizeDelta = new Vector2(-6f, 3f);
         Image progressTrack = progress.gameObject.AddComponent<Image>();
-        progressTrack.color = new Color(0.04f, 0.04f, 0.03f, 0.9f);
+        progressTrack.sprite = GetProgressBarSprite();
+        progressTrack.material = GetProgressBarMaterial();
+        progressTrack.type = Image.Type.Sliced;
+        progressTrack.pixelsPerUnitMultiplier =
+            ProgressBarPixelsPerUnitMultiplier;
+        progressTrack.color = ProgressBarBackgroundTint;
         progressTrack.raycastTarget = false;
 
         RectTransform fillRect = CreateUiObject("Fill", progress);
         Stretch(fillRect, 0f);
         Image fill = fillRect.gameObject.AddComponent<Image>();
-        fill.color = new Color(1f, 0.72f, 0.12f, 1f);
-        fill.type = Image.Type.Filled;
-        fill.fillMethod = Image.FillMethod.Horizontal;
-        fill.fillOrigin = (int)Image.OriginHorizontal.Left;
-        fill.fillAmount = 0f;
+        fill.sprite = GetProgressBarFillSprite();
+        fill.material = GetProgressBarMaterial();
+        fill.color = ProgressBarFillColour;
+        fill.type = Image.Type.Sliced;
+        fill.pixelsPerUnitMultiplier = ProgressBarPixelsPerUnitMultiplier;
+        fillRect.anchorMax = new Vector2(0f, 1f);
         fill.raycastTarget = false;
 
         TMP_Text earningsText = CreateText(
@@ -597,17 +630,7 @@ public static class GameplayHudPrefabSetup
             new Vector2(24f, -24f),
             new Vector2(260f, 310f));
         Image panelImage = panel.gameObject.AddComponent<Image>();
-        panelImage.sprite = GetUiSprite();
-        panelImage.type = Image.Type.Sliced;
-        panelImage.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
-        ConfigureOutline(
-            panel.gameObject,
-            new Color(0.12f, 0.07f, 0.035f, 1f),
-            new Vector2(2f, -2f));
-        ConfigureShadow(
-            panel.gameObject,
-            new Color(0f, 0f, 0f, 0.5f),
-            new Vector2(3f, -4f));
+        StyleHudPanel(panelImage);
 
         TMP_Text panelTitle = CreateText(
             "Panel Title",
@@ -656,8 +679,7 @@ public static class GameplayHudPrefabSetup
                 new Vector2(8f, -38f - index * 66f),
                 new Vector2(244f, 59f));
             Image background = card.gameObject.AddComponent<Image>();
-            background.sprite = GetUiSprite();
-            background.type = Image.Type.Sliced;
+            StyleHudSubpanel(background);
             background.color = new Color(0.16f, 0.24f, 0.14f, 1f);
             Button button = card.gameObject.AddComponent<Button>();
             button.targetGraphic = background;
@@ -693,14 +715,23 @@ public static class GameplayHudPrefabSetup
             SetTopLeftRect(
                 progress,
                 new Vector2(142f, -42f),
-                new Vector2(94f, 10f));
+                new Vector2(94f, 12f));
             Image progressBack = progress.gameObject.AddComponent<Image>();
-            progressBack.color = new Color(0.08f, 0.08f, 0.06f, 1f);
+            progressBack.sprite = GetProgressBarSprite();
+            progressBack.material = GetProgressBarMaterial();
+            progressBack.type = Image.Type.Sliced;
+            progressBack.pixelsPerUnitMultiplier =
+                ProgressBarPixelsPerUnitMultiplier;
+            progressBack.color = ProgressBarBackgroundTint;
             progressBack.raycastTarget = false;
             RectTransform fillRect = CreateUiObject("Fill", progress);
             Stretch(fillRect, 0f);
             Image fill = fillRect.gameObject.AddComponent<Image>();
-            fill.color = new Color(1f, 0.68f, 0.08f, 1f);
+            fill.sprite = GetProgressBarFillSprite();
+            fill.material = GetProgressBarMaterial();
+            fill.type = Image.Type.Sliced;
+            fill.pixelsPerUnitMultiplier = ProgressBarPixelsPerUnitMultiplier;
+            fill.color = ProgressBarFillColour;
             fill.raycastTarget = false;
             TMP_Text progressText = CreateText(
                 "Cash Text", card, font, "$0.00 / $0.00", 8f,
@@ -734,13 +765,7 @@ public static class GameplayHudPrefabSetup
             new Vector2(270f, 0f),
             new Vector2(520f, 330f));
         Image dialogCardImage = dialogCard.gameObject.AddComponent<Image>();
-        dialogCardImage.sprite = GetUiSprite();
-        dialogCardImage.type = Image.Type.Sliced;
-        dialogCardImage.color = new Color(0.055f, 0.06f, 0.045f, 1f);
-        ConfigureOutline(
-            dialogCard.gameObject,
-            new Color(0.35f, 0.22f, 0.06f, 1f),
-            new Vector2(4f, -4f));
+        StyleHudPanel(dialogCardImage);
 
         TMP_Text dialogTitle = CreateText(
             "Dialog Title", dialogCard, font, "PEN 1 UPGRADES", 24f,
@@ -788,8 +813,7 @@ public static class GameplayHudPrefabSetup
                 new Vector2(0f, -index * 72f),
                 new Vector2(464f, 64f));
             Image rowImage = row.gameObject.AddComponent<Image>();
-            rowImage.sprite = GetUiSprite();
-            rowImage.type = Image.Type.Sliced;
+            StyleHudSubpanel(rowImage);
             rowImage.color = new Color(0.16f, 0.24f, 0.14f, 1f);
             Button rowButton = row.gameObject.AddComponent<Button>();
             rowButton.targetGraphic = rowImage;
@@ -803,15 +827,25 @@ public static class GameplayHudPrefabSetup
             rowProgress.anchorMax = new Vector2(1f, 0f);
             rowProgress.pivot = new Vector2(0.5f, 0f);
             rowProgress.anchoredPosition = new Vector2(0f, 3f);
-            rowProgress.sizeDelta = new Vector2(-12f, 6f);
+            rowProgress.sizeDelta = new Vector2(-12f, 12f);
             Image rowProgressBack =
                 rowProgress.gameObject.AddComponent<Image>();
-            rowProgressBack.color = new Color(0.06f, 0.06f, 0.05f, 1f);
+            rowProgressBack.sprite = GetProgressBarSprite();
+            rowProgressBack.material = GetProgressBarMaterial();
+            rowProgressBack.type = Image.Type.Sliced;
+            rowProgressBack.pixelsPerUnitMultiplier =
+                ProgressBarPixelsPerUnitMultiplier;
+            rowProgressBack.color = ProgressBarBackgroundTint;
             rowProgressBack.raycastTarget = false;
             RectTransform rowFillRect = CreateUiObject("Fill", rowProgress);
             Stretch(rowFillRect, 0f);
             Image rowFill = rowFillRect.gameObject.AddComponent<Image>();
-            rowFill.color = new Color(1f, 0.68f, 0.08f, 1f);
+            rowFill.sprite = GetProgressBarFillSprite();
+            rowFill.material = GetProgressBarMaterial();
+            rowFill.type = Image.Type.Sliced;
+            rowFill.pixelsPerUnitMultiplier =
+                ProgressBarPixelsPerUnitMultiplier;
+            rowFill.color = ProgressBarFillColour;
             rowFill.raycastTarget = false;
             upgradeButtons[index] = rowButton;
             upgradeLabels[index] = rowLabel;
@@ -884,7 +918,8 @@ public static class GameplayHudPrefabSetup
         TMP_FontAsset font,
         Texture2D atlas,
         int index,
-        string label)
+        string label,
+        out Image highlight)
     {
         RectTransform row = CreateUiObject($"HUD Stat Row {index}", parent);
         SetCenteredRect(
@@ -900,6 +935,20 @@ public static class GameplayHudPrefabSetup
         layout.childControlHeight = true;
         layout.childForceExpandWidth = false;
         layout.childForceExpandHeight = false;
+
+        RectTransform highlightRect = CreateUiObject("Highlight", row);
+        highlightRect.anchorMin = Vector2.zero;
+        highlightRect.anchorMax = Vector2.one;
+        highlightRect.offsetMin = new Vector2(-10f, -5f);
+        highlightRect.offsetMax = new Vector2(10f, 5f);
+        highlight = highlightRect.gameObject.AddComponent<Image>();
+        StyleHudSubpanel(highlight);
+        highlight.color = new Color(1f, 0.9f, 0f, 0f);
+        highlight.raycastTarget = false;
+        LayoutElement highlightLayout =
+            highlightRect.gameObject.AddComponent<LayoutElement>();
+        highlightLayout.ignoreLayout = true;
+        highlightRect.SetAsFirstSibling();
 
         RectTransform iconRect = CreateUiObject("Icon", row);
         RawImage icon = iconRect.gameObject.AddComponent<RawImage>();
@@ -1368,6 +1417,184 @@ public static class GameplayHudPrefabSetup
     {
         return AssetDatabase.GetBuiltinExtraResource<Sprite>(
             "UI/Skin/UISprite.psd");
+    }
+
+    private static Sprite GetPanelSprite()
+    {
+        Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(PanelSpritePath);
+        if (sprite == null)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the HUD panel sprite at {PanelSpritePath}.");
+        }
+
+        return sprite;
+    }
+
+    private static void StyleHudPanel(Image image)
+    {
+        image.sprite = GetPanelSprite();
+        image.type = Image.Type.Sliced;
+        image.pixelsPerUnitMultiplier = PanelPixelsPerUnitMultiplier;
+        image.color = Color.black;
+
+        foreach (Shadow effect in image.GetComponents<Shadow>())
+        {
+            Object.DestroyImmediate(effect);
+        }
+    }
+
+    private static void StyleHudSubpanel(Image image)
+    {
+        Sprite sprite = GetSubpanelSprite();
+        image.sprite = sprite;
+        image.type = Image.Type.Sliced;
+        image.pixelsPerUnitMultiplier =
+            SubpanelPixelsPerUnitMultiplier;
+    }
+
+    private static Sprite GetSubpanelSprite()
+    {
+        Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(SubpanelSpritePath);
+        if (sprite == null)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the HUD subpanel sprite at {SubpanelSpritePath}.");
+        }
+
+        return sprite;
+    }
+
+    private static Sprite GetProgressBarSprite()
+    {
+        Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(
+            ProgressBarSpritePath);
+        if (sprite == null)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the HUD progress bar sprite at {ProgressBarSpritePath}.");
+        }
+
+        return sprite;
+    }
+
+    private static Sprite GetProgressBarFillSprite()
+    {
+        Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(
+            ProgressBarFillSpritePath);
+        if (sprite == null)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the HUD progress fill sprite at {ProgressBarFillSpritePath}.");
+        }
+
+        return sprite;
+    }
+
+    private static Material GetProgressBarMaterial()
+    {
+        Material material = AssetDatabase.LoadAssetAtPath<Material>(
+            ProgressBarMaterialPath);
+        if (material == null)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the HUD progress bar material at {ProgressBarMaterialPath}.");
+        }
+
+        return material;
+    }
+
+    private static void StyleProgressBars(GameObject root)
+    {
+        Sprite backgroundSprite = GetProgressBarSprite();
+        Sprite fillSprite = GetProgressBarFillSprite();
+        Material material = GetProgressBarMaterial();
+        string[] progressBarNames =
+        {
+            "Savings Progress",
+            "Cash Progress",
+            "Affordability Progress"
+        };
+
+        foreach (Image image in root.GetComponentsInChildren<Image>(true))
+        {
+            if (!progressBarNames.Contains(image.gameObject.name))
+            {
+                continue;
+            }
+
+            image.sprite = backgroundSprite;
+            image.material = material;
+            image.type = Image.Type.Sliced;
+            image.pixelsPerUnitMultiplier =
+                ProgressBarPixelsPerUnitMultiplier;
+            image.color = ProgressBarBackgroundTint;
+            EditorUtility.SetDirty(image);
+
+            Transform fillTransform = image.transform.Find("Fill");
+            Image fill = fillTransform != null
+                ? fillTransform.GetComponent<Image>()
+                : null;
+            if (fill == null)
+            {
+                continue;
+            }
+
+            float amount = fill.type == Image.Type.Filled
+                ? fill.fillAmount
+                : fill.rectTransform.anchorMax.x;
+            fill.sprite = fillSprite;
+            fill.material = material;
+            fill.type = Image.Type.Sliced;
+            fill.pixelsPerUnitMultiplier =
+                ProgressBarPixelsPerUnitMultiplier;
+            if (image.gameObject.name == "Cash Progress"
+                || image.gameObject.name == "Savings Progress")
+            {
+                fill.color = ProgressBarFillColour;
+            }
+            fill.rectTransform.anchorMin = Vector2.zero;
+            fill.rectTransform.anchorMax = new Vector2(amount, 1f);
+            fill.rectTransform.offsetMin = Vector2.zero;
+            fill.rectTransform.offsetMax = Vector2.zero;
+            EditorUtility.SetDirty(fill);
+        }
+    }
+
+    private static void StyleQuotaProgressBar(GameObject root)
+    {
+        Transform track = FindDescendant(root.transform, "Pen Contribution Track");
+        Image background = track != null ? track.GetComponent<Image>() : null;
+        if (background == null)
+        {
+            return;
+        }
+
+        background.sprite = GetProgressBarSprite();
+        background.material = GetProgressBarMaterial();
+        background.type = Image.Type.Sliced;
+        background.pixelsPerUnitMultiplier =
+            ProgressBarPixelsPerUnitMultiplier;
+        background.color = ProgressBarBackgroundTint;
+        EditorUtility.SetDirty(background);
+
+        int penIndex = 0;
+        foreach (Image fill in track.GetComponentsInChildren<Image>(true))
+        {
+            if (fill == background)
+            {
+                continue;
+            }
+
+            fill.sprite = GetProgressBarFillSprite();
+            fill.material = GetProgressBarMaterial();
+            fill.type = Image.Type.Sliced;
+            fill.pixelsPerUnitMultiplier =
+                ProgressBarPixelsPerUnitMultiplier;
+            fill.color = PenUiPalette.GetColour(penIndex);
+            EditorUtility.SetDirty(fill);
+            penIndex++;
+        }
     }
 
     private static void ConfigureSavedPrefab(

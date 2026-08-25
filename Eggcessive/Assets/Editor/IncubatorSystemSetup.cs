@@ -14,6 +14,12 @@ public static class IncubatorSystemSetup
         "Assets/Incubator/animations/incubator.controller";
     private const string ChickenPrefabPath = "Assets/Chicken/prefabs/prefab_chicken.prefab";
     private const string HudPrefabPath = "Assets/UI/prefab_EggScoreHud.prefab";
+    private const string ProgressBarSpritePath =
+        "Assets/UI/textures/t_ui_progressBar.psd";
+    private const string ProgressBarFillSpritePath =
+        "Assets/UI/textures/t_ui_progressBar_fill.psd";
+    private const string ProgressBarMaterialPath =
+        "Assets/UI/materials/mat_ui_progress_bar.mat";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string FontPath = "Assets/Fonts/Cat Song SDF.asset";
     private const string ProcessingLoopSfxPath =
@@ -325,19 +331,25 @@ public static class IncubatorSystemSetup
             RectTransform progress = CreateUiObject("Affordability Progress", shop);
             SetRect(progress, new Vector2(0.5f, 1f), new Vector2(0f, -110f), new Vector2(228f, 12f));
             Image progressBackground = progress.gameObject.AddComponent<Image>();
-            progressBackground.sprite = GetUiSprite();
+            progressBackground.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(
+                ProgressBarSpritePath);
+            progressBackground.material = AssetDatabase.LoadAssetAtPath<Material>(
+                ProgressBarMaterialPath);
             progressBackground.type = Image.Type.Sliced;
-            progressBackground.color = new Color(0.025f, 0.045f, 0.04f, 0.95f);
+            progressBackground.pixelsPerUnitMultiplier = 4f;
+            progressBackground.color = new Color(0.4f, 0.4f, 0.4f, 1f);
             progressBackground.raycastTarget = false;
 
             RectTransform fillRect = CreateUiObject("Fill", progress);
-            Stretch(fillRect, 2f);
+            Stretch(fillRect, 0f);
+            fillRect.anchorMax = new Vector2(0f, 1f);
             Image progressFill = fillRect.gameObject.AddComponent<Image>();
-            progressFill.sprite = GetUiSprite();
-            progressFill.type = Image.Type.Filled;
-            progressFill.fillMethod = Image.FillMethod.Horizontal;
-            progressFill.fillOrigin = (int)Image.OriginHorizontal.Left;
-            progressFill.fillAmount = 0f;
+            progressFill.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(
+                ProgressBarFillSpritePath);
+            progressFill.material = AssetDatabase.LoadAssetAtPath<Material>(
+                ProgressBarMaterialPath);
+            progressFill.type = Image.Type.Sliced;
+            progressFill.pixelsPerUnitMultiplier = 4f;
             progressFill.color = new Color(0.2f, 0.78f, 0.48f, 1f);
             progressFill.raycastTarget = false;
 

@@ -288,10 +288,21 @@ public sealed class IncubatorShopController : MonoBehaviour
 
         if (affordabilityProgressFill != null)
         {
-            affordabilityProgressFill.fillAmount = hasUpgrade
-                ? Mathf.Clamp01(EggScoreHud.CurrentCents / (float)cost)
-                : 1f;
+            SetProgressFill(
+                affordabilityProgressFill,
+                hasUpgrade
+                    ? EggScoreHud.CurrentCents / (float)cost
+                    : 1f);
         }
+    }
+
+    private static void SetProgressFill(Image fill, float amount)
+    {
+        RectTransform rect = fill.rectTransform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = new Vector2(Mathf.Clamp01(amount), 1f);
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
     }
 
     private int GetCost(int level)

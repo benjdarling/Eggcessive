@@ -285,7 +285,7 @@ public sealed class PenButtonView : MonoBehaviour
             return;
         }
 
-        progressFill.type = Image.Type.Simple;
+        progressFill.type = Image.Type.Sliced;
         RectTransform rect = progressFill.rectTransform;
         rect.anchorMin = Vector2.zero;
         rect.anchorMax = new Vector2(Mathf.Clamp01(amount), 1f);
@@ -315,7 +315,7 @@ public sealed class PenButtonView : MonoBehaviour
     }
 }
 
-internal static class PenUiPalette
+public static class PenUiPalette
 {
     private static readonly Color[] Colours =
     {

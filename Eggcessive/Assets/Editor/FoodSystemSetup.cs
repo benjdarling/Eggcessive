@@ -12,6 +12,7 @@ public static class FoodSystemSetup
     private const string ChickenPrefabPath = "Assets/Chicken/prefabs/prefab_chicken.prefab";
     private const string HudPrefabPath = "Assets/UI/prefab_EggScoreHud.prefab";
     private const string FoodPrefabPath = "Assets/Food/prefabs/prefab_food.prefab";
+    private const string FoodModelPath = "Assets/Food/meshes/foodPile.fbx";
     private const string FoodMaterialPath = "Assets/Food/materials/mat_food.mat";
     private const string AnimatorControllerPath = "Assets/Chicken/Animations/chicken.controller";
 
@@ -212,10 +213,26 @@ public static class FoodSystemSetup
         sphere.transform.SetParent(root.transform, false);
         sphere.transform.localPosition = new Vector3(0f, 0.05f, 0f);
         sphere.transform.localScale = new Vector3(0.3f, 0.1f, 0.3f);
-        sphere.GetComponent<Renderer>().sharedMaterial = material;
+
+        GameObject foodModel = AssetDatabase.LoadAssetAtPath<GameObject>(FoodModelPath);
+        GameObject visual = foodModel != null
+            ? (GameObject)PrefabUtility.InstantiatePrefab(foodModel)
+            : sphere;
+        if (foodModel != null)
+        {
+            visual.name = "foodPile";
+            visual.transform.SetParent(root.transform, false);
+            visual.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+            visual.transform.localScale = Vector3.one;
+            UnityEngine.Object.DestroyImmediate(sphere.GetComponent<Renderer>());
+        }
+        else
+        {
+            sphere.GetComponent<Renderer>().sharedMaterial = material;
+        }
 
         SerializedObject serializedPile = new SerializedObject(pile);
-        serializedPile.FindProperty("visualRoot").objectReferenceValue = sphere.transform;
+        serializedPile.FindProperty("visualRoot").objectReferenceValue = visual.transform;
         serializedPile.ApplyModifiedPropertiesWithoutUndo();
 
         GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, FoodPrefabPath);

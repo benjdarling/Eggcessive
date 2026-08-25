@@ -1,9 +1,19 @@
 fileFormatVersion: 2
-guid: 8a823b9e5fb25ec40b892300e5fdaa74
+guid: 135b1d752472135409133293583128d7
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_foodPile
+    second: {fileID: 2100000, guid: 248b75d32eff6e244b027bad3a5ca4d2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: mat_foodPile_alpha
+    second: {fileID: 2100000, guid: aa02f7c38f8e81e458c96cc83eb9c737, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

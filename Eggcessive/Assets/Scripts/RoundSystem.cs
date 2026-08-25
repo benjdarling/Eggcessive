@@ -70,6 +70,15 @@ public sealed class RoundSystem : MonoBehaviour
         "Assets/Fonts/Cat Song Countdown SDF.asset";
     private const string CountdownFontMaterialPath =
         "Assets/Fonts/Cat Song SDF - Countdown.mat";
+    private const string PanelSpritePath =
+        "Assets/UI/textures/t_ui_panel.psd";
+    private const float PanelPixelsPerUnitMultiplier = 1.5f;
+    private const string ProgressBarSpritePath =
+        "Assets/UI/textures/t_ui_progressBar.psd";
+    private const string ProgressBarFillSpritePath =
+        "Assets/UI/textures/t_ui_progressBar_fill.psd";
+    private const string ProgressBarMaterialPath =
+        "Assets/UI/materials/mat_ui_progress_bar.mat";
 #endif
 
     [Header("Round")]
@@ -115,6 +124,7 @@ public sealed class RoundSystem : MonoBehaviour
     private TruckSpringAnimator truckSpringAnimator;
     private Canvas gameplayHudCanvas;
     private RectTransform gameplayCashHudTarget;
+    private RectTransform liveStatsCashIconTarget;
 
     [Header("Authored UI")]
     [SerializeField] private GameObject intermissionScreen;
@@ -134,6 +144,9 @@ public sealed class RoundSystem : MonoBehaviour
     [SerializeField] private TMP_Text liveStatsValueText;
     [SerializeField] private TMP_Text[] liveStatRowValues =
         new TMP_Text[6];
+    [SerializeField] private Sprite liveStatHighlightSprite = null;
+    [SerializeField] private Image[] liveStatRowHighlights =
+        new Image[6];
     [SerializeField] private TMP_Text resultsTitleText;
     [SerializeField] private TMP_Text resultsCashText;
     [SerializeField] private TMP_Text resultsCollectedText;
@@ -336,6 +349,7 @@ public sealed class RoundSystem : MonoBehaviour
     private AudioSource grabAudioSource;
     private AudioSource vacuumAudioSource;
     private Coroutine vacuumSfxFade;
+    private Sequence roundHudEntranceSequence;
     private bool vacuumSfxRequestedActive;
     private AudioSource vacuumEggAudioSource;
     private AudioSource foodAudioSource;
@@ -357,6 +371,8 @@ public sealed class RoundSystem : MonoBehaviour
     private readonly long[] roundCashContributionsCents =
         new long[8];
     private readonly int[] roundEggContributions = new int[8];
+    private readonly double[] previousLiveStatValues = new double[6];
+    private bool liveStatValuesInitialized;
     private TMP_Text resultsSubtitleText;
     private TMP_Text resultsQuotaLabelText;
     private GameObject resultsTipsPanel;
@@ -524,6 +540,7 @@ public sealed class RoundSystem : MonoBehaviour
             : null;
         ResolveResultsPresentationReferences();
         InitializeQuotaHud();
+        EnsureLiveStatHighlights();
         SetEggcessiveHudLayout(GameMenuController.IsEggcessiveMode);
         EggContainer.EggCollectedWithWeightFromContainer += HandleEggCollected;
         EggContainer.FocusedContainerChanged += HandleFocusedContainerChanged;
@@ -1119,6 +1136,14 @@ public sealed class RoundSystem : MonoBehaviour
         EggScoreHud.BalanceChanged -= HandleBalanceChanged;
         ProgressionSystem.Changed -= HandleProgressionChanged;
         shopBalanceTween?.Kill();
+        roundHudEntranceSequence?.Kill();
+        if (liveStatRowHighlights != null)
+        {
+            foreach (Image highlight in liveStatRowHighlights)
+            {
+                highlight?.DOKill();
+            }
+        }
         ClearRewardPresentation();
         ClearPendingContainerRewardVisuals();
         DestroyRewardParticleSystems();
@@ -1210,6 +1235,7 @@ public sealed class RoundSystem : MonoBehaviour
         RefreshTimer();
         RefreshLiveStats();
         RefreshQuotaHud();
+        PlayRoundHudEntrance();
         RoundStarted?.Invoke(roundNumber);
 
         countdownText.text = "GO!";
@@ -1220,6 +1246,98 @@ public sealed class RoundSystem : MonoBehaviour
         {
             countdownDisplay.SetActive(false);
         }
+    }
+
+    private void PlayRoundHudEntrance()
+    {
+        roundHudEntranceSequence?.Kill();
+        List<RectTransform> elements = new List<RectTransform>(3);
+        AddActiveHudRect(elements, quotaDisplay);
+        AddActiveHudRect(elements, timerDisplay);
+        AddActiveHudRect(elements, liveStatsDisplay);
+        roundHudEntranceSequence = HudEntranceAnimation.Create(elements, this);
+        EggScoreHud.PlayRoundEntrance();
+    }
+
+    private static void AddActiveHudRect(
+        ICollection<RectTransform> elements,
+        GameObject candidate)
+    {
+        if (candidate != null
+            && candidate.activeInHierarchy
+            && candidate.transform is RectTransform rect)
+        {
+            elements.Add(rect);
+        }
+    }
+
+    private void PlayRoundHudOutro()
+    {
+        roundHudEntranceSequence?.Kill();
+        int pendingAnimations = 0;
+        Action handleCompleted = () =>
+        {
+            pendingAnimations--;
+            if (pendingAnimations <= 0)
+            {
+                CompleteRoundHudOutro();
+            }
+        };
+        Action handleRoundHudCompleted = () =>
+        {
+            // DOTween restores the elements' resting positions when the
+            // completed sequence auto-kills. Hide this group first so that
+            // restoration cannot produce a one-frame reappearance while the
+            // gameplay HUD's longer staggered outro is still running.
+            timerDisplay.SetActive(false);
+            liveStatsDisplay.SetActive(false);
+            quotaDisplay.SetActive(false);
+            handleCompleted();
+        };
+        Action handleGameplayHudCompleted = () =>
+        {
+            if (gameplayHudCanvas != null)
+            {
+                gameplayHudCanvas.enabled = false;
+            }
+
+            handleCompleted();
+        };
+
+        List<RectTransform> elements = new List<RectTransform>(3);
+        AddActiveHudRect(elements, quotaDisplay);
+        AddActiveHudRect(elements, timerDisplay);
+        AddActiveHudRect(elements, liveStatsDisplay);
+        roundHudEntranceSequence = HudEntranceAnimation.CreateOutro(
+            elements,
+            this,
+            handleRoundHudCompleted);
+        if (roundHudEntranceSequence != null)
+        {
+            pendingAnimations++;
+        }
+
+        if (EggScoreHud.PlayRoundOutro(handleGameplayHudCompleted))
+        {
+            pendingAnimations++;
+        }
+
+        if (pendingAnimations == 0)
+        {
+            CompleteRoundHudOutro();
+        }
+    }
+
+    private void CompleteRoundHudOutro()
+    {
+        if (Phase == RoundPhase.InProgress || Phase == RoundPhase.Settling)
+        {
+            return;
+        }
+
+        timerDisplay.SetActive(false);
+        liveStatsDisplay.SetActive(false);
+        SetGameplayHudVisible(false);
     }
 
     private IEnumerator PulseCountdown(float duration)
@@ -1296,15 +1414,14 @@ public sealed class RoundSystem : MonoBehaviour
             return;
         }
 
-        SetPhase(RoundPhase.TruckDeparting);
+        SetPhase(RoundPhase.TruckDeparting, true);
         ChickenEgg.ClearAllActive();
         FoodPile.ClearAllActive();
-        timerDisplay.SetActive(false);
-        liveStatsDisplay.SetActive(false);
         countdownDisplay.SetActive(false);
         finalChickenCount = CountChickens();
         PlayRoundCueSfx(roundEndSfx);
         RoundEnded?.Invoke(roundNumber);
+        PlayRoundHudOutro();
 
         if (truckMovement != null)
         {
@@ -1985,10 +2102,14 @@ public sealed class RoundSystem : MonoBehaviour
         return $"${cents / 100:N0}.{Math.Abs(cents % 100):D2}";
     }
 
-    private void SetPhase(RoundPhase phase)
+    private void SetPhase(
+        RoundPhase phase,
+        bool keepGameplayHudVisible = false)
     {
         SetGameplayHudVisible(
-            phase == RoundPhase.InProgress || phase == RoundPhase.Settling);
+            keepGameplayHudVisible
+            || phase == RoundPhase.InProgress
+            || phase == RoundPhase.Settling);
 
         if (Phase == phase)
         {
@@ -3433,6 +3554,7 @@ public sealed class RoundSystem : MonoBehaviour
         {
             RewardParticleLanding landing =
                 pendingRewardParticleLandings.Dequeue();
+            PlayLiveStatHighlight(2);
 
             if (landing.IsCashNote)
             {
@@ -3834,9 +3956,14 @@ public sealed class RoundSystem : MonoBehaviour
 
     private Vector2 GetCashHudTargetScreenPosition()
     {
-        RectTransform target = gameplayCashHudTarget != null
-            ? gameplayCashHudTarget
-            : coinHudTarget;
+        RectTransform target = GetLiveStatsCashIconTarget();
+        if (target == null)
+        {
+            target = gameplayCashHudTarget != null
+                ? gameplayCashHudTarget
+                : coinHudTarget;
+        }
+
         if (target == null)
         {
             return new Vector2(Screen.width, Screen.height);
@@ -3852,12 +3979,31 @@ public sealed class RoundSystem : MonoBehaviour
                 : Camera.main;
         }
 
-        // Transform the center of the live cash text instead of aiming at a
-        // duplicated marker whose position can drift at other aspect ratios.
+        // Aim at the exact visual target rather than an approximate marker,
+        // so reward particles stay aligned at every canvas aspect ratio.
         Vector3 targetWorldPosition = target.TransformPoint(target.rect.center);
         return RectTransformUtility.WorldToScreenPoint(
             targetCamera,
             targetWorldPosition);
+    }
+
+    private RectTransform GetLiveStatsCashIconTarget()
+    {
+        if (liveStatsCashIconTarget != null)
+        {
+            return liveStatsCashIconTarget;
+        }
+
+        if (liveStatRowValues == null
+            || liveStatRowValues.Length <= 2
+            || liveStatRowValues[2] == null)
+        {
+            return null;
+        }
+
+        Transform cashRow = liveStatRowValues[2].transform.parent;
+        liveStatsCashIconTarget = cashRow.Find("Icon") as RectTransform;
+        return liveStatsCashIconTarget;
     }
 
     private void HandleEggLaid()
@@ -4035,6 +4181,15 @@ public sealed class RoundSystem : MonoBehaviour
         float eggsPerMinute = roundElapsed > 0.01f
             ? roundEggsCollected * 60f / roundElapsed
             : 0f;
+        double[] numericValues =
+        {
+            roundEggsCollected,
+            eggsPerMinute,
+            EggScoreHud.CurrentCents,
+            CountChickens(),
+            trucksFilled,
+            totalCollectedEggWeight
+        };
         string[] values =
         {
             roundEggsCollected.ToString(),
@@ -4055,11 +4210,131 @@ public sealed class RoundSystem : MonoBehaviour
                     liveStatRowValues[index].text = values[index];
                 }
             }
+
+            EnsureLiveStatHighlights();
+            if (liveStatValuesInitialized
+                && liveStatRowHighlights != null)
+            {
+                int highlightCount = Math.Min(
+                    numericValues.Length,
+                    liveStatRowHighlights.Length);
+                for (int index = 0; index < highlightCount; index++)
+                {
+                    if (ShouldHighlightLiveStat(index)
+                        && numericValues[index] > previousLiveStatValues[index])
+                    {
+                        PlayLiveStatHighlight(index);
+                    }
+                }
+            }
         }
         else if (liveStatsValueText != null)
         {
             liveStatsValueText.text = string.Join("\n", values);
         }
+
+        Array.Copy(
+            numericValues,
+            previousLiveStatValues,
+            previousLiveStatValues.Length);
+        liveStatValuesInitialized = true;
+    }
+
+    private void EnsureLiveStatHighlights()
+    {
+        if (liveStatHighlightSprite == null
+            || liveStatRowValues == null)
+        {
+            return;
+        }
+
+        if (liveStatRowHighlights == null
+            || liveStatRowHighlights.Length != liveStatRowValues.Length)
+        {
+            liveStatRowHighlights = new Image[liveStatRowValues.Length];
+        }
+
+        for (int index = 0; index < liveStatRowValues.Length; index++)
+        {
+            TMP_Text value = liveStatRowValues[index];
+            if (value == null || liveStatRowHighlights[index] != null)
+            {
+                continue;
+            }
+
+            Transform row = value.transform.parent;
+            Transform existing = row.Find("Highlight");
+            Image highlight = existing != null
+                ? existing.GetComponent<Image>()
+                : null;
+            if (highlight == null)
+            {
+                GameObject highlightObject = new GameObject(
+                    "Highlight",
+                    typeof(RectTransform),
+                    typeof(CanvasRenderer),
+                    typeof(Image),
+                    typeof(LayoutElement));
+                highlightObject.transform.SetParent(row, false);
+                highlight = highlightObject.GetComponent<Image>();
+            }
+
+            RectTransform highlightRect = highlight.rectTransform;
+            highlightRect.anchorMin = Vector2.zero;
+            highlightRect.anchorMax = Vector2.one;
+            highlightRect.offsetMin = new Vector2(-10f, -5f);
+            highlightRect.offsetMax = new Vector2(10f, 5f);
+            highlight.sprite = liveStatHighlightSprite;
+            highlight.type = Image.Type.Sliced;
+            highlight.pixelsPerUnitMultiplier = 1.5f;
+            highlight.color = new Color(1f, 0.9f, 0f, 0f);
+            highlight.raycastTarget = false;
+            LayoutElement layout = highlight.GetComponent<LayoutElement>();
+            if (layout == null)
+            {
+                layout = highlight.gameObject.AddComponent<LayoutElement>();
+            }
+
+            layout.ignoreLayout = true;
+            highlight.transform.SetAsFirstSibling();
+            liveStatRowHighlights[index] = highlight;
+        }
+    }
+
+    private void PlayLiveStatHighlight(int index)
+    {
+        if (liveStatRowHighlights == null
+            || index < 0
+            || index >= liveStatRowHighlights.Length)
+        {
+            return;
+        }
+
+        Image highlight = liveStatRowHighlights[index];
+        if (highlight == null)
+        {
+            return;
+        }
+
+        highlight.DOKill();
+        highlight.color = new Color(1f, 0.9f, 0f, 0f);
+        DOTween.Sequence()
+            .SetTarget(highlight)
+            .SetUpdate(true)
+            .Append(
+                highlight.DOFade(0.25f, 0.1f)
+                    .SetEase(Ease.OutQuad))
+            .Append(
+                highlight.DOFade(0f, 0.2f)
+                    .SetEase(Ease.InQuad));
+    }
+
+    private static bool ShouldHighlightLiveStat(int index)
+    {
+        // Cash pulses are driven by the visual currency landing events so the
+        // feedback arrives with the coins. Chickens and trucks can respond
+        // directly to their values; the remaining stats rise too frequently.
+        return index == 3 || index == 4;
     }
 
     private static string FormatWeight(double weight)
@@ -4098,41 +4373,18 @@ public sealed class RoundSystem : MonoBehaviour
         Image outer = liveStatsDisplay.GetComponent<Image>();
         if (outer != null)
         {
-            outer.sprite = GetHudRoundedSprite();
+            outer.sprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>(
+                PanelSpritePath);
             outer.type = Image.Type.Sliced;
-            outer.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+            outer.pixelsPerUnitMultiplier = PanelPixelsPerUnitMultiplier;
+            outer.color = Color.black;
             outer.raycastTarget = false;
         }
 
-        Outline outline = liveStatsDisplay.GetComponent<Outline>();
-        if (outline == null)
+        foreach (Shadow effect in liveStatsDisplay.GetComponents<Shadow>())
         {
-            outline = liveStatsDisplay.AddComponent<Outline>();
+            UnityEngine.Object.DestroyImmediate(effect);
         }
-
-        outline.effectColor = new Color(0.12f, 0.07f, 0.035f, 1f);
-        outline.effectDistance = new Vector2(2f, -2f);
-        outline.useGraphicAlpha = false;
-
-        Shadow shadow = null;
-        Shadow[] shadows = liveStatsDisplay.GetComponents<Shadow>();
-        for (int index = 0; index < shadows.Length; index++)
-        {
-            if (shadows[index] != null
-                && shadows[index].GetType() == typeof(Shadow))
-            {
-                shadow = shadows[index];
-                break;
-            }
-        }
-
-        if (shadow == null)
-        {
-            shadow = liveStatsDisplay.AddComponent<Shadow>();
-        }
-
-        shadow.effectColor = new Color(0f, 0f, 0f, 0.5f);
-        shadow.effectDistance = new Vector2(3f, -4f);
 
         RectTransform inner =
             liveStatsDisplay.transform.Find("Stats Inner Panel")
@@ -4762,7 +5014,14 @@ public sealed class RoundSystem : MonoBehaviour
             quotaDisplay.transform);
         SetRect(quotaTrack, new Vector2(0f, -29f), new Vector2(292f, 8f));
         Image quotaTrackImage = quotaTrack.gameObject.AddComponent<Image>();
-        quotaTrackImage.color = new Color(0.025f, 0.03f, 0.025f, 1f);
+        quotaTrackImage.sprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>(
+            ProgressBarSpritePath);
+        quotaTrackImage.material =
+            UnityEditor.AssetDatabase.LoadAssetAtPath<Material>(
+                ProgressBarMaterialPath);
+        quotaTrackImage.type = Image.Type.Sliced;
+        quotaTrackImage.pixelsPerUnitMultiplier = 4f;
+        quotaTrackImage.color = new Color(0.4f, 0.4f, 0.4f, 1f);
         quotaTrackImage.raycastTarget = false;
         quotaContributionFills = new Image[PenUiPalette.Count];
         for (int index = 0; index < quotaContributionFills.Length; index++)
@@ -4777,6 +5036,12 @@ public sealed class RoundSystem : MonoBehaviour
             fillRect.offsetMin = Vector2.zero;
             fillRect.offsetMax = Vector2.zero;
             Image fill = fillRect.gameObject.AddComponent<Image>();
+            fill.sprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>(
+                ProgressBarFillSpritePath);
+            fill.material = UnityEditor.AssetDatabase.LoadAssetAtPath<Material>(
+                ProgressBarMaterialPath);
+            fill.type = Image.Type.Sliced;
+            fill.pixelsPerUnitMultiplier = 4f;
             fill.color = PenUiPalette.GetColour(index);
             fill.raycastTarget = false;
             quotaContributionFills[index] = fill;
@@ -4833,21 +5098,24 @@ public sealed class RoundSystem : MonoBehaviour
         GameObject panel,
         Image background)
     {
-        background.sprite = UnityEditor.AssetDatabase
-            .GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+        background.sprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>(
+            PanelSpritePath);
+        if (background.sprite == null)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the HUD panel sprite at {PanelSpritePath}.");
+        }
+
         background.type = Image.Type.Sliced;
-        background.color = new Color(0.055f, 0.06f, 0.048f, 0.94f);
+        background.pixelsPerUnitMultiplier =
+            PanelPixelsPerUnitMultiplier;
+        background.color = Color.black;
         background.raycastTarget = false;
 
-        Outline outline = panel.AddComponent<Outline>();
-        outline.effectColor = new Color(0.12f, 0.07f, 0.035f, 1f);
-        outline.effectDistance = new Vector2(2f, -2f);
-        outline.useGraphicAlpha = false;
-
-        Shadow shadow = panel.AddComponent<Shadow>();
-        shadow.effectColor = new Color(0f, 0f, 0f, 0.5f);
-        shadow.effectDistance = new Vector2(3f, -4f);
-        shadow.useGraphicAlpha = true;
+        foreach (Shadow effect in panel.GetComponents<Shadow>())
+        {
+            UnityEngine.Object.DestroyImmediate(effect);
+        }
     }
 
     private void BuildResultsUi(Transform canvasTransform)
